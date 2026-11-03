@@ -1,0 +1,11 @@
+[package]
+name = "bitbath-wasm"
+description = "The engine compiled to wasm for the replay viewer, behind a small C ABI."
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bitbath-engine = { path = "../engine" }

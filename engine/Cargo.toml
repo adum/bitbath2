@@ -1,0 +1,8 @@
+[package]
+name = "bitbath-engine"
+description = "Bitbath game rules: deterministic, with no I/O, clock, or threads."
+version.workspace = true
+edition.workspace = true
+
+[dev-dependencies]
+serde_json = "1"

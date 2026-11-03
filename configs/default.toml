@@ -1,0 +1,38 @@
+# Bitbath rules: the v1 defaults (SPEC §3.10, §7). Pass a file like this to
+# `bitbath play --config <file>`; any key left out keeps its default, and
+# `--set key=value` overrides single keys.
+
+map_width = 40
+map_height = 30            # must be even
+neutral_cities = 10        # must be even for generated maps
+stack_limit = 4
+round_limit = 200
+start_gold = 300
+city_income = 100
+unit_upkeep = 5
+city_heal = 20
+city_vision = 2
+capture_points = 200
+start_units = "I,I,S"      # placed on each home city; never sent to bots
+
+time_bank_ms = 5000
+time_increment_ms = 1000
+time_keep_pct = 50
+time_bank_cap_ms = 10000
+init_ms = 10000
+hang_turns = 3
+max_orders_per_turn = 20000
+max_line_bytes = 1024
+
+# Unit types: unit.<code or name>.<cost|max_hp|move|vision|range_min|range_max|flags>
+unit.I.cost = 100
+unit.P.cost = 150
+unit.K.cost = 250
+unit.A.cost = 200
+unit.S.cost = 80
+
+# Base damage: damage.<attacker>.<defender>, e.g. pikemen against cavalry.
+damage.P.K = 80
+
+# Terrain: terrain.<name>.<move_cost|defense|vision_bonus>
+terrain.hills.defense = 40

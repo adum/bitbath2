@@ -1,0 +1,5 @@
+# A small, short game: quick tests, and later manual play (SPEC §5).
+map_width = 20
+map_height = 14
+neutral_cities = 4
+round_limit = 80

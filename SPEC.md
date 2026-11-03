@@ -1,8 +1,9 @@
 # Bitbath: Design Spec
 
-**Status:** draft, 2026-11-02.
+**Status:** draft, 2026-11-02. Milestones M1–M3 are built (§13).
 
 - Decisions from the original brief are treated as settled, as are those listed under [Resolved](#resolved) in §14.
+- Details that building the engine and runner settled are recorded where they belong. [§6.6](#66-edge-cases) collects the protocol ones.
 - Everything else is a proposed default. The real uncertainties are listed in [§14 Open questions](#14-open-questions).
 - All numbers are starting values, to be tuned by bot-vs-bot tournaments.
 
@@ -382,7 +383,11 @@ Enemy movement isn't logged, because the state already shows where visible enemi
 
 The explanation after the code is plain English, for humans and LLMs. Invalid orders never break the game.
 
-**Game end:** the engine sends `GAMEOVER <winner> <reason>` to both bots. A winner of 0 means a draw. Bots should exit on `GAMEOVER` or end of input.
+**Game end:** the engine sends `GAMEOVER <winner> <reason>` to both bots. A winner of 0 means a draw. Bots should exit on `GAMEOVER` or end of input. The reason is one of:
+
+- `elimination`: the loser owns no cities.
+- `cities`, `army`, or `draw`: the round-limit tiebreak (§3.8) decided it.
+- `crash`, `memory`, `hang`, or `init`: the loser forfeited. `init` means it sent no `READY` in time.
 
 ### 6.5 Example
 
@@ -410,6 +415,17 @@ This is player 1's first turn. Player 2's starting units are IDs 4–6, and the 
 < END 1
 ```
 
+### 6.6 Edge cases
+
+- **Hidden units.** An order that names a hidden enemy unit gets the same error as one naming a unit that doesn't exist: `unknown` for the unit giving the order, `no_target` for an attack target. Probing ids reveals nothing. `not_yours` is only for visible enemy units and for cities you don't own.
+- **Archers.** A `no_move_attack` unit that has changed hexes this turn gets `acted` if it attacks. A unit stopped by an ambush before its first step hasn't moved.
+- **Attacking from a zone of control.** An attack needs the unit's action, not movement points, so a unit whose move ended next to an enemy can still attack.
+- **Ambush.** The hex the mover bumped into becomes visible, so the ambusher arrives as a `SEE` event before the `PART` line.
+- **Building.** A city with an enemy unit on it gets `city_used`, and one holding `stack_limit` of your units gets `stack_full`. A city can build on the turn it is captured.
+- **Order of checks.** When an order has several problems, the error reported is the first one found, checking in this order: syntax, the unit or city named, the unit's state (`new_unit`, then `acted`), and then the order's own conditions. The golden test vectors pin the cases down.
+- **`END`.** During your turn, any `END` line ends it. The round number matters only when resyncing after a missed deadline (§7).
+- **Other lines.** An unknown keyword gets `ERR syntax`, and empty lines are ignored. An order beyond `max_orders_per_turn`, or a line longer than `max_line_bytes`, gets `ERR limit`; an over-long `D` line is dropped without a reply. Orders sent after the game ends get `ERR late`.
+
 ## 7. Time control
 
 The clock is Fischer-style with partial banking.
@@ -434,13 +450,15 @@ The clock is Fischer-style with partial banking.
 
 - **Deadline:** orders that arrive after the deadline get `ERR late` and aren't applied. The turn is over, but the bot is **not** killed.
 - **Resync:** the engine sends your next `TURN` only after it has received `END <round>` for your previous turn. If that `END` hasn't arrived when your next turn starts, the waiting time counts against the new turn.
-- **Hang:** a bot that sends no `END` for `hang_turns` turns in a row forfeits.
+- **Between turns:** order lines that arrive outside your turn, including after your `END`, get `ERR late`.
+- **Missed turns:** if the whole turn passes while the engine waits for your previous `END`, no `TURN` is sent and that turn is lost. Upkeep still runs.
+- **Hang:** a bot forfeits after `hang_turns` turns in a row end without its `END`. This counts the turn that ran out of time and each missed turn after it.
 - **Kill:** the engine kills a bot only if it crashes, exceeds its memory cap, or hangs. Killing a bot for a single timeout would wipe its memory for the rest of the game.
 - **Pondering** is allowed in v1: a bot may keep computing during the opponent's turn. Tournaments should give each bot its own CPU core (§11).
 
 ## 8. Debugging and replays
 
-**Debug annotations** are recorded in the replay and drawn by the viewer, up to a cap per turn:
+**Debug annotations** are recorded in the replay and drawn by the viewer, up to 1000 per turn:
 
 - `D HEX <q> <r> <color> [label]`
 - `D LINE <q1> <r1> <q2> <r2> <color>`
@@ -448,11 +466,12 @@ The clock is Fischer-style with partial banking.
 
 Colors are `red`, `green`, `blue`, `yellow`, `orange`, `purple`, `white`, `black`, or `#rrggbb`.
 
-**stderr** is captured each turn, up to a cap.
+**stderr** is captured each turn, up to 8 KB.
 
 **Replay files** (`.bbr`) are JSON Lines:
 
-- **Header:** engine and protocol versions, the full rules, the map, the seed, and player names and commands.
+- **Header:** engine, protocol, and generator versions; the map and rules as setup lines (§6.2), plus a `START` line naming the starting units, which bots never see; the seed; and player names and commands.
+- **Init line:** startup problems, such as a missing `READY`, and stderr from initialization.
 - **One line per turn:**
   - the round, the player, and the time used;
   - every order line received before the deadline, including rejected ones;
@@ -480,11 +499,13 @@ Bots in languages without a kit implement §6 directly. The protocol is small, a
 
 **Golden test vectors.** Files in `tests/vectors/*.json` cover hex math, damage, retaliation, and scripted order sequences with their expected replies. The engine's tests and every kit's tests run them, so no library can quietly disagree with the engine.
 
+**The Python kit** is `kits/python/bitbath.py`. It catches exceptions in a bot's turn and still ends the turn, so a bug costs a turn rather than the game. It stops sending orders when less than 30 ms of the turn remain.
+
 **Reference bots** form a graded ladder:
 
-- `random`: plays legal moves only.
-- `greedy`: expands to the nearest city and attacks whatever is adjacent.
-- `solid`: a decent heuristic.
+- `random` (`bots/random_bot.py`): plays legal moves only.
+- `greedy` (`bots/greedy_bot.py`): expands to the nearest city and attacks when the trade looks favorable.
+- `solid` (M4): a decent heuristic.
 
 They serve as starter examples, as benchmark rungs, and as the harness for balance testing.
 
@@ -498,9 +519,11 @@ bitbath play --p1 "python bots/greedy.py" --p2 "./mybot.exe" --map seed:42 --con
 
 **Trusted code in v1.** Code written by LLMs tends to be careless rather than malicious, so each bot still gets these protections:
 
-- its own working directory
-- a memory cap
+- its own working directory, `runs/<game>/p1` or `p2`
+- a memory cap for its whole process tree, 2048 MB by default (`--memory-mb`)
 - its whole process tree killed when it exits. This uses a Job Object on Windows and a process group on Unix.
+
+The runner sets `PYTHONUNBUFFERED=1` for every bot, as a backstop for Python bots that forget to flush.
 
 **I/O threads.** Each bot has its own reader and writer threads with queues. A bot that never reads its replies can't deadlock the engine.
 
@@ -539,15 +562,23 @@ bitbath play --p1 "python bots/greedy.py" --p2 "./mybot.exe" --map seed:42 --con
 bitbath2/
   engine/          Rust: rules, state, map generation, vision, replay re-simulation. Pure: no I/O, clock, or threads.
   runner/          Rust binary `bitbath`: bot processes, protocol I/O, clocks, replays, tournaments.
-  wasm/            wasm-bindgen wrapper around engine for the browser.
-  web/             TypeScript + Canvas replay viewer; later the human play UI.
+  wasm/            the engine compiled to wasm for the browser, behind a small C ABI.
+  web/             JavaScript + Canvas replay viewer, type-checked with @ts-check; later the human play UI.
   kits/python/     Python starter kit.
   bots/            reference bots.
   tests/vectors/   golden test vectors shared by the engine and kits.
+  configs/         rule presets.
+  scripts/         the viewer build and the test vector generator.
   docs/            RULES.md and PROTOCOL.md for bot authors (later).
 ```
 
 **Why Rust:** wasm matters more than raw speed. Bot think time, not the engine, decides how long a game takes. The same engine crate builds both the native runner and the browser viewer and play UI, so there's never a second copy of the rules to drift out of sync.
+
+**The viewer** needs no web toolchain:
+
+- The wasm crate exports plain C functions instead of using wasm-bindgen, so building it needs only cargo.
+- `scripts/build_web.py` embeds the wasm in `web/bitbath_wasm.js` as base64, so `web/index.html` opens straight from disk.
+- Current Rust emits wasm reference types, so the viewer needs a browser from 2022 or later.
 
 **Determinism rules for `engine`:**
 
@@ -566,14 +597,14 @@ bitbath2/
 
 ## 13. Roadmap
 
-1. **M1, Engine:**
+1. **M1, Engine (done):**
    - hex math, map generation, state, orders, combat, vision, upkeep, victory
    - unit tests and golden test vectors
-2. **M2, Runner:**
+2. **M2, Runner (done):**
    - bot processes, the clock, late orders and resync, replay files
    - the Python kit plus the `random` and `greedy` bots
    - bot-vs-bot games from the CLI
-3. **M3, Viewer:** wasm re-simulation in the browser, with debug annotations.
+3. **M3, Viewer (done):** wasm re-simulation in the browser, with debug annotations.
 4. **M4, Balance and benchmark:**
    - the `solid` bot, the tournament runner, and ratings
    - a first balance pass on damage and costs
