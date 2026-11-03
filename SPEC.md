@@ -2,7 +2,7 @@
 
 **Status:** draft, 2026-11-02.
 
-- Decisions from the original brief are treated as settled.
+- Decisions from the original brief are treated as settled, as are those listed under [Resolved](#resolved) in §14.
 - Everything else is a proposed default. The real uncertainties are listed in [§14 Open questions](#14-open-questions).
 - All numbers are starting values, to be tuned by bot-vs-bot tournaments.
 
@@ -25,12 +25,13 @@ Putting the benchmark first means:
 - More than two players.
 - Exotic mechanics: food logistics, naval units and transport, terrain modification, structures. v1 leaves hooks for them (§12).
 - Multi-turn orders in the engine (§5).
+- City razing. Cities can only be captured (§14).
 
 ## 2. Overview
 
 - **Turns:** players alternate. Player 1 orders all of its units, then player 2 does. One **round** is both turns.
 - **Start:** each player has one home city, three units, and some gold. Neutral cities are scattered across the map.
-- **Economy:** cities earn gold, and gold buys units at cities you own. Foot units capture enemy and neutral cities.
+- **Economy:** each player has one shared gold pool. All of their cities pay into it, and it pays for units built at any city they own. Foot units capture enemy and neutral cities.
 - **Winning:** **you lose when you own no cities.** If the round limit is reached first, a tiebreak decides.
 - **Combat** is deterministic: a damage table between unit types, terrain defense, and defender retaliation.
 - **Fog of war:** enemy units are visible only within your vision. Terrain and city locations are known from the start.
@@ -165,9 +166,9 @@ A move order gives a path, as a list of directions.
 
 #### Attack
 
-A unit attacks a hex.
+A unit attacks one enemy unit of its choosing.
 
-- **Target:** the hex must be within the attacker's range and contain visible enemy units.
+- **Target:** a visible enemy unit whose hex is within the attacker's range. Other units on that hex aren't involved.
 - **Cost:** attacking uses the action and sets MP to 0.
 - **Restriction:** units with `no_move_attack` can't attack after moving.
 - **Resolution** follows §3.7.
@@ -201,8 +202,7 @@ damage(att, def) = base[att.type][def.type] * att.hp * (100 - defense(def.hex))
                    -- at least 1 if base > 0
 ```
 
-1. **Defender selection.** The defender is the unit on the target hex that would have the most HP left after taking `damage(attacker, unit)`. Ties go to the unit with higher current HP, then to the lower unit ID.
-   - This lets a stack protect its fragile units. For example, a pikeman defends the stack when cavalry attacks.
+1. **Target.** The attacker picks which enemy unit to attack, and that unit is the defender. Stacking gives no protection beyond terrain: any unit in a stack can be targeted directly.
 2. **Damage.** The defender takes the damage. At 0 HP or below, it is removed.
 3. **Retaliation.** If the defender survives, it strikes back using its new HP and the attacker's terrain defense. This happens only when both of these hold:
    - The attacker's distance is within the defender's range.
@@ -327,16 +327,25 @@ Both bots initialize at the same time.
 > TIME 5500 4500                         ms available this turn, ms left in your bank
 > GOLD 450
 > CITY 0 1 0 0                           id owner capturer progress (every city; capturer and progress are 0 unless visible)
-> UNIT 17 1 I -2 5 100                   id owner type q r hp (your units, then visible enemy units)
+> UNIT 17 1 I -2 5 30                    id owner type q r hp (your units, then visible enemy units)
 > TILE 5 7 f                             q r terrain: each tile that differs from the initial map (none in v1)
+> LOG HIT 91 K -1 5 17 30 88             attacker id type q r, your unit id, hp after for your unit and the attacker
+> LOG CITY 3 1 2                         city id, old owner, new owner
 > GO
 ```
+
+**Opponent log.** `LOG` lines report what happened during the opponent's most recent turn, in the order it happened:
+
+- `LOG HIT`: an enemy unit attacked one of your units. The line gives the attacker's ID, type, and position at the time, your unit's ID, and both units' HP after the attack and any retaliation. It reveals the attacker even if the attacker is now out of sight.
+- `LOG CITY`: a city changed hands.
+
+Enemy movement isn't logged, because the state already shows where visible enemies are. Bots should skip `LOG` kinds they don't recognize, so new kinds can be added later without breaking them.
 
 ### 6.4 Orders and replies
 
 ```
 < M <unit> <dirs>          move along a path; dirs is a string of direction digits, e.g. 0012
-< A <unit> <q> <r>         attack the hex (q, r)
+< A <unit> <target>        attack the enemy unit whose id is <target>
 < C <unit>                 capture the city the unit stands on
 < B <city> <type>          build a unit at a city
 < D ...                    debug annotation (§8): no reply, no effect on the game
@@ -353,7 +362,7 @@ Both bots initialize at the same time.
 > SEE <id> <owner> <type> <q> <r> <hp>          event: an enemy unit became visible
 > OK <q> <r> <mp_left>                          move completed
 > PART <q> <r> ambush|zoc                       move cut short by a hidden enemy
-> OK <defender_id> <defender_hp> <attacker_hp>  attack resolved (hp 0 = dead)
+> OK <target_hp> <attacker_hp>                  attack resolved (hp 0 = dead)
 > OK <progress> <capture_points>                capture in progress
 > OK captured                                   the city changed hands
 > OK <unit_id>                                  unit built
@@ -427,7 +436,7 @@ The clock is Fischer-style with partial banking.
 - **Resync:** the engine sends your next `TURN` only after it has received `END <round>` for your previous turn. If that `END` hasn't arrived when your next turn starts, the waiting time counts against the new turn.
 - **Hang:** a bot that sends no `END` for `hang_turns` turns in a row forfeits.
 - **Kill:** the engine kills a bot only if it crashes, exceeds its memory cap, or hangs. Killing a bot for a single timeout would wipe its memory for the rest of the game.
-- **Pondering:** in v1, a bot may keep computing during the opponent's turn (§14).
+- **Pondering** is allowed in v1: a bot may keep computing during the opponent's turn. Tournaments should give each bot its own CPU core (§11).
 
 ## 8. Debugging and replays
 
@@ -467,7 +476,9 @@ Colors are `red`, `green`, `blue`, `yellow`, `orange`, `purple`, `white`, `black
 - a combat predictor that matches the engine exactly
 - an example bot
 
-**Golden test vectors.** Files in `tests/vectors/*.json` cover hex math, damage, defender selection, and scripted order sequences with their expected replies. The engine's tests and every kit's tests run them, so no library can quietly disagree with the engine.
+Bots in languages without a kit implement §6 directly. The protocol is small, and the golden test vectors check the tricky parts.
+
+**Golden test vectors.** Files in `tests/vectors/*.json` cover hex math, damage, retaliation, and scripted order sequences with their expected replies. The engine's tests and every kit's tests run them, so no library can quietly disagree with the engine.
 
 **Reference bots** form a graded ladder:
 
@@ -509,12 +520,12 @@ bitbath play --p1 "python bots/greedy.py" --p2 "./mybot.exe" --map seed:42 --con
 - **Ratings:** a Bradley–Terry (or Elo) fit over all games, with bootstrap confidence intervals.
 - **Diagnostics:** invalid-order rate, late orders, timeouts, crashes, and think time. They separate misread rules and plumbing failures from bad strategy.
 - **Reproducibility:**
-  - In v1, wall-clock timing makes results depend somewhat on hardware and machine load. Record both with each run, and don't run more games at once than the machine has cores for.
+  - In v1, wall-clock timing makes results depend somewhat on hardware and machine load. Record both with each run, and give each bot its own CPU core, since bots may think during the opponent's turn.
   - Every game is still exactly replayable from its file.
   - Full reproducibility arrives with the fuel-metered WASI launcher (§10). Battlecode's bytecode limits are the precedent for this.
 - **LLM development protocol:** this goes in a separate `BENCHMARK.md`, still to be written. It covers:
   - which docs the model gets
-  - which languages it may use. Fixing the language avoids measuring language speed.
+  - the toolchains available to it. Any language is allowed (§14), so this list defines what "any" means in practice.
   - access to the local runner and opponents
   - the number of iterations and the token budget
   - access to replays and logs
@@ -566,6 +577,7 @@ bitbath2/
 4. **M4, Balance and benchmark:**
    - the `solid` bot, the tournament runner, and ratings
    - a first balance pass on damage and costs
+   - benchmark time controls, chosen from measured bot think times (§14)
 5. **M5, Other modes:** human play in the browser, the LLM harness (mode 1), and the mode 3 supervisor.
 6. **Later:**
    - the WASI/fuel launcher and more language kits
@@ -574,13 +586,17 @@ bitbath2/
 
 ## 14. Open questions
 
-1. **Economy:** a shared gold treasury (this draft) or per-city production? And should upkeep (this draft) or a hard unit cap limit army size?
-2. **Combat against stacks:** should the defender be chosen automatically (this draft) or picked by the attacker?
-3. **Zone of control:** on by default (this draft)?
-4. **City razing:** can cities be destroyed as well as captured?
-5. **Crashes:** forfeit (this draft), or leave the crashed side's units standing idle?
-6. **Benchmark time controls:** at 1 s per turn, a 200-round game can take about 7 minutes. Should benchmark runs use less?
-7. **Opponent log:** should the turn state include a log of the opponent's visible actions, or is the full state enough?
-8. **Pondering:** suspend the idle bot, or let it think during the opponent's turn?
-9. **Language policy:** should the LLM leaderboard require one language or allow any?
-10. **Default scale:** is 40 × 30, with roughly 100–200 units per side at most, the right target?
+1. **Benchmark time controls:** at 1 s per turn, a 200-round game can take about 7 minutes. Should benchmark runs use less? *Deferred to M4, to be decided from measured bot think times.*
+
+### Resolved
+
+- **Economy model** (2026-11-02): one shared gold pool per player, not per-city production.
+- **Army size** (2026-11-02): limited by unit upkeep, not a hard unit cap.
+- **Combat against stacks** (2026-11-02): the attacker picks the target unit. Stacking gives no protection beyond terrain.
+- **Zones of control** (2026-11-02): on by default. Entering a hex next to an enemy unit with `zoc` ends the mover's movement; `skirmish` units (scouts) are exempt.
+- **City razing** (2026-11-02): capture only in v1. Razing may come later as a rule option; a razed hex would become plains, reported through `TILE` lines.
+- **Crashes** (2026-11-02): a bot that crashes forfeits immediately, the same as one that exceeds its memory cap or hangs.
+- **Opponent log** (2026-11-02): each turn state includes a short `LOG` of the opponent's last turn, covering attacks on your units and cities that changed hands (§6.3).
+- **Pondering** (2026-11-02): allowed in v1, so bots may compute during the opponent's turn, and tournaments give each bot its own CPU core. Revisit with the WASI launcher, where the engine controls exactly when a bot runs.
+- **Language policy** (2026-11-02): LLM bots may use any language on the leaderboard, so choosing a language is part of the skill being measured. `BENCHMARK.md` will list the toolchains the benchmark environment provides.
+- **Default scale** (2026-11-02): 40 × 30 maps, with roughly 100–200 units per side at most. Small presets for manual play and large presets as rule variants come later. Revisit after the M4 balance pass if games feel cramped.
