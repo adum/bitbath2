@@ -35,6 +35,13 @@ CAUTION = 1.3
 # An attack is made when its gain exceeds this share of its loss. Below 1,
 # because declining to attack hands the enemy the first strike.
 LOSS_WEIGHT = 0.8
+# Build shares are each type's score relative to the best, raised to this
+# power. High, so that gold goes almost entirely to the best-trading type.
+SHARE_POWER = 8
+# Strength sent to an undefended neutral city: two infantry take it at once.
+NEUTRAL_FORCE = 200
+# Until the army is this big, build only units that can capture.
+EARLY_ARMY = 6
 # Stop planning moves when this little of the turn is left, and go build.
 RESERVE_MS = 120
 
@@ -306,7 +313,7 @@ class SmartBot(bb.Bot):
                 if threat or c.capturer not in (0, me):
                     goals[c.id] = (2.0, 1.2 * threat + 50)
             elif c.owner == 0:
-                goals[c.id] = (1.0, 100 + threat)
+                goals[c.id] = (1.0, NEUTRAL_FORCE + threat)
             else:
                 goals[c.id] = (1.5, 300 + 1.5 * threat)
         if not goals:
@@ -425,7 +432,7 @@ class SmartBot(bb.Bot):
         self.sync()
         scores = self.unit_scores()
         top = max(scores.values()) or 1
-        share = {code: (score / top) ** 3 for code, score in scores.items()}
+        share = {code: (score / top) ** SHARE_POWER for code, score in scores.items()}
         count = dict.fromkeys(types, 0)
         for u in s.my_units():
             count[u.type] += 1
@@ -442,7 +449,7 @@ class SmartBot(bb.Bot):
             total = sum(count.values())
             can_capture = sum(n for code, n in count.items() if types[code].capture)
             options = [code for code, t in types.items() if t.cost <= s.gold and share[code] >= 0.05]
-            if can_capture * 2 < total + 1:
+            if can_capture * 2 < total + 1 or total < EARLY_ARMY:
                 options = [code for code in options if types[code].capture] or options
             if not options:
                 break
