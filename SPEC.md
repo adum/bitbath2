@@ -514,7 +514,7 @@ They serve as starter examples, as benchmark rungs, and as the harness for balan
 ## 10. Runner and security
 
 ```
-bitbath play --p1 "python bots/greedy.py" --p2 "./mybot.exe" --map seed:42 --config default.toml --replay out.bbr
+bitbath play --p1 "python bots/greedy_bot.py" --p2 "./mybot.exe" --map seed:42 --config configs/default.toml --replay out.bbr
 ```
 
 **Trusted code in v1.** Code written by LLMs tends to be careless rather than malicious, so each bot still gets these protections:

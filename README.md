@@ -6,7 +6,9 @@ Status: milestones M1–M3 are built. That covers the engine, the `bitbath` runn
 
 ## Quick start
 
-You need Rust (with the `wasm32-unknown-unknown` target for the viewer) and Python 3.
+You need Rust and Python 3. The viewer also needs Rust's wasm target: `rustup target add wasm32-unknown-unknown`.
+
+The commands below work as written in PowerShell, Git Bash, and Linux or macOS shells. In the Windows Command Prompt, write the program path with backslashes, as in `target\release\bitbath`. On Linux and macOS, you may need `python3` instead of `python`.
 
 ```bash
 cargo build --release
