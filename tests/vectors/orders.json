@@ -227,6 +227,22 @@
    ]
   },
   {
+   "name": "forest hides a unit until an enemy comes next to it",
+   "player": 1, "round": 1, "gold": [300, 300],
+   "units": ["1 1 I 2 1 100", "2 2 I 2 3 100", "3 1 A 2 5 100"],
+   "message": [
+    "TURN 1", "TIME 0 0", "GOLD 390",
+    "CITY 0 1 0 0", "CITY 1 2 0 0", "CITY 2 0 0 0",
+    "UNIT 1 1 I 2 1 100", "UNIT 3 1 A 2 5 100",
+    "GO"
+   ],
+   "steps": [
+    {"order": "A 3 2", "reply": ["ERR no_target"]},
+    {"order": "M 1 55", "reply": ["SEE 2 2 I 2 3 100", "PART 2 2 zoc"]},
+    {"order": "A 3 2", "reply": ["OK 63 100"]}
+   ]
+  },
+  {
    "name": "visible enemy units aren't yours",
    "player": 1, "round": 1, "gold": [300, 300],
    "units": ["1 1 I 1 1 100", "2 2 I 2 1 100"],

@@ -122,9 +122,10 @@ def line(a, b):
 # Rules and map.
 
 class Terrain:
-    def __init__(self, ch, name, move_cost, defense, vision_bonus):
+    def __init__(self, ch, name, move_cost, defense, vision_bonus, conceal=0):
         self.ch, self.name = ch, name
         self.move_cost, self.defense, self.vision_bonus = move_cost, defense, vision_bonus
+        self.conceal = conceal  # seen from at most vision - conceal away, always from next door
 
     @property
     def passable(self):
@@ -196,6 +197,21 @@ class Map:
 
     def mirror(self, h):
         return mirror(h, self.width, self.height)
+
+    def sight(self, h, vision):
+        """The hexes an observer on h with this vision range sees, matching the
+        engine (SPEC §4). A hex whose terrain conceals is seen from at most
+        vision - conceal away, but the hexes next to h are always seen. A
+        unit's vision includes its hex's vision bonus (see Bot.unit_sight); a
+        city sees with rules.city_vision."""
+        out = []
+        for n in disk(h, vision):
+            t = self.terrain(n)
+            if t is not None:
+                d = distance(h, n)
+                if d <= 1 or d + t.conceal <= vision:
+                    out.append(n)
+        return out
 
 
 # Game state.
@@ -392,6 +408,14 @@ class Bot:
         return (self.can_act(unit) and self.unit_type(unit).capture
                 and city is not None and city.owner != self.player)
 
+    def unit_sight(self, unit, from_hex=None):
+        """The hexes unit would see from from_hex (default: where it stands):
+        its vision plus that hex's vision bonus, with concealing terrain seen
+        only from close by."""
+        unit = self._unit(unit)
+        at = from_hex or unit.hex
+        return self.map.sight(at, self.unit_type(unit).vision + self.map.terrain(at).vision_bonus)
+
     def targets_in_range(self, unit, from_hex=None):
         """Visible enemy units that unit could attack from from_hex (default: where it is)."""
         unit = self._unit(unit)
@@ -568,7 +592,7 @@ def _parse_init(bot, read=_read_line):
         elif kw == "CITY":
             cities.append((int(t[1]), (int(t[2]), int(t[3])), int(t[4])))
         elif kw == "TERRAIN":
-            rules.terrains[t[1]] = Terrain(t[1], t[2], int(t[3]), int(t[4]), int(t[5]))
+            rules.terrains[t[1]] = Terrain(t[1], t[2], *[int(x) for x in t[3:7]])
         elif kw == "UNITTYPE":
             rules.unit_types[t[1]] = UnitType(t[1], t[2], *[int(x) for x in t[3:9]], t[9])
         elif kw == "DAMAGE":

@@ -1,9 +1,9 @@
-"""Generates tests/vectors/hex.json and tests/vectors/damage.json.
+"""Generates tests/vectors/hex.json, damage.json, and vision.json.
 
-This is a second, independent implementation of the formulas in SPEC §3.1 and
-§3.7. The engine and every kit test against its output, so a disagreement
-anywhere shows up as a failing test. tests/vectors/orders.json is written by
-hand, not generated.
+This is a second, independent implementation of the formulas in SPEC §3.1,
+§3.7, and §4. The engine and every kit test against its output, so a
+disagreement anywhere shows up as a failing test. tests/vectors/orders.json
+is written by hand, not generated.
 """
 
 import json
@@ -13,7 +13,10 @@ import random
 DIRS = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)]
 
 TERRAIN_DEFENSE = {".": 0, "f": 25, "h": 40, "C": 30}
+VISION_BONUS = {".": 0, "f": 0, "h": 1}
+CONCEAL = {".": 0, "f": 1, "h": 0}
 UNITS = "IPKAS"
+VISION = {"I": 2, "P": 2, "K": 3, "A": 2, "S": 4}
 MAX_HP = 100
 RANGE = {"I": (1, 1), "P": (1, 1), "K": (1, 1), "A": (2, 2), "S": (1, 1)}
 BASE = {
@@ -108,10 +111,44 @@ def damage_vectors(rng):
     return {"rules": "default", "damage": cases, "combat": combats}
 
 
+def vision_vectors():
+    rows = [
+        ".........",
+        "..ff..h..",
+        ".f...f...",
+        "...h.ff..",
+        "ff..f....",
+        "....h..f.",
+        ".........",
+    ]
+    hexes = [(c - r // 2, r) for r in range(len(rows)) for c in range(len(rows[0]))]
+
+    def sees(at, vision, h):
+        d = distance(at, h)
+        return d <= vision and (d <= 1 or d + CONCEAL[rows[h[1]][col(h)]] <= vision)
+
+    # Observers on plains, on hills (vision +1), in forest, and in a corner.
+    observers = [("I", (3, 3)), ("K", (3, 3)), ("S", (3, 3)), ("A", (2, 3)),
+                 ("S", (2, 5)), ("I", (4, 2)), ("K", (6, 1)), ("P", (0, 0))]
+    cases = []
+    for unit, at in observers:
+        vision = VISION[unit] + VISION_BONUS[rows[at[1]][col(at)]]
+        cases.append({"unit": unit, "hex": list(at),
+                      "visible": [list(h) for h in hexes if sees(at, vision, h)]})
+    return {
+        "about": "What one unit sees from 'hex' on 'map' with the default rules (SPEC §4), "
+                 "listed in storage order: row by row, west to east.",
+        "rules": "default",
+        "map": rows,
+        "cases": cases,
+    }
+
+
 def main():
     rng = random.Random(1)
     out = os.path.join(os.path.dirname(__file__), "..", "tests", "vectors")
-    for name, data in [("hex.json", hex_vectors(rng)), ("damage.json", damage_vectors(rng))]:
+    vectors = [("hex.json", hex_vectors(rng)), ("damage.json", damage_vectors(rng)), ("vision.json", vision_vectors())]
+    for name, data in vectors:
         with open(os.path.join(out, name), "w", newline="\n") as f:
             json.dump(data, f, indent=1)
             f.write("\n")

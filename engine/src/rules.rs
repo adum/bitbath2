@@ -9,7 +9,11 @@ pub struct Terrain {
     pub move_cost: u32,
     /// Percent of damage blocked for a unit standing here.
     pub defense: u32,
+    /// Added to the vision of a unit standing here.
     pub vision_bonus: u32,
+    /// Hides this hex from observers: it's seen from at most `vision −
+    /// conceal` hexes away, though always from next door (SPEC §4).
+    pub conceal: u32,
 }
 
 impl Terrain {
@@ -154,12 +158,13 @@ pub struct Rules {
 
 impl Default for Rules {
     fn default() -> Rules {
-        let terrain = |ch, name: &str, move_cost, defense, vision_bonus| Terrain {
+        let terrain = |ch, name: &str, move_cost, defense, vision_bonus, conceal| Terrain {
             ch,
             name: name.into(),
             move_cost,
             defense,
             vision_bonus,
+            conceal,
         };
         let unit = |code, name: &str, cost, mv, vision, range_min, range_max, flags: &str| {
             let mut u = UnitType {
@@ -181,12 +186,12 @@ impl Default for Rules {
         };
         Rules {
             terrains: vec![
-                terrain('.', "plains", 1, 0, 0),
-                terrain('f', "forest", 2, 25, 0),
-                terrain('h', "hills", 2, 40, 1),
-                terrain(CITY_CHAR, "city", 1, 30, 0),
-                terrain('^', "mountains", 0, 0, 0),
-                terrain('~', "water", 0, 0, 0),
+                terrain('.', "plains", 1, 0, 0, 0),
+                terrain('f', "forest", 2, 25, 0, 1),
+                terrain('h', "hills", 2, 40, 1, 0),
+                terrain(CITY_CHAR, "city", 1, 30, 0, 0),
+                terrain('^', "mountains", 0, 0, 0, 0),
+                terrain('~', "water", 0, 0, 0, 0),
             ],
             units: vec![
                 unit('I', "infantry", 100, 3, 2, 1, 1, "capture,zoc"),
@@ -284,6 +289,7 @@ impl Rules {
                     "move_cost" => t.move_cost = num()?,
                     "defense" => t.defense = num()?,
                     "vision_bonus" => t.vision_bonus = num()?,
+                    "conceal" => t.conceal = num()?,
                     _ => return Err(format!("unknown terrain field '{field}'")),
                 }
             }
@@ -357,8 +363,8 @@ impl Rules {
         let mut out = Vec::new();
         for t in &self.terrains {
             out.push(format!(
-                "TERRAIN {} {} {} {} {}",
-                t.ch, t.name, t.move_cost, t.defense, t.vision_bonus
+                "TERRAIN {} {} {} {} {} {}",
+                t.ch, t.name, t.move_cost, t.defense, t.vision_bonus, t.conceal
             ));
         }
         for u in &self.units {
@@ -407,12 +413,14 @@ mod tests {
         r.set("unit.archer.range_max", "3").unwrap();
         r.set("damage.K.P", "30").unwrap();
         r.set("terrain.hills.defense", "50").unwrap();
+        r.set("terrain.plains.conceal", "2").unwrap();
         r.set("start_units", "I, K").unwrap();
         assert_eq!(r.c.round_limit, 50);
         assert_eq!(r.units[2].cost, 300);
         assert_eq!(r.units[3].range_max, 3);
         assert_eq!(r.damage[2][1], 30);
         assert_eq!(r.terrains[2].defense, 50);
+        assert_eq!(r.terrains[0].conceal, 2);
         assert_eq!(r.start_units, vec!['I', 'K']);
         assert!(r.set("nope", "1").is_err());
         assert!(r.set("round_limit", "-1").is_err());

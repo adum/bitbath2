@@ -240,7 +240,7 @@ impl Game {
         let mut vis = vec![false; self.map.len()];
         let mut mark = |center: Hex, radius: u32| {
             for h in center.disk(radius) {
-                if self.map.contains(h) {
+                if self.map.contains(h) && self.sees(center, radius, h) {
                     vis[self.map.index(h)] = true;
                 }
             }
@@ -746,12 +746,21 @@ impl Game {
         self.rules.units[u.ty].vision + self.rules.terrains[self.map.terrain_at(u.hex)].vision_bonus
     }
 
-    /// Makes hexes within `radius` of `center` visible to the current player,
-    /// adding a `SEE` line for each enemy unit that comes into view.
+    /// Whether an observer at `from` with vision `radius` sees the map hex
+    /// `to` (SPEC §4). Concealing terrain shortens the range to that hex,
+    /// but never hides the hexes next to the observer.
+    fn sees(&self, from: Hex, radius: u32, to: Hex) -> bool {
+        let d = from.distance(to);
+        d <= radius && (d <= 1 || d + self.rules.terrains[self.map.terrain_at(to)].conceal <= radius)
+    }
+
+    /// Makes the hexes an observer at `center` with vision `radius` sees
+    /// visible to the current player, adding a `SEE` line for each enemy
+    /// unit that comes into view.
     fn reveal(&mut self, center: Hex, radius: u32, out: &mut Vec<String>) {
         let mut seen = Vec::new();
         for h in center.disk(radius) {
-            if !self.map.contains(h) {
+            if !self.map.contains(h) || !self.sees(center, radius, h) {
                 continue;
             }
             let i = self.map.index(h);

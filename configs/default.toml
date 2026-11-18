@@ -34,5 +34,6 @@ unit.S.cost = 80
 # Base damage: damage.<attacker>.<defender>, e.g. pikemen against cavalry.
 damage.P.K = 80
 
-# Terrain: terrain.<name>.<move_cost|defense|vision_bonus>
+# Terrain: terrain.<name>.<move_cost|defense|vision_bonus|conceal>
 terrain.hills.defense = 40
+terrain.forest.conceal = 1   # units in forest are seen from 1 hex less far, always from next door

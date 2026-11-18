@@ -35,7 +35,7 @@ Putting the benchmark first means:
 - **Economy:** each player has one shared gold pool. All of their cities pay into it, and it pays for units built at any city they own. Foot units capture enemy and neutral cities.
 - **Winning:** **you lose when you own no cities.** If the round limit is reached first, a tiebreak decides.
 - **Combat** is deterministic: a damage table between unit types, terrain defense, and defender retaliation.
-- **Fog of war:** enemy units are visible only within your vision. Terrain and city locations are known from the start.
+- **Fog of war:** enemy units are visible only within your vision, and forest hides them from all but nearby observers. Terrain and city locations are known from the start.
 
 ## 3. Rules (v1 defaults)
 
@@ -74,17 +74,18 @@ row 3:     (-1,3)  (0,3)  (1,3)  (2,3)
 
 ### 3.2 Terrain
 
-| char | terrain | move cost | defense | vision bonus |
-|---|---|---|---|---|
-| `.` | plains | 1 | 0% | 0 |
-| `f` | forest | 2 | 25% | 0 |
-| `h` | hills | 2 | 40% | +1 |
-| `C` | city | 1 | 30% | 0 |
-| `^` | mountains | impassable | – | – |
-| `~` | water | impassable | – | – |
+| char | terrain | move cost | defense | vision bonus | conceal |
+|---|---|---|---|---|---|
+| `.` | plains | 1 | 0% | 0 | 0 |
+| `f` | forest | 2 | 25% | 0 | 1 |
+| `h` | hills | 2 | 40% | +1 | 0 |
+| `C` | city | 1 | 30% | 0 | 0 |
+| `^` | mountains | impassable | – | – | – |
+| `~` | water | impassable | – | – | – |
 
 - **Defense** reduces the damage taken by a unit standing on that hex.
 - **Vision bonus** is added to the vision of a unit standing there.
+- **Conceal** hides units standing there: observers must be that many hexes closer than their vision to see the hex, though they always see the hexes next to them (§4).
 - City hexes are marked `C` on the map. Who owns each city is part of the game state (§3.6).
 
 ### 3.3 Units
@@ -255,9 +256,14 @@ Time constants are in §7.
 
 ## 4. Fog of war
 
-- **Visible hexes:** a hex is visible to you if either of these is true:
-  - It's within one of your units' vision. A unit's vision is its unit vision plus the vision bonus of the hex it stands on.
-  - It's within `city_vision` of one of your cities.
+- **Visible hexes:** a hex is visible to you if one of your observers sees it. Your observers are:
+  - each of your units, whose vision is its unit vision plus the vision bonus of the hex it stands on;
+  - each of your cities, whose vision is `city_vision`.
+- **Seeing a hex:** an observer with vision `v` sees a hex at distance `d` when `d ≤ v` and either:
+  - `d ≤ 1`, so the hexes next to an observer are never hidden, or
+  - `d + conceal ≤ v`, where `conceal` belongs to the terrain of the hex being looked at.
+
+  With the default rules, forest (`conceal` 1) hides the units in it from infantry, pikemen, archers, and cities except from next door. Cavalry see 2 hexes into forest, and scouts see 3. A unit on hills sees one hex farther, into forest too.
 
   There's no line-of-sight blocking in v1.
 - **What you see:** all of your own units, plus enemy units on visible hexes.
@@ -310,7 +316,7 @@ The engine talks to two *players* over the protocol in §6. All three modes use 
 > MAP 40 30                              width height
 > ROW ....ff..hh....~~~...               × height, row 0 first (§3.1); abbreviated here
 > CITY 0 3 2 1                           id q r initial_owner, one per city
-> TERRAIN . plains 1 0 0                 char name move_cost defense_pct vision_bonus (move_cost 0 = impassable)
+> TERRAIN . plains 1 0 0 0               char name move_cost defense_pct vision_bonus conceal (move_cost 0 = impassable)
 > UNITTYPE I infantry 100 100 3 2 1 1 capture,zoc
 >                                        code name cost max_hp move vision range_min range_max flags ('-' = none)
 > DAMAGE I 55 45 40 65 75                attacker I's base damage vs each type, in UNITTYPE order
@@ -497,7 +503,7 @@ Colors are `red`, `green`, `blue`, `yellow`, `orange`, `purple`, `white`, `black
 
 Bots in languages without a kit implement §6 directly. The protocol is small, and the golden test vectors check the tricky parts.
 
-**Golden test vectors.** Files in `tests/vectors/*.json` cover hex math, damage, retaliation, and scripted order sequences with their expected replies. The engine's tests and every kit's tests run them, so no library can quietly disagree with the engine.
+**Golden test vectors.** Files in `tests/vectors/*.json` cover hex math, damage, retaliation, vision, and scripted order sequences with their expected replies. The engine's tests and every kit's tests run them, so no library can quietly disagree with the engine.
 
 **The Python kit** is `kits/python/bitbath.py`. It catches exceptions in a bot's turn and still ends the turn, so a bug costs a turn rather than the game. It stops sending orders when less than 30 ms of the turn remain.
 
@@ -631,3 +637,4 @@ bitbath2/
 - **Pondering** (2026-11-02): allowed in v1, so bots may compute during the opponent's turn, and tournaments give each bot its own CPU core. Revisit with the WASI launcher, where the engine controls exactly when a bot runs.
 - **Language policy** (2026-11-02): LLM bots may use any language on the leaderboard, so choosing a language is part of the skill being measured. `BENCHMARK.md` will list the toolchains the benchmark environment provides.
 - **Default scale** (2026-11-02): 40 × 30 maps, with roughly 100–200 units per side at most. Small presets for manual play and large presets as rule variants come later. Revisit after the M4 balance pass if games feel cramped.
+- **Concealment** (2026-11-18): forest hides the units in it from all but nearby observers (`conceal` 1, §4), so forests are worth more than their defense, scouts have a spotting job, and archers need spotters. Line-of-sight blocking was rejected: with vision of 2–4 hexes it changes little, and its tie-breaking would be easy for kits to get subtly wrong.

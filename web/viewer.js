@@ -1125,6 +1125,21 @@
       "Every unit gets its full movement back, and one action: an attack or a capture. A unit can't move after its action.",
     ]);
 
+    const ground = Object.values(v.info.terrain).filter((t) => t.move_cost);
+    const hexes = (/** @type {number} */ n) => (n === 1 ? "1 hex" : n + " hexes");
+    const sight = [
+      "Players see the hexes within their units' vision (see Units) and within " + c.city_vision + " hexes of their own cities. Enemy units anywhere else are hidden. The map, and who owns each city, are always known.",
+    ];
+    for (const t of ground.filter((t) => t.vision_bonus > 0)) sight.push("A unit on " + t.name + " sees " + hexes(t.vision_bonus) + " farther.");
+    for (const t of ground.filter((t) => t.conceal > 0)) {
+      const near = units.filter(([, u]) => u.vision - t.conceal <= 1).map(([, u]) => plural(u.name));
+      sight.push(
+        capitalize(t.name) + " hides the units in it: observers see into " + t.name + " " + hexes(t.conceal) + " less far than usual, but always see the hexes next to them." +
+          (near.length ? " Without a vision bonus, " + join(near) + " spot units in " + t.name + " only from next door." : ""),
+      );
+    }
+    section("Vision", sight);
+
     const blocked = Object.values(v.info.terrain).filter((t) => !t.move_cost).map((t) => t.name);
     section("Moving", [
       "Each step costs the move cost of the hex entered (see Terrain)." + (blocked.length ? " " + capitalize(join(blocked)) + " can't be entered." : ""),
@@ -1139,7 +1154,6 @@
     section("Cities", [
       "A unit that captures adds its current HP to a city's capture progress; " + c.capture_points + " points take the city." + turns,
       "Each city you own can build one unit per turn, if no enemy unit is on it and it holds fewer than " + c.stack_limit + " of your units. New units can't move or act until your next turn.",
-      "Cities let their owner see " + c.city_vision + " hexes around them. Who owns each city is always public.",
     ]);
 
     section("Combat", [
@@ -1167,14 +1181,14 @@
     body.append(el("h3", "Terrain"));
     const pal = v.dark ? TERRAIN.dark : TERRAIN.light;
     table(
-      ["Terrain", "Move cost", "Defense", "Vision"],
+      ["Terrain", "Move cost", "Defense", "Vision", "Concealment"],
       Object.entries(v.info.terrain).map(([ch, t]) => {
         const chip = el("span", "", "chip");
         chip.style.background = /** @type {any} */ (pal)[ch] || "#888";
         const label = document.createElement("span");
         label.append(chip, t.name);
-        if (!t.move_cost) return [label, "can't enter", "–", "–"];
-        return [label, t.move_cost, t.defense + "%", t.vision_bonus ? "+" + t.vision_bonus : "0"];
+        if (!t.move_cost) return [label, "can't enter", "–", "–", "–"];
+        return [label, t.move_cost, t.defense + "%", t.vision_bonus ? "+" + t.vision_bonus : "0", t.conceal || 0];
       }),
     );
 

@@ -22,12 +22,12 @@ ROW ......
 ROW ......
 ROW ......
 CITY 0 0 0 1
-TERRAIN . plains 1 0 0
-TERRAIN f forest 2 25 0
-TERRAIN h hills 2 40 1
-TERRAIN C city 1 30 0
-TERRAIN ^ mountains 0 0 0
-TERRAIN ~ water 0 0 0
+TERRAIN . plains 1 0 0 0
+TERRAIN f forest 2 25 0 1
+TERRAIN h hills 2 40 1 0
+TERRAIN C city 1 30 0 0
+TERRAIN ^ mountains 0 0 0 0
+TERRAIN ~ water 0 0 0 0
 UNITTYPE I infantry 100 100 3 2 1 1 capture,zoc
 UNITTYPE P pikeman 150 100 2 2 1 1 capture,zoc
 UNITTYPE K cavalry 250 100 5 3 1 1 zoc
@@ -48,10 +48,11 @@ def load(name):
         return json.load(f)
 
 
-def make_bot(rows):
+def make_bot(rows, init=DEFAULT_INIT):
     """A bot whose map has the given rows, with the default rules."""
-    lines = DEFAULT_INIT.replace("ROW C.....\nROW ......\nROW ......\nROW ......\n",
-                                 "".join("ROW %s\n" % r for r in rows)).splitlines()
+    lines = init.replace("MAP 6 4\n", "MAP %d %d\n" % (len(rows[0]), len(rows)))
+    lines = lines.replace("ROW C.....\nROW ......\nROW ......\nROW ......\n",
+                          "".join("ROW %s\n" % r for r in rows)).splitlines()
     lines = iter(lines)
     bot = bb.Bot()
     bb._parse_init(bot, lambda: next(lines))
@@ -106,6 +107,24 @@ class DamageVectors(unittest.TestCase):
             dfn = bb.Unit(2, 2, c["defender"], 1 + c["distance"], 1, c["defender_hp"])
             bot.state.units = {1: att, 2: dfn}
             self.assertEqual(bot.predict(att, dfn), (c["defender_hp_after"], c["attacker_hp_after"]), c)
+
+
+class VisionVectors(unittest.TestCase):
+    def test_vision(self):
+        v = load("vision.json")
+        bot = make_bot(v["map"])
+        for c in v["cases"]:
+            unit = bb.Unit(1, 1, c["unit"], c["hex"][0], c["hex"][1], 100)
+            bot.state.units = {1: unit}
+            seen = sorted(bot.unit_sight(unit), key=lambda h: (h[1], h[0]))
+            self.assertEqual([list(h) for h in seen], c["visible"], c)
+
+    def test_old_terrain_lines(self):
+        # Engines from before concealment send five-field TERRAIN lines.
+        old = DEFAULT_INIT.replace("TERRAIN f forest 2 25 0 1", "TERRAIN f forest 2 25 0")
+        bot = make_bot(["." * 6, "f" * 6, "." * 6, "." * 6], old)
+        self.assertEqual(bot.rules.terrains["f"].conceal, 0)
+        self.assertEqual(make_bot(["." * 6] * 4).rules.terrains["f"].conceal, 1)
 
 
 class Pathfinding(unittest.TestCase):

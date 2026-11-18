@@ -170,6 +170,8 @@ where
                     move_cost: int(t.get(3), "move cost")?,
                     defense: int(t.get(4), "defense")?,
                     vision_bonus: int(t.get(5), "vision bonus")?,
+                    // Replays recorded before concealment have no sixth field.
+                    conceal: if t.len() > 6 { int(t.get(6), "conceal")? } else { 0 },
                 }),
                 "UNITTYPE" => {
                     let mut u = UnitType {
@@ -295,6 +297,17 @@ mod tests {
         let (rules2, map2) = parse_setup(lines.iter().map(|s| s.as_str()), Rules::default()).unwrap();
         assert_eq!(rules, rules2);
         assert_eq!(map, map2);
+    }
+
+    #[test]
+    fn old_terrain_lines_have_no_concealment() {
+        // Replays recorded before concealment have five-field TERRAIN lines.
+        let old = format!(
+            "{SMALL}TERRAIN . plains 1 0 0\nTERRAIN f forest 2 25 0\nTERRAIN C city 1 30 0\nTERRAIN ^ mountains 0 0 0\n"
+        );
+        let (rules, _) = parse_setup(old.lines(), Rules::default()).unwrap();
+        assert_eq!(rules.terrains.len(), 4);
+        assert!(rules.terrains.iter().all(|t| t.conceal == 0));
     }
 
     #[test]

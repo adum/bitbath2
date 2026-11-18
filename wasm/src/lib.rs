@@ -213,12 +213,13 @@ fn info_json(game: &Game) -> String {
         .iter()
         .map(|t| {
             format!(
-                "{}:{{\"name\":{},\"move_cost\":{},\"defense\":{},\"vision_bonus\":{}}}",
+                "{}:{{\"name\":{},\"move_cost\":{},\"defense\":{},\"vision_bonus\":{},\"conceal\":{}}}",
                 esc(&t.ch.to_string()),
                 esc(&t.name),
                 t.move_cost,
                 t.defense,
-                t.vision_bonus
+                t.vision_bonus,
+                t.conceal
             )
         })
         .collect();

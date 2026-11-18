@@ -147,6 +147,34 @@ fn combat_vectors() {
     }
 }
 
+/// Places each case's unit alone on the vector map and compares what player
+/// 1 sees. The map has no cities, so nothing else adds vision.
+#[test]
+fn vision_vectors() {
+    let v = load("vision.json");
+    let rules = Rules::default();
+    let rows = strings(&v["map"]);
+    let tiles = rows
+        .iter()
+        .flat_map(|row| row.chars().map(|c| rules.terrain_index(c).unwrap() as u8))
+        .collect();
+    let map = Map {
+        width: rows[0].len() as i32,
+        height: rows.len() as i32,
+        tiles,
+        cities: Vec::new(),
+    };
+    for case in list(&v["cases"]) {
+        let mut g = Game::empty(rules.clone(), map.clone());
+        let ty = rules.unit_index(ch(&case["unit"])).unwrap();
+        g.place(1, 1, ty, hex(&case["hex"]), 100).unwrap();
+        let vis = g.vision(1);
+        let seen: Vec<Hex> = (0..map.len()).filter(|&i| vis[i]).map(|i| map.hex(i)).collect();
+        let want: Vec<Hex> = list(&case["visible"]).iter().map(hex).collect();
+        assert_eq!(seen, want, "{case}");
+    }
+}
+
 #[test]
 fn order_vectors() {
     let v = load("orders.json");
