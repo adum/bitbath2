@@ -183,12 +183,24 @@ fn new_run_dir(map_source: &str) -> Result<PathBuf, String> {
         rem % 3600 / 60,
         rem % 60
     );
+    unique_dir(Path::new("runs"), &base)
+}
+
+/// Creates `root/<base>`, or `root/<base>-2` and so on when that's taken.
+/// Creating the directory is the test for whether it's taken, so games that
+/// start in the same second, as in a tournament, never share a directory.
+fn unique_dir(root: &Path, base: &str) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
     for n in 1.. {
-        let name = if n == 1 { base.clone() } else { format!("{base}-{n}") };
-        let dir = Path::new("runs").join(name);
-        if !dir.exists() {
-            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            return Ok(dir);
+        let dir = root.join(if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        });
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(format!("{}: {e}", dir.display())),
         }
     }
     unreachable!()
@@ -359,6 +371,24 @@ mod tests {
     fn names() {
         assert_eq!(default_name("python ../bots/random_bot.py 7"), "random");
         assert_eq!(default_name("./mybot.exe --fast"), "mybot");
+    }
+
+    #[test]
+    fn simultaneous_games_get_their_own_directories() {
+        let root = std::env::temp_dir().join(format!("bitbath-runs-{}", std::process::id()));
+        let dirs: Vec<PathBuf> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8).map(|_| s.spawn(|| unique_dir(&root, "same-second"))).collect();
+            handles.into_iter().map(|h| h.join().unwrap().unwrap()).collect()
+        });
+        let mut names: Vec<String> = dirs
+            .iter()
+            .map(|d| d.file_name().unwrap().to_string_lossy().into())
+            .collect();
+        names.sort();
+        names.dedup();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(names.len(), 8, "{names:?}");
+        assert!(names.contains(&"same-second".to_string()) && names.contains(&"same-second-8".to_string()));
     }
 
     /// Every preset in configs/ loads, and the generator can make its maps.
