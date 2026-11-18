@@ -104,8 +104,12 @@
     steps: 0,
     pos: 0,
     /** @type {any} */ state: null,
-    /** @type {any} */ prev: null,
+    /** What the current turn's orders did so far: see turnMarks(). @type {any[]} */ marks: [],
+    /** The units when turn `ti` started, for turnMarks(). @type {{ti: number, units: any[]}} */ base: { ti: -1, units: [] },
+    /** Units sliding along their paths during playback: see animateTo(). @type {any} */ anim: null,
     /** Positions at the start and after each turn. */ ends: [0],
+    /** The index into `ends` of the turn shown. */ turnIdx: 0,
+    /** The index into `ends` under the pointer on the army chart, or -1. */ chartHover: -1,
     playing: false,
     timer: 0,
     /** @type {[number, number] | null} */ hover: null,
@@ -264,8 +268,9 @@
     drawCities(ctx, persp);
     if (persp) drawFog(ctx, persp);
     drawDebug(ctx);
+    drawTrails(ctx, persp);
     drawUnits(ctx, persp);
-    drawOrder(ctx);
+    drawOrder(ctx, persp);
     if (v.hover) {
       const [x, y] = center(v.hover[0], v.hover[1]);
       hexPath(ctx, x, y, v.geo.size * 0.97);
@@ -331,13 +336,24 @@
     [[-0.3, -0.28], [0.3, -0.28], [-0.3, 0.28], [0.3, 0.28]],
   ];
 
+  /** The radius of each unit in a stack of `n`. @param {number} n */
+  function stackRadius(n) {
+    const s = v.geo.size;
+    return n === 1 ? s * 0.5 : n <= 4 ? s * 0.33 : s * 0.26;
+  }
+
   /** @param {CanvasRenderingContext2D} ctx @param {number} persp */
   function drawUnits(ctx, persp) {
     const s = v.geo.size;
+    const a = v.anim;
+    const hidden = (/** @type {any[]} */ u) => persp && u[1] !== persp && !visibleTo(u[3], u[4], persp);
+    // While units slide during playback, the moving ones are drawn on their
+    // own, and units killed on the way stay until the slide ends.
+    const still = a ? v.state.units.filter((/** @type {any[]} */ u) => !a.paths.has(u[0])).concat(a.ghosts) : v.state.units;
     /** @type {Map<string, any[]>} */
     const byHex = new Map();
-    for (const u of v.state.units) {
-      if (persp && u[1] !== persp && !visibleTo(u[3], u[4], persp)) continue;
+    for (const u of still) {
+      if (hidden(u)) continue;
       const key = u[3] + "," + u[4];
       if (!byHex.has(key)) byHex.set(key, []);
       /** @type {any[]} */ (byHex.get(key)).push(u);
@@ -345,11 +361,19 @@
     for (const list of byHex.values()) {
       const [x, y] = center(list[0][3], list[0][4]);
       const n = list.length;
-      const rad = n === 1 ? s * 0.5 : n <= 4 ? s * 0.33 : s * 0.26;
       list.forEach((u, j) => {
         const off = n <= 4 ? STACK[n][j] : [0.38 * Math.cos((2 * Math.PI * j) / n), 0.38 * Math.sin((2 * Math.PI * j) / n)];
-        drawUnit(ctx, u, x + off[0] * s, y + off[1] * s, rad);
+        drawUnit(ctx, u, x + off[0] * s, y + off[1] * s, stackRadius(n));
       });
+    }
+    if (!a) return;
+    for (const u of v.state.units) {
+      const path = a.paths.get(u[0]);
+      if (!path || hidden(u)) continue;
+      // Sized for the stack it ends in, so it doesn't change size on arrival.
+      const n = v.state.units.filter((/** @type {any[]} */ w) => w[3] === u[3] && w[4] === u[4]).length;
+      const [x, y] = pointAlong(path, Math.min(path.length - 1, a.p * a.len));
+      drawUnit(ctx, u, x, y, stackRadius(n));
     }
   }
 
@@ -386,11 +410,16 @@
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {[number, number][]} pts */
-  function arrow(ctx, pts) {
-    if (pts.length < 2) return;
+  function polyline(ctx, pts) {
     ctx.beginPath();
     pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
     ctx.stroke();
+  }
+
+  /** @param {CanvasRenderingContext2D} ctx @param {[number, number][]} pts */
+  function arrow(ctx, pts) {
+    if (pts.length < 2) return;
+    polyline(ctx, pts);
     const [x1, y1] = pts[pts.length - 2];
     const [x2, y2] = pts[pts.length - 1];
     const a = Math.atan2(y2 - y1, x2 - x1);
@@ -403,64 +432,152 @@
     ctx.fill();
   }
 
-  /** Highlights the order just applied. @param {CanvasRenderingContext2D} ctx */
-  function drawOrder(ctx) {
-    if (v.pos === 0 || !v.prev) return;
-    const line = v.replay.script[v.pos - 1];
-    if (!line.startsWith("O ")) return;
-    const t = line.slice(2).trim().split(/\s+/);
-    const result = v.state.reply[v.state.reply.length - 1] || "";
-    const res = result.split(/\s+/);
-    const ok = !result.startsWith("ERR");
-    const color = ok ? playerColor(v.state.player) : "#f03e3e";
+  /** Draws an X where a unit died. @param {CanvasRenderingContext2D} ctx @param {[number, number]} p @param {number} k */
+  function cross(ctx, p, k) {
+    const [x, y] = p;
+    ctx.beginPath();
+    ctx.moveTo(x - k, y - k);
+    ctx.lineTo(x + k, y + k);
+    ctx.moveTo(x + k, y - k);
+    ctx.lineTo(x - k, y + k);
+    ctx.stroke();
+  }
+
+  /** @param {number[][]} hexes @returns {[number, number][]} */
+  function centers(hexes) {
+    return hexes.map((h) => center(h[0], h[1]));
+  }
+
+  /** The point `d` hex steps along a path. @param {number[][]} path @param {number} d @returns {[number, number]} */
+  function pointAlong(path, d) {
+    const i = Math.max(0, Math.min(path.length - 2, Math.floor(d)));
+    const a = center(path[i][0], path[i][1]);
+    if (path.length < 2) return a;
+    const b = center(path[i + 1][0], path[i + 1][1]);
+    const k = Math.max(0, Math.min(1, d - i));
+    return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+  }
+
+  /**
+   * Works out what each order of the current turn so far did on the map,
+   * following units from where they were when the turn started. A mark has
+   * the order's step, its letter (`op`), whether it worked (`ok`), and its
+   * `hexes`: the path walked for a move, attacker and target for an attack,
+   * or the one hex of a capture or build.
+   */
+  function turnMarks() {
+    /** @type {any[]} */
+    const marks = [];
+    if (v.pos === 0) return marks;
+    const ti = v.replay.stepTurn[v.pos - 1];
+    const first = v.replay.turnStart[ti];
+    if (v.base.ti !== ti) v.base = { ti, units: v.engine.seek(first + 1).units };
+    /** @type {Map<number, number[]>} */
+    const at = new Map();
+    // Units built this turn can't move yet, so they are where they are now.
+    for (const u of v.state.units) at.set(u[0], [u[3], u[4]]);
+    for (const u of v.base.units) at.set(u[0], [u[3], u[4]]);
+    for (let i = first + 1; i < v.pos; i++) {
+      const t = v.replay.script[i].slice(2).trim().split(/\s+/);
+      const result = v.info.results[i] || "";
+      const res = result.split(/\s+/);
+      const ok = !result.startsWith("ERR");
+      const from = at.get(Number(t[1]));
+      if (t[0] === "M" && from) {
+        // A move that worked reports where it ended, which is short of the
+        // path's end if it was stopped.
+        const end = res[0] === "OK" || res[0] === "PART" ? [Number(res[1]), Number(res[2])] : null;
+        let h = from;
+        const hexes = [h];
+        for (const ch of t[2] || "") {
+          const d = DIRS[Number(ch)];
+          if (!d || (end && h[0] === end[0] && h[1] === end[1])) break;
+          h = [h[0] + d[0], h[1] + d[1]];
+          hexes.push(h);
+        }
+        if (end) at.set(Number(t[1]), end);
+        marks.push({ step: i, op: "M", id: Number(t[1]), ok, hexes });
+      } else if (t[0] === "A" && from) {
+        const to = at.get(Number(t[2]));
+        marks.push({ step: i, op: "A", ok, hexes: to ? [from, to] : [from], kill: res[0] === "OK" && res[1] === "0" });
+      } else if (t[0] === "C" && from) {
+        marks.push({ step: i, op: "C", ok, hexes: [from] });
+      } else if (t[0] === "B") {
+        const city = v.info.cities[Number(t[1])];
+        if (city) marks.push({ step: i, op: "B", ok, hexes: [[city[0], city[1]]] });
+      }
+    }
+    return marks;
+  }
+
+  /**
+   * Whether a mark belongs in a player's view: the opponent's only where
+   * that player sees all of it.
+   * @param {any} m @param {number} persp
+   */
+  function shown(m, persp) {
+    return !persp || persp === v.state.player || m.hexes.every((/** @type {number[]} */ h) => visibleTo(h[0], h[1], persp));
+  }
+
+  /**
+   * Draws, under the units, what the current turn's orders did so far: the
+   * path of each move, and a line for each attack with an X where a unit
+   * died. While units slide during playback, their paths grow behind them.
+   * @param {CanvasRenderingContext2D} ctx @param {number} persp
+   */
+  function drawTrails(ctx, persp) {
     const s = v.geo.size;
-    const before = new Map(v.prev.units.map((/** @type {any[]} */ u) => [u[0], u]));
-    ctx.strokeStyle = ctx.fillStyle = color;
+    const a = v.anim;
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.strokeStyle = playerColor(v.state.player);
+    ctx.lineWidth = Math.max(2, s * 0.13);
+    ctx.lineCap = ctx.lineJoin = "round";
+    for (const m of v.marks) {
+      if (!m.ok || (a && m.step >= a.from) || !shown(m, persp)) continue;
+      if (m.op === "M") {
+        polyline(ctx, centers(m.hexes));
+      } else if (m.op === "A" && m.hexes.length === 2) {
+        const pts = centers(m.hexes);
+        polyline(ctx, pts);
+        if (m.kill) cross(ctx, pts[1], s * 0.3);
+      }
+    }
+    if (a) {
+      for (const path of a.paths.values()) {
+        if (!shown({ hexes: path }, persp)) continue;
+        const d = Math.min(path.length - 1, a.p * a.len);
+        polyline(ctx, centers(path.slice(0, Math.floor(d) + 1)).concat([pointAlong(path, d)]));
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Highlights the order just applied. @param {CanvasRenderingContext2D} ctx @param {number} persp */
+  function drawOrder(ctx, persp) {
+    const m = v.marks[v.marks.length - 1];
+    if (!m || m.step !== v.pos - 1 || v.anim || !shown(m, persp)) return;
+    // Playing turn by turn, a turn's last order matters no more than the
+    // others, so it shows as just its trail.
+    if (v.playing && $("speed").value.startsWith("turn")) return;
+    const s = v.geo.size;
+    ctx.strokeStyle = ctx.fillStyle = m.ok ? playerColor(v.state.player) : "#f03e3e";
     ctx.lineWidth = Math.max(2, s * 0.16);
     ctx.lineCap = ctx.lineJoin = "round";
-    if (!ok) ctx.setLineDash([5, 4]);
-    const ring = (/** @type {number} */ q, /** @type {number} */ r) => {
-      const [x, y] = center(q, r);
-      ctx.beginPath();
-      ctx.arc(x, y, s * 0.82, 0, 2 * Math.PI);
-      ctx.stroke();
-    };
-    const unit = before.get(Number(t[1]));
-    if (t[0] === "M" && unit) {
-      let h = [unit[3], unit[4]];
-      const pts = [center(h[0], h[1])];
-      const end = res[0] === "OK" || res[0] === "PART" ? [Number(res[1]), Number(res[2])] : null;
-      for (const ch of t[2] || "") {
-        const d = DIRS[Number(ch)];
-        if (!d || (end && h[0] === end[0] && h[1] === end[1])) break;
-        h = [h[0] + d[0], h[1] + d[1]];
-        pts.push(center(h[0], h[1]));
-      }
+    if (!m.ok) ctx.setLineDash([5, 4]);
+    const pts = centers(m.hexes);
+    if (m.op === "M") {
       arrow(ctx, pts);
-    } else if (t[0] === "A" && unit) {
-      const target = before.get(Number(t[2]));
-      if (target) {
-        const a = center(unit[3], unit[4]);
-        const b = center(target[3], target[4]);
-        const shrink = s * 0.35;
-        const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-        arrow(ctx, [a, [b[0] - ((b[0] - a[0]) * shrink) / len, b[1] - ((b[1] - a[1]) * shrink) / len]]);
-        if (res[0] === "OK" && res[1] === "0") {
-          ctx.beginPath();
-          ctx.moveTo(b[0] - s * 0.4, b[1] - s * 0.4);
-          ctx.lineTo(b[0] + s * 0.4, b[1] + s * 0.4);
-          ctx.moveTo(b[0] + s * 0.4, b[1] - s * 0.4);
-          ctx.lineTo(b[0] - s * 0.4, b[1] + s * 0.4);
-          ctx.stroke();
-        }
-      } else {
-        ring(unit[3], unit[4]);
-      }
-    } else if (t[0] === "C" && unit) {
-      ring(unit[3], unit[4]);
-    } else if (t[0] === "B") {
-      const city = v.info.cities[Number(t[1])];
-      if (city) ring(city[0], city[1]);
+    } else if (m.op === "A" && pts.length === 2) {
+      const [a, b] = pts;
+      const shrink = s * 0.35;
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      arrow(ctx, [a, [b[0] - ((b[0] - a[0]) * shrink) / len, b[1] - ((b[1] - a[1]) * shrink) / len]]);
+      if (m.kill) cross(ctx, b, s * 0.4);
+    } else {
+      ctx.beginPath();
+      ctx.arc(pts[0][0], pts[0][1], s * 0.82, 0, 2 * Math.PI);
+      ctx.stroke();
     }
     ctx.setLineDash([]);
   }
@@ -613,6 +730,7 @@
     const ends = v.ends;
     let turnIdx = 0;
     while (turnIdx + 1 < ends.length && ends[turnIdx + 1] <= v.pos) turnIdx++;
+    v.turnIdx = turnIdx;
     $("slider").value = String(turnIdx);
     $("position").textContent = "turn " + (ti + 1) + "/" + v.replay.turns.length + " · step " + v.pos + "/" + v.steps;
     updateHover();
@@ -645,16 +763,121 @@
     box.textContent = lines.join("\n");
   }
 
+  // The army chart over the slider: each player's army value at the start
+  // and after each turn, lined up with the slider's positions.
+
+  /** How far the slider's thumb travel is inset from its ends, in pixels. */
+  const CHART_INSET = 8;
+
+  /** The x of turn index `k` on a chart `w` pixels wide. @param {number} k @param {number} w */
+  function chartX(k, w) {
+    return CHART_INSET + ((w - 2 * CHART_INSET) * k) / Math.max(1, v.ends.length - 1);
+  }
+
+  /** The turn index nearest to an x on the chart. @param {number} x */
+  function chartTurn(x) {
+    const w = $("chart").getBoundingClientRect().width;
+    const k = Math.round(((x - CHART_INSET) / Math.max(1, w - 2 * CHART_INSET)) * (v.ends.length - 1));
+    return Math.max(0, Math.min(v.ends.length - 1, k));
+  }
+
+  function buildLegend() {
+    const legend = $("army-legend");
+    legend.replaceChildren(el("span", "Army value", "muted"));
+    for (const p of [1, 2]) {
+      const item = el("span", playerName(p));
+      item.prepend(el("span", "", "key p" + p));
+      legend.append(item);
+    }
+  }
+
+  function drawChart() {
+    const cv = $("chart");
+    const box = cv.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(box.width * dpr);
+    cv.height = Math.round(box.height * dpr);
+    const army = v.info && v.info.army;
+    if (!army || !v.replay) return;
+    const ctx = /** @type {CanvasRenderingContext2D} */ (cv.getContext("2d"));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const n = Math.min(army.length, v.ends.length);
+    let max = 1;
+    for (let k = 0; k < n; k++) max = Math.max(max, army[k][0], army[k][1]);
+    const w = box.width;
+    const base = box.height - 4;
+    const y = (/** @type {number} */ value) => base - ((base - 6) * value) / max;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar("--border");
+    ctx.beginPath();
+    ctx.moveTo(chartX(0, w), base + 0.5);
+    ctx.lineTo(chartX(n - 1, w), base + 0.5);
+    ctx.stroke();
+    if (v.chartHover >= 0) {
+      const x = Math.round(chartX(v.chartHover, w)) + 0.5;
+      ctx.strokeStyle = cssVar("--muted");
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, base);
+      ctx.stroke();
+    }
+    ctx.lineWidth = 2;
+    ctx.lineCap = ctx.lineJoin = "round";
+    for (const p of [1, 2]) {
+      ctx.strokeStyle = playerColor(p);
+      ctx.beginPath();
+      for (let k = 0; k < n; k++) {
+        if (k) ctx.lineTo(chartX(k, w), y(army[k][p - 1]));
+        else ctx.moveTo(chartX(k, w), y(army[k][p - 1]));
+      }
+      ctx.stroke();
+    }
+    // The turn shown: a dot on each line, ringed in the surface color.
+    const k = Math.min(v.turnIdx, n - 1);
+    for (const p of [1, 2]) {
+      ctx.beginPath();
+      ctx.arc(chartX(k, w), y(army[k][p - 1]), 4, 0, 2 * Math.PI);
+      ctx.fillStyle = playerColor(p);
+      ctx.fill();
+      ctx.strokeStyle = cssVar("--panel");
+      ctx.stroke();
+    }
+  }
+
+  /** Shows both armies' values at the hovered turn. */
+  function updateChartTip() {
+    const tip = $("chart-tip");
+    const army = v.info && v.info.army;
+    const k = v.chartHover;
+    if (!army || k < 0 || k >= army.length) {
+      tip.style.display = "none";
+      return;
+    }
+    const turn = k > 0 ? v.replay.turns[k - 1] : null;
+    tip.replaceChildren(el("div", turn ? "turn " + k + " · round " + turn.round : "start", "muted"));
+    for (const p of [1, 2]) {
+      const row = el("div", " " + playerName(p));
+      row.prepend(el("span", "", "key p" + p), el("b", army[k][p - 1].toLocaleString()));
+      tip.append(row);
+    }
+    tip.style.display = "block";
+    const w = $("chart").getBoundingClientRect().width;
+    const half = tip.offsetWidth / 2;
+    tip.style.left = Math.max(half, Math.min(w - half, chartX(k, w))) + "px";
+  }
+
   // Navigation.
 
   /** @param {number} k */
   function setPos(k) {
     if (!v.engine || !v.replay) return;
+    v.anim = null;
     v.pos = Math.max(0, Math.min(v.steps, k));
     v.state = v.engine.seek(v.pos);
-    v.prev = v.pos > 0 ? v.engine.seek(v.pos - 1) : null;
+    v.marks = turnMarks();
     updateSide();
     draw();
+    drawChart();
   }
 
   function nextTurn() {
@@ -672,6 +895,44 @@
     v.playing = false;
     clearTimeout(v.timer);
     $("play").textContent = "▶";
+    draw();
+  }
+
+  /**
+   * Moves to position `k`, with the units that move on the way sliding along
+   * their paths for `ms` milliseconds. Units killed on the way stay until the
+   * slide ends.
+   * @param {number} k @param {number} ms
+   */
+  function animateTo(k, ms) {
+    const from = v.pos;
+    const old = v.state;
+    setPos(k);
+    /** @type {Map<number, number[][]>} */
+    const paths = new Map();
+    for (const m of v.marks) {
+      if (m.step < from || m.op !== "M" || !m.ok) continue;
+      const path = paths.get(m.id);
+      paths.set(m.id, path ? path.concat(m.hexes.slice(1)) : m.hexes);
+    }
+    const alive = new Set(v.state.units.map((/** @type {any[]} */ u) => u[0]));
+    const ghosts = old ? old.units.filter((/** @type {any[]} */ u) => !alive.has(u[0])) : [];
+    if (ms < 40 || (!paths.size && !ghosts.length)) return;
+    // Every unit moves at the same speed, so the longest path sets the time.
+    let len = 1;
+    for (const path of paths.values()) len = Math.max(len, path.length - 1);
+    const anim = { from, paths, ghosts, len, p: 0 };
+    const t0 = performance.now();
+    v.anim = anim;
+    const frame = (/** @type {number} */ now) => {
+      if (v.anim !== anim) return;
+      const t = Math.max(0, Math.min(1, (now - t0) / ms));
+      anim.p = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+      if (t >= 1) v.anim = null;
+      draw();
+      if (v.anim) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
   }
 
   function tick() {
@@ -679,7 +940,7 @@
     v.timer = window.setTimeout(() => {
       if (!v.playing) return;
       if (v.pos >= v.steps) return stop();
-      setPos(mode === "turn" ? nextTurn() : v.pos + 1);
+      animateTo(mode === "turn" ? nextTurn() : v.pos + 1, Number(ms) * 0.6);
       tick();
     }, Number(ms));
   }
@@ -715,6 +976,13 @@
       v.pan = [0, 0];
       v.hover = null;
       v.listTurn = -1;
+      v.marks = [];
+      v.base = { ti: -1, units: [] };
+      v.chartHover = -1;
+      // The army chart needs the timeline that a current bitbath_wasm.js adds.
+      $("chart-box").hidden = $("army-legend").hidden = !info.army;
+      if (info.army) buildLegend();
+      updateChartTip();
       $("slider").max = String(v.ends.length - 1);
       $("empty").style.display = "none";
       const h = replay.header;
@@ -822,6 +1090,29 @@
     redrawAll();
   });
 
+  // Clicking or dragging on the army chart scrubs like the slider.
+  const chart = $("chart");
+  chart.addEventListener("pointerdown", (/** @type {PointerEvent} */ e) => {
+    if (!v.replay) return;
+    chart.setPointerCapture(e.pointerId);
+    setPos(v.ends[chartTurn(e.offsetX)]);
+  });
+  chart.addEventListener("pointermove", (/** @type {PointerEvent} */ e) => {
+    if (!v.replay) return;
+    const k = chartTurn(e.offsetX);
+    if (e.buttons & 1 && v.ends[k] !== v.pos) setPos(v.ends[k]);
+    if (k !== v.chartHover) {
+      v.chartHover = k;
+      updateChartTip();
+      drawChart();
+    }
+  });
+  chart.addEventListener("pointerleave", () => {
+    v.chartHover = -1;
+    updateChartTip();
+    drawChart();
+  });
+
   board.addEventListener("dragover", (/** @type {DragEvent} */ e) => {
     e.preventDefault();
     board.classList.add("dragging");
@@ -835,9 +1126,11 @@
   });
 
   new ResizeObserver(redrawAll).observe(board);
+  new ResizeObserver(drawChart).observe($("chart-box"));
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
     v.dark = e.matches;
     redrawAll();
+    drawChart();
     if (v.state) updateSide();
   });
 

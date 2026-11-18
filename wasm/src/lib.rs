@@ -145,17 +145,31 @@ fn load(setup: &str, script: &str) -> Result<(Viewer, String), String> {
     // Each step's result line (empty for turn starts), so the viewer can
     // list a turn's orders with their outcomes without seeking to each.
     let mut results = Vec::with_capacity(steps.len());
+    // Each player's army value at the start and after each turn, for the
+    // viewer's strength chart.
+    let mut army = vec![army_json(&game)];
     let mut g = game;
     for (i, step) in steps.iter().enumerate() {
         if i > 0 && matches!(step, Step::Turn(_)) {
             snapshots.push((i, g.clone()));
+            army.push(army_json(&g));
         }
         let reply = apply(&mut g, step);
         results.push(esc(reply.last().map_or("", String::as_str)));
     }
+    army.push(army_json(&g));
     info.pop();
-    let _ = write!(info, ",\"results\":[{}]}}", results.join(","));
+    let _ = write!(
+        info,
+        ",\"results\":[{}],\"army\":[{}]}}",
+        results.join(","),
+        army.join(",")
+    );
     Ok((Viewer { steps, snapshots }, info))
+}
+
+fn army_json(game: &Game) -> String {
+    format!("[{},{}]", game.army_value(1), game.army_value(2))
 }
 
 fn esc(s: &str) -> String {
@@ -326,6 +340,11 @@ mod tests {
         let script = "T 1\nO M 3 000\nO B 0 I\nT 2\nO M 6 333\nT 1\nO M 99 0\n";
         let (viewer, info) = load(&setup, script).unwrap();
         assert!(info.starts_with("{\"width\":40,"));
+        // One army entry at the start and one after each of the 3 turns;
+        // each side starts with two infantry and a scout.
+        let army = &info[info.find("\"army\":").unwrap()..];
+        assert_eq!(army.matches('[').count(), 1 + 4, "{army}");
+        assert!(army.starts_with("\"army\":[[280,280],"), "{army}");
         assert_eq!(viewer.steps.len(), 7);
         assert_eq!(viewer.snapshots.len(), 3);
         for k in 0..=7 {

@@ -26,8 +26,8 @@
       --border: #33373d;
       --accent: #6aa0ff;
       --highlight: #3a3420;
-      --p1: #ef6a64;
-      --p2: #5b93ff;
+      --p1: #e8625c;
+      --p2: #5590f5;
       --neutral: #8b8f94;
     }
   }
@@ -49,7 +49,34 @@
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
   }
-  footer { border-top: 1px solid var(--border); border-bottom: none; }
+  footer {
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+    display: grid;
+    grid-template-columns: auto minmax(120px, 1fr) auto;
+    grid-template-areas: "legend chart ." "transport slider settings";
+    row-gap: 4px;
+  }
+  #transport, #settings { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; }
+  #transport { grid-area: transport; gap: 6px; }
+  #settings { grid-area: settings; }
+  #army-legend {
+    grid-area: legend; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end;
+    gap: 2px 12px; font-size: 12px;
+  }
+  #chart-box { grid-area: chart; position: relative; height: 40px; }
+  #chart { cursor: pointer; touch-action: none; }
+  #chart-tip {
+    position: absolute; bottom: calc(100% + 6px); transform: translateX(-50%); display: none; z-index: 2;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+    font-size: 12px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .15);
+  }
+  .key { display: inline-block; width: 12px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 5px; }
+  .key.p1 { background: var(--p1); }
+  .key.p2 { background: var(--p2); }
+  .muted { color: var(--muted); }
+  [hidden] { display: none !important; }
   header h1 { font-size: 16px; margin: 0; }
   #matchup { color: var(--muted); }
   main { flex: 1; display: flex; min-height: 0; }
@@ -90,7 +117,7 @@
     cursor: pointer;
   }
   button:hover { border-color: var(--accent); }
-  #slider { flex: 1; min-width: 120px; accent-color: var(--accent); }
+  #slider { grid-area: slider; width: 100%; margin: 0; accent-color: var(--accent); }
   #position { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 9em; }
   #empty {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -102,6 +129,8 @@
     main { flex-direction: column; }
     #board { min-height: 60vh; }
     #side { width: auto; border-left: none; border-top: 1px solid var(--border); }
+    footer { grid-template-columns: 1fr; grid-template-areas: "legend" "chart" "slider" "transport" "settings"; }
+    #army-legend { justify-self: start; justify-content: flex-start; }
   }
 </style>
 </head>
@@ -133,28 +162,37 @@
   </aside>
 </main>
 <footer>
-  <button id="first" title="Start (Home)">⏮</button>
-  <button id="prev-turn" title="Previous turn (↑ or Shift+←)">⏪</button>
-  <button id="prev" title="Previous order (←)">◀</button>
-  <button id="play" title="Play or pause (Space)">▶</button>
-  <button id="next" title="Next order (→)">▶|</button>
-  <button id="next-turn" title="Next turn (↓ or Shift+→)">⏩</button>
-  <button id="last" title="End (End)">⏭</button>
-  <input type="range" id="slider" min="0" max="0" value="0">
-  <span id="position"></span>
-  <select id="speed" title="Playback speed">
-    <option value="turn:1000">1 turn/s</option>
-    <option value="turn:333" selected>3 turns/s</option>
-    <option value="turn:100">10 turns/s</option>
-    <option value="order:200">5 orders/s</option>
-    <option value="order:50">20 orders/s</option>
-  </select>
-  <select id="view" title="Fog of war">
-    <option value="0">Both players</option>
-    <option value="1">Player 1's view</option>
-    <option value="2">Player 2's view</option>
-  </select>
-  <label><input type="checkbox" id="debug" checked> Debug</label>
+  <div id="army-legend" hidden></div>
+  <div id="chart-box" hidden>
+    <canvas id="chart" role="img" aria-label="Each player's army value after each turn"></canvas>
+    <div id="chart-tip"></div>
+  </div>
+  <div id="transport">
+    <button id="first" title="Start (Home)">⏮</button>
+    <button id="prev-turn" title="Previous turn (↑ or Shift+←)">⏪</button>
+    <button id="prev" title="Previous order (←)">◀</button>
+    <button id="play" title="Play or pause (Space)">▶</button>
+    <button id="next" title="Next order (→)">▶|</button>
+    <button id="next-turn" title="Next turn (↓ or Shift+→)">⏩</button>
+    <button id="last" title="End (End)">⏭</button>
+  </div>
+  <input type="range" id="slider" min="0" max="0" value="0" aria-label="Turn">
+  <div id="settings">
+    <span id="position"></span>
+    <select id="speed" title="Playback speed">
+      <option value="turn:1000">1 turn/s</option>
+      <option value="turn:333" selected>3 turns/s</option>
+      <option value="turn:100">10 turns/s</option>
+      <option value="order:200">5 orders/s</option>
+      <option value="order:50">20 orders/s</option>
+    </select>
+    <select id="view" title="Fog of war">
+      <option value="0">Both players</option>
+      <option value="1">Player 1's view</option>
+      <option value="2">Player 2's view</option>
+    </select>
+    <label><input type="checkbox" id="debug" checked> Debug</label>
+  </div>
 </footer>
 <script src="bitbath_wasm.js"></script>
 <script src="viewer.js"></script>
