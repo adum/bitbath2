@@ -4,14 +4,23 @@ Each turn it runs five phases:
 
 1. Capture with every unit already standing on a city it doesn't own.
 2. Rush cities that capturers can reach this turn, sending enough units
-   together to take a city at once when possible.
+   together to take a city at once when possible. This runs again after
+   the fight, which may have cleared a city.
 3. Fight: repeatedly make the best move-and-attack trade on the board,
-   focusing fire on units that can be killed this turn.
-4. Advance: assign the remaining units to cities (to capture, or to defend)
-   and march them there, holding back from places where the visible enemy
-   outweighs nearby friends.
-5. Build: spend all gold on the unit mix that trades best, by the damage
+   focusing fire on units that can be killed this turn, and preferring to
+   attack from hexes the enemy can't strike back at next turn.
+4. Advance: assign the remaining units to cities (neutral ones first) and
+   march them there, staying out of hexes the enemy can strike next turn.
+   Wounded units go home to heal, and each city keeps a garrison.
+5. Build: spend all gold on the unit type that trades best, by the damage
    table, against the enemy units seen so far.
+
+The enemy's strike range is worked out from every enemy unit seen in the
+last few turns, not only those in view now: infantry see 2 hexes but strike
+from 4, so most attackers come out of the fog.
+
+On the last turn of the game only the tiebreak matters, so it plays for
+cities and army value alone.
 
 Everything is read from the rules message, so it adapts to rule variants.
 
@@ -29,19 +38,36 @@ import bitbath as bb  # noqa: E402
 DISK2 = bb.disk((0, 0), 2)
 DISK3 = bb.disk((0, 0), 3)
 
-# A unit won't walk to a hex where visible enemy strength within 3 hexes
-# exceeds this many times the friendly strength within 2.
+# rush_cities won't send units onto a city where visible enemy strength within
+# 3 hexes exceeds this many times the friendly strength within 2, unless the
+# city falls at once.
 CAUTION = 1.3
 # An attack is made when its gain exceeds this share of its loss. Below 1,
 # because declining to attack hands the enemy the first strike.
 LOSS_WEIGHT = 0.8
 # Build shares are each type's score relative to the best, raised to this
-# power. High, so that gold goes almost entirely to the best-trading type.
+# power. High, so that gold goes almost entirely to the best-trading type;
+# types below MIN_SHARE are not built at all.
 SHARE_POWER = 8
-# Strength sent to an undefended neutral city: two infantry take it at once.
-NEUTRAL_FORCE = 200
+MIN_SHARE = 0.1
 # Until the army is this big, build only units that can capture.
 EARLY_ARMY = 6
+# Marching goals: what a city is worth, by owner. Neutral cities come first:
+# they are free income, and the side that holds more cities wins the long game.
+NEUTRAL_VALUE, ENEMY_VALUE, OWN_VALUE = 1.0, 0.2, 1.0
+# Strength sent to an undefended neutral city: two infantry take it at once.
+NEUTRAL_FORCE = 200
+# Marching: what one enemy unit able to strike a hex next turn costs, in
+# move points of progress toward the goal.
+RISK = 12
+# Attacking: what each enemy able to strike the attack hex costs, in gold.
+EXPOSE = 10
+# Units below this share of full HP go back to a city to heal.
+HEAL_BELOW = 0.76
+# From this round on, the last unit on a city stays as its garrison.
+GARRISON_ROUND = 8
+# Enemies that slipped out of sight still count as threats for this many turns.
+GHOST = 8
 # Stop planning moves when this little of the turn is left, and go build.
 RESERVE_MS = 120
 
@@ -60,6 +86,17 @@ class SmartBot(bb.Bot):
         # Terrain never changes, so each city's distance field is computed once.
         self.city_field = {cid: self.distance_field([h], blocked=set()) for cid, h, _ in m.cities}
         self.city_at = {h: cid for cid, h, _ in m.cities}
+        self.rings = {}
+        self.disks = {}
+        self.vbonus = {h: m.terrain(h).vision_bonus for h in self.defense}
+        self.ghosts = {}    # enemy id -> (Unit as last seen, round)
+        self.loss_weight, self.expose, self.risk_weight, self.last_turn = LOSS_WEIGHT, EXPOSE, RISK, False
+        self.menace, self.menaces = {}, {}
+        capturers = [t for t in self.types.values() if t.capture] or list(self.types.values())
+        line = min(capturers, key=lambda t: t.cost)
+        self.par = self.first_strike(line.code, line.max_hp, line.code) or 1
+        self.cover = {}
+        self.risk_at = {}
         self.seen = {}      # enemy unit id -> type, for every enemy seen and not known dead
         self.failed = set()
 
@@ -71,7 +108,6 @@ class SmartBot(bb.Bot):
         self.enemies = {}       # id -> Unit
         self.enemy_hex = set()
         self.zoc = set()        # hexes where a move ends
-        self.adjacent = set()   # hexes next to any visible enemy
         self.threat = {}        # hex -> enemy strength within 3
         self.support = {}       # hex -> friendly strength within 2
         self.occ = {}           # hex -> number of my units
@@ -86,10 +122,8 @@ class SmartBot(bb.Bot):
                 self.enemies[u.id] = u
                 self.seen[u.id] = u.type
                 self.enemy_hex.add((q, r))
-                near = bb.neighbors((q, r))
-                self.adjacent.update(near)
                 if self.types[u.type].zoc:
-                    self.zoc.update(near)
+                    self.zoc.update(bb.neighbors((q, r)))
                 table, offsets = self.threat, DISK3
             for dq, dr in offsets:
                 h = (q + dq, r + dr)
@@ -114,7 +148,7 @@ class SmartBot(bb.Bot):
 
     # Movement.
 
-    def reach(self, u):
+    def reach(self, u, block_cities=True):
         """Where u can end a move this turn, as {hex: dirs}, including where it stands."""
         start = u.hex
         out = {start: ""}
@@ -122,7 +156,7 @@ class SmartBot(bb.Bot):
             return out
         skirmish = self.types[u.type].skirmish
         # A unit that can't capture would only block a city we want to take.
-        avoid = () if self.types[u.type].capture else self.foreign_cities
+        avoid = () if self.types[u.type].capture or not block_cities else self.foreign_cities
         mp, occ, limit, zoc, blocked, nbrs = u.mp, self.occ, self.limit, self.zoc, self.enemy_hex, self.nbrs
         best = {start: 0}
         heap = [(0, start, "")]
@@ -152,15 +186,66 @@ class SmartBot(bb.Bot):
             self.occ[f.hex] = self.occ.get(f.hex, 0) + 1
         return False
 
-    def dominated(self, u, h):
-        """Whether the visible enemy near h outweighs u and its friends there."""
-        threat = self.threat.get(h, 0)
-        if not threat:
-            return False
-        support = self.support.get(h, 0)
-        if bb.distance(h, u.hex) > 2:
-            support += self.worth(u)
-        return threat > CAUTION * support
+    def coverage(self):
+        """How many visible enemy units could strike each hex next turn, as
+        {hex: count}, counting a wounded unit as its share of full HP."""
+        friends = set(self.occ)
+        stops = {h for u in self.state.my_units() if self.types[u.type].zoc for h in bb.neighbors(u.hex)}
+        cover, nbrs = {}, self.nbrs
+        mine = {u.type for u in self.state.my_units()}
+        self.menace = {code: {} for code in mine}
+        for e in list(self.enemies.values()) + [g for i, (g, _) in self.ghosts.items() if i not in self.enemies]:
+            t = self.types[e.type]
+            budget = 0 if t.no_move_attack else t.move
+            dist = {e.hex: 0}
+            heap = [(0, e.hex)]
+            while heap:
+                cost, h = heapq.heappop(heap)
+                if cost != dist[h] or (h != e.hex and h in stops and not t.skirmish):
+                    continue
+                for _, n, enter in nbrs[h]:
+                    c = cost + enter
+                    if c <= budget and c < dist.get(n, budget + 1) and n not in friends:
+                        dist[n] = c
+                        heapq.heappush(heap, (c, n))
+            key = (t.range_min, t.range_max)
+            if key not in self.rings:
+                self.rings[key] = [o for r in range(key[0], key[1] + 1) for o in bb.ring((0, 0), r)]
+            offsets = self.rings[key]
+            struck = {(q + dq, r + dr) for q, r in dist for dq, dr in offsets}
+            w = e.hp / t.max_hp
+            for h in struck:
+                cover[h] = cover.get(h, 0) + w
+            for code in mine:
+                w = self.menace_of(e, code)
+                if w:
+                    table = self.menace[code]
+                    for h in struck:
+                        table[h] = table.get(h, 0) + w
+        return cover
+
+    def menace_of(self, e, code):
+        """How much an enemy unit wants to strike one of our units of a type:
+        its gain from a first strike on open ground, relative to a fight
+        between two of the cheapest capturers. 0 if it would lose by it."""
+        key = (e.type, e.hp, code)
+        if key not in self.menaces:
+            self.menaces[key] = self.first_strike(e.type, e.hp, code) / self.par
+        return self.menaces[key]
+
+    def first_strike(self, att, att_hp, dfn):
+        types, damage = self.types, self.rules.damage
+        a, d = types[att], types[dfn]
+        hit = min(d.max_hp, damage[att][dfn] * att_hp // a.max_hp)
+        gain = d.cost * hit / d.max_hp
+        back = 0
+        if hit < d.max_hp and d.range_min <= a.range_min <= d.range_max:
+            back = min(att_hp, damage[dfn][att] * (d.max_hp - hit) // d.max_hp)
+        return max(0, gain - LOSS_WEIGHT * a.cost * back / a.max_hp)
+
+    def risk(self, h, code):
+        """Enemy strikes that threaten a unit of a type on h, discounted by terrain."""
+        return self.menace.get(code, {}).get(h, 0) * (1 - self.defense.get(h, 0) / 100)
 
     # Phase 1 and 2: captures.
 
@@ -222,19 +307,24 @@ class SmartBot(bb.Bot):
         cid = self.city_at.get(e.hex)
         if cid is not None and et.capture and self.state.cities[cid].owner != e.owner:
             gain += 150 if left <= 0 else 50   # it is taking a city
+        elif cid is not None and self.state.cities[cid].owner == self.player and left <= 0:
+            gain += 100     # it was stopping the city from building
         loss = 0
         if left > 0 and et.in_range(bb.distance(h, e.hex)):
             back = self.dmg(e.type, left, u.type, h)
             loss = ut.cost * min(back, u.hp) / ut.max_hp
             if back >= u.hp:
                 loss += ut.cost * 0.5
-        return gain - LOSS_WEIGHT * loss
+        return gain - self.loss_weight * loss
 
     def attack_options(self):
         """For each unit that can attack: [(enemy id, hex to attack from, dirs to get there)]."""
         opts = {}
         enemies = list(self.enemies.values())
+        self.cover = self.coverage()
+        self.risk_at = {}
         for u in self.ready():
+            self.risk_at[u.type, u.hex] = self.risk(u.hex, u.type)
             if u.id in self.failed:
                 continue
             t = self.types[u.type]
@@ -251,10 +341,11 @@ class SmartBot(bb.Bot):
                 for radius in range(t.range_min, t.range_max + 1):
                     for h in bb.ring(e.hex, radius):
                         if h in reach:
-                            key = (self.defense[h], -len(reach[h]))
+                            key = (self.defense[h] - 28 * self.risk(h, u.type), -len(reach[h]))
                             if best is None or key > best[0]:
                                 best = (key, h)
                 if best:
+                    self.risk_at[u.type, best[1]] = self.risk(best[1], u.type)
                     found.append((e.id, best[1], reach[best[1]]))
             if found:
                 opts[u.id] = found
@@ -281,6 +372,12 @@ class SmartBot(bb.Bot):
                     if not e or (h != u.hex and self.occ.get(h, 0) >= self.limit):
                         continue
                     score = self.trade(u, e, h, potential[tid] >= e.hp)
+                    if (u.type, h) in self.risk_at and h != u.hex:
+                        # Standing where the enemy can strike back costs something.
+                        after = self.risk_at[u.type, h]
+                        if self.dmg(u.type, u.hp, e.type, e.hex) >= e.hp:
+                            after = max(0, after - self.menace_of(e, u.type) * (1 - self.defense[h] / 100))
+                        score -= self.expose * (min(3, after) - min(3, self.risk_at.get((u.type, u.hex), 0)))
                     if best is None or score > best[0]:
                         best = (score, uid, tid, h, dirs)
             if best is None or best[0] <= 0:
@@ -297,6 +394,7 @@ class SmartBot(bb.Bot):
             del opts[uid]
             if self.attack(u, tid) and tid not in units:
                 self.seen.pop(tid, None)
+                self.ghosts.pop(tid, None)
             self.sync()
             opts = {k: v for k, v in opts.items() if k in units}
 
@@ -305,27 +403,37 @@ class SmartBot(bb.Bot):
     def advance(self):
         self.refresh()
         s, me = self.state, self.player
+        self.cover = self.coverage()
         # Goal cities: id -> (value, strength wanted there).
         goals = {}
         for c in s.cities:
             threat = self.threat.get(c.hex, 0)
             if c.owner == me:
                 if threat or c.capturer not in (0, me):
-                    goals[c.id] = (2.0, 1.2 * threat + 50)
+                    goals[c.id] = (OWN_VALUE, 1.2 * threat + 50)
             elif c.owner == 0:
-                goals[c.id] = (1.0, NEUTRAL_FORCE + threat)
+                goals[c.id] = (NEUTRAL_VALUE, NEUTRAL_FORCE + threat)
             else:
-                goals[c.id] = (1.5, 300 + 1.5 * threat)
+                goals[c.id] = (ENEMY_VALUE, 300 + 1.5 * threat)
         if not goals:
             return
         contested = [cid for cid in goals if s.cities[cid].owner != 0 or self.threat.get(s.cities[cid].hex, 0)]
-        plans = []
+        mine = s.my_cities()
+        plans, scouts = [], []
         for u in self.ready():
             if u.mp <= 0:
                 continue
             t = self.types[u.type]
+            here = self.city_at.get(u.hex)
+            if (here is not None and s.cities[here].owner == me and s.round >= GARRISON_ROUND
+                    and self.occ.get(u.hex, 0) == 1):
+                continue    # the garrison stays
             if t.skirmish and not t.capture:
-                self.scout(u)
+                scouts.append(u)
+                continue
+            if u.hp < t.max_hp * HEAL_BELOW and mine:
+                home = min(mine, key=lambda c: (self.city_field[c.id].get(u.hex, 1 << 30) + 4 * self.cover.get(c.hex, 0), c.id))
+                plans.append((-1, u.id, u, {home.id: 0}))
                 continue
             # Units that can't capture go where there is something to fight.
             wanted = goals if t.capture or not contested else contested
@@ -341,64 +449,107 @@ class SmartBot(bb.Bot):
         for _, _, u, turns in plans:
             if self.out_of_time():
                 break
-            cid = max(turns, key=lambda c: goals[c][0] / (turns[c] + 2) / (1 + load[c] / goals[c][1]))
-            load[cid] += self.worth(u)
+            if len(turns) == 1:
+                cid = next(iter(turns))
+            else:
+                cid = max(turns, key=lambda c: goals[c][0] / (turns[c] + 2) / (1 + load[c] / goals[c][1]))
+            if cid in load:
+                load[cid] += self.worth(u)
             self.debug_line(u.hex, s.cities[cid].hex, "orange")
             self.march(u, cid)
+        self.post_scouts(scouts)
         self.debug_text("round %d: %d units marching on %d cities" % (s.round, len(plans), len(goals)))
 
     def march(self, u, cid):
-        """Moves u toward a city, stopping short of fights it would lose."""
-        field, goal = self.city_field[cid], self.state.cities[cid].hex
+        """Moves u toward a city, weighing progress against the enemy's reach."""
+        field, cities, me = self.city_field[cid], self.state.cities, self.player
+        t = self.types[u.type]
+        hurt = u.hp < t.max_hp
         best = None
         for h, dirs in self.reach(u).items():
             d = field.get(h)
             if d is None:
                 continue
-            if h != u.hex and ((h in self.adjacent and h != goal) or self.dominated(u, h)):
-                continue
-            key = (d - self.defense[h] / 50, len(dirs))
-            if best is None or key < best[0]:
-                best = (key, h, dirs)
-        if best[1] == u.hex:
-            cid_here = self.city_at.get(u.hex)
-            if self.dominated(u, u.hex) and (cid_here is None or self.state.cities[cid_here].owner != self.player):
-                self.retreat(u)
-            return
-        self.go(u, best[2])
+            score = -d - self.risk_weight * min(6, self.risk(h, u.type)) + self.defense[h] / 45
+            here = self.city_at.get(h)
+            if here is not None and cities[here].owner == me:
+                if hurt:
+                    score += 6      # it heals there
+                if self.occ.get(h, 0) - (h == u.hex) >= self.limit - 1:
+                    score -= 10     # leave room to build
+            if t.no_move_attack and any(t.in_range(bb.distance(e.hex, h)) for e in self.enemies.values()):
+                score += 8          # it can shoot from there next turn
+            key = (score, -len(dirs))
+            if best is None or key > best[0]:
+                best = (key, dirs)
+        if best and best[1]:
+            self.go(u, best[1])
         if self.can_capture(u):
             self.capture(u)
 
-    def retreat(self, u):
-        """Falls back toward the nearest city we own."""
-        if self._home_field is None:
-            self._home_field = self.distance_field([c.hex for c in self.state.my_cities()], blocked=set())
-        field = self._home_field
-        best = (field.get(u.hex, 1 << 30), "")
-        for h, dirs in self.reach(u).items():
-            d = field.get(h)
-            if d is not None and h not in self.adjacent and d < best[0]:
-                best = (d, dirs)
-        if best[1]:
-            self.go(u, best[1])
+    def disk(self, h, radius):
+        if radius not in self.disks:
+            self.disks[radius] = bb.disk((0, 0), radius)
+        q, r = h
+        return [(q + dq, r + dr) for dq, dr in self.disks[radius]]
+
+    def sight(self, units):
+        """The hexes our cities and the given units can see."""
+        seen = set()
+        for c in self.state.my_cities():
+            seen.update(self.disk(c.hex, self.rules.city_vision))
+        for u in units:
+            seen.update(self.disk(u.hex, self.types[u.type].vision + self.vbonus.get(u.hex, 0)))
+        return seen
+
+    def post_scouts(self, scouts):
+        """Posts scouts where they show the most unseen ground around the
+        army, out of the enemy's reach. With nothing to watch, they raid."""
+        if not scouts:
+            return
+        known = [e.hex for e in self.enemies.values()] + [g.hex for g, _ in self.ghosts.values()]
+        known += [c.hex for c in self.state.cities if c.owner not in (0, self.player)]
+        army = [u for u in self.state.my_units() if not (self.types[u.type].skirmish and not self.types[u.type].capture)]
+        front = [u for u in army if any(bb.distance(u.hex, k) <= 8 for k in known)]
+        want = set()
+        for u in front:
+            want.update(self.disk(u.hex, 5))
+        want -= self.sight(army)
+        want &= set(self.defense)
+        for u in scouts:
+            if self.out_of_time():
+                return
+            t = self.types[u.type]
+            best = None
+            for h, dirs in self.reach(u).items():
+                view = self.disk(h, t.vision + self.vbonus.get(h, 0))
+                gain = sum(1 for v in view if v in want)
+                key = (gain - 30 * self.risk(h, u.type), -len(dirs))
+                if best is None or key > best[0]:
+                    best = (key, h, dirs, gain)
+            if not best or best[3] == 0:
+                self.scout(u)
+                continue
+            if best[2]:
+                self.go(u, best[2])
+            want -= set(self.disk(u.hex, t.vision + self.vbonus.get(u.hex, 0)))
 
     def scout(self, u):
-        """Scouts watch the nearest enemy city from outside the enemy's reach."""
-        theirs = [c.id for c in self.state.cities if c.owner not in (0, self.player)]
-        here = u.hex
-        dists = {cid: self.city_field[cid].get(here) for cid in theirs}
-        dists = {cid: d for cid, d in dists.items() if d is not None}
-        if not dists:
-            return
-        field = self.city_field[min(dists, key=lambda cid: (dists[cid], cid))]
+        """Scouts sit on an empty enemy city, which stops it building."""
+        theirs = [c for c in self.state.cities if c.owner not in (0, self.player)]
+        reach = self.reach(u, block_cities=self.limit == 1)
         best = None
-        for h, dirs in self.reach(u).items():
-            d = field.get(h)
-            if d is None:
-                continue
-            key = (self.threat.get(h, 0), d, len(dirs))
-            if best is None or key < best[0]:
-                best = (key, dirs)
+        for c in theirs:
+            if self.occ.get(c.hex, 0) > (u.hex == c.hex):
+                continue    # someone is there already
+            field = self.city_field[c.id]
+            for h, dirs in reach.items():
+                d = field.get(h)
+                if d is None or (h in self.foreign_cities and h != c.hex):
+                    continue
+                key = (-d - 4 * self.cover.get(h, 0) + 12 * (h == c.hex), -len(dirs))
+                if best is None or key > best[0]:
+                    best = (key, dirs)
         if best and best[1]:
             self.go(u, best[1])
 
@@ -443,12 +594,24 @@ class SmartBot(bb.Bot):
             near = min([self.city_field[c.id].get(city.hex, 1 << 30) for c in targets], default=0)
             return (-self.threat.get(city.hex, 0), near, city.id)
 
-        for city in sorted(s.my_cities(), key=urgency):
-            if city.built or city.hex in self.enemy_hex or self.occ.get(city.hex, 0) >= self.limit:
-                continue
+        sites = [c for c in sorted(s.my_cities(), key=urgency)
+                 if not (c.built or c.hex in self.enemy_hex or self.occ.get(c.hex, 0) >= self.limit)]
+        if self.last_turn:
+            # Unspent gold counts for nothing; a unit counts for its cost.
+            plans = {0: []}
+            for _ in sites:
+                for total, picks in list(plans.items()):
+                    if len(picks) < len(sites):
+                        for code, t in types.items():
+                            if total + t.cost <= s.gold and total + t.cost not in plans:
+                                plans[total + t.cost] = picks + [code]
+            for city, code in zip(sites, plans[max(plans)]):
+                self.build(city, code)
+            return
+        for city in sites:
             total = sum(count.values())
             can_capture = sum(n for code, n in count.items() if types[code].capture)
-            options = [code for code, t in types.items() if t.cost <= s.gold and share[code] >= 0.05]
+            options = [code for code, t in types.items() if t.cost <= s.gold and share[code] >= MIN_SHARE]
             if can_capture * 2 < total + 1 or total < EARLY_ARMY:
                 options = [code for code in options if types[code].capture] or options
             if not options:
@@ -464,17 +627,31 @@ class SmartBot(bb.Bot):
             if entry[0] == "HIT":
                 self.seen[int(entry[1])] = entry[2]
         self.failed = set()
-        self._home_field = None
+        # On the last turn only the tiebreak counts: cities, then army value.
+        self.last_turn = state.round >= self.rules.constants.get("round_limit", 1 << 30)
+        if self.last_turn and self.player == 2:
+            # Nothing can hit back after the final move of the game.
+            self.loss_weight, self.expose, self.risk_weight = 1.0, 0.0, 0.0
+        elif self.last_turn:
+            # The enemy still has a turn, so give it as little to hit as possible.
+            self.loss_weight, self.expose, self.risk_weight = 1.0, 4 * EXPOSE, 4 * RISK
         self.refresh()
+        visible = self.sight(state.my_units())
+        self.ghosts = {i: (g, seen) for i, (g, seen) in self.ghosts.items()
+                       if i not in self.enemies and state.round - seen < GHOST and g.hex not in visible}
         try:
             self.capture_in_place()
             self.rush_cities()
             self.fight()
+            self.refresh()
+            self.rush_cities()      # the fight may have cleared a city
             self.advance()
         except bb.GameOver:
             raise
         except Exception:
             traceback.print_exc()   # a bug in the plan shouldn't cost the builds too
+        for e in self.enemies.values():
+            self.ghosts[e.id] = (bb.Unit(e.id, e.owner, e.type, e.q, e.r, e.hp), state.round)
         self.build_all()
 
 
