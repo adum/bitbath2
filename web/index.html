@@ -77,6 +77,29 @@
   .key.p2 { background: var(--p2); }
   .muted { color: var(--muted); }
   [hidden] { display: none !important; }
+  #rules-button { margin-left: auto; }
+  #rules {
+    width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; padding: 0;
+    color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .3);
+  }
+  #rules::backdrop { background: rgba(0, 0, 0, .4); }
+  .dialog-head {
+    position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .dialog-head h2 { font-size: 16px; margin: 0; }
+  #rules-body { padding: 0 16px 16px; outline: none; }
+  #rules-body h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
+  #rules-body ul { margin: 0; padding-left: 18px; }
+  #rules-body li { margin: 3px 0; }
+  #rules-body .table-wrap { overflow-x: auto; margin-top: 8px; }
+  #rules-body table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  #rules-body th, #rules-body td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+  #rules-body th { font-weight: normal; font-size: 12px; color: var(--muted); }
+  #rules-body th:first-child, #rules-body td:first-child, #rules-body .text { text-align: left; }
+  #rules-body td.text { white-space: normal; }
+  .chip { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; border-radius: 3px; border: 1px solid rgba(0, 0, 0, .2); }
   header h1 { font-size: 16px; margin: 0; }
   #matchup { color: var(--muted); }
   main { flex: 1; display: flex; min-height: 0; }
@@ -145,6 +168,7 @@
   <h1>Bitbath</h1>
   <input type="file" id="file" accept=".bbr,.jsonl,.json">
   <span id="matchup"></span>
+  <button id="rules-button" title="The rules this game was played under" hidden>Rules</button>
 </header>
 <main>
   <div id="board">
@@ -204,6 +228,13 @@
     <label><input type="checkbox" id="debug" checked> Debug</label>
   </div>
 </footer>
+<dialog id="rules" aria-labelledby="rules-title">
+  <form method="dialog" class="dialog-head">
+    <h2 id="rules-title">Rules for this game</h2>
+    <button title="Close (Esc)" aria-label="Close">✕</button>
+  </form>
+  <div id="rules-body" tabindex="-1" autofocus></div>
+</dialog>
 <script src="bitbath_wasm.js"></script>
 <script src="viewer.js"></script>
 </body>

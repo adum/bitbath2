@@ -1026,6 +1026,145 @@
     tip.style.left = Math.max(half, Math.min(w - half, chartX(k, w))) + "px";
   }
 
+  // The rules dialog: the rules the game was played under, in plain words.
+
+  /**
+   * Reads the rule constants, base damage and starting units from a
+   * replay's setup lines (SPEC §6.2). The terrain and unit types come from
+   * the engine's info instead.
+   * @param {string[]} setup
+   */
+  function parseRules(setup) {
+    /** @type {{c: Record<string, number>, damage: Map<string, number[]>, start: string[]}} */
+    const rules = { c: {}, damage: new Map(), start: [] };
+    for (const line of setup) {
+      const t = line.trim().split(/\s+/);
+      if (t[0] === "RULE") rules.c[t[1]] = Number(t[2]);
+      else if (t[0] === "DAMAGE") rules.damage.set(t[1], t.slice(2).map(Number));
+      else if (t[0] === "START") rules.start = t.slice(1);
+    }
+    return rules;
+  }
+
+  const ABILITIES = /** @type {Record<string, string>} */ ({
+    capture: "captures cities",
+    zoc: "zone of control",
+    skirmish: "ignores zones of control",
+    no_move_attack: "can't move and attack in one turn",
+  });
+
+  function buildRules() {
+    const body = $("rules-body");
+    body.replaceChildren();
+    const { c, damage, start } = parseRules(v.replay.header.setup);
+    const units = Object.entries(v.info.units);
+    const name = (/** @type {string} */ code) => (v.info.units[code] ? v.info.units[code].name : code);
+    const secs = (/** @type {number} */ ms) => (ms / 1000).toLocaleString() + " s";
+    const num = (/** @type {number} */ n) => n.toLocaleString();
+    /** @param {string} title @param {string[]} items */
+    const section = (title, items) => {
+      const list = document.createElement("ul");
+      for (const item of items) list.append(el("li", item));
+      body.append(el("h3", title), list);
+    };
+    /** @param {string[]} head @param {any[][]} rows @param {number} [textCol] a column of words, aligned left */
+    const table = (head, rows, textCol = -1) => {
+      const t = document.createElement("table");
+      const tr = document.createElement("tr");
+      head.forEach((h, i) => tr.append(el("th", h, i === textCol ? "text" : "")));
+      t.append(tr);
+      for (const row of rows) {
+        const r = document.createElement("tr");
+        row.forEach((cell, i) => {
+          const td = el("td", "", i === textCol ? "text" : "");
+          td.append(cell instanceof Node ? cell : String(cell));
+          r.append(td);
+        });
+        t.append(r);
+      }
+      const wrap = el("div", "", "table-wrap");
+      wrap.append(t);
+      body.append(wrap);
+    };
+
+    const neutral = v.info.cities.filter((/** @type {number[]} */ city) => city[2] === 0).length;
+    const game = [
+      "Two players on a " + v.info.width + " × " + v.info.height + " hex map with " + neutral + " neutral " + (neutral === 1 ? "city" : "cities") + ".",
+    ];
+    if (start.length) game.push("Each player starts with " + tally(start.map(name)) + " on a home city, and " + num(c.start_gold) + " gold.");
+    game.push(
+      "A player who owns no cities loses at once.",
+      "After " + c.round_limit + " rounds, the player with more cities wins. If that's tied, the bigger army wins: each unit counts its cost scaled by the HP it has left. Otherwise it's a draw.",
+      "A bot that crashes, goes over its memory limit, or fails to finish " + c.hang_turns + " turns in a row forfeits.",
+    );
+    section("The game", game);
+
+    section("Each turn", [
+      "Income: " + c.city_income + " gold per city owned, minus " + c.unit_upkeep + " per unit. Gold never drops below 0, and nothing is disbanded.",
+      "Units standing on their own cities heal " + c.city_heal + " HP.",
+      "A city's capture progress is lost when the capturing player no longer has a unit on it.",
+      "Every unit gets its full movement back, and one action: an attack or a capture. A unit can't move after its action.",
+    ]);
+
+    const blocked = Object.values(v.info.terrain).filter((t) => !t.move_cost).map((t) => t.name);
+    section("Moving", [
+      "Each step costs the move cost of the hex entered (see Terrain)." + (blocked.length ? " " + capitalize(join(blocked)) + " can't be entered." : ""),
+      "Units may pass through friendly units but must stop on a hex with fewer than " + c.stack_limit + " units, and can't enter a hex with enemy units.",
+      "Zone of control: a unit that steps next to an enemy unit with zone of control must stop there. Units that ignore zones of control are exempt, and leaving costs nothing extra.",
+      "Moves are checked against what the player can see. A hidden enemy can cut a move short: walking into one is an ambush.",
+    ]);
+
+    const capturers = units.filter(([, u]) => u.flags.split(",").includes("capture"));
+    const hp = capturers.length ? capturers[0][1].max_hp : 0;
+    const turns = hp && capturers.every(([, u]) => u.max_hp === hp) ? " At full HP that takes " + Math.ceil(c.capture_points / hp) + " turns." : "";
+    section("Cities", [
+      "A unit that captures adds its current HP to a city's capture progress; " + c.capture_points + " points take the city." + turns,
+      "Each city you own can build one unit per turn, if no enemy unit is on it and it holds fewer than " + c.stack_limit + " of your units. New units can't move or act until your next turn.",
+      "Cities let their owner see " + c.city_vision + " hexes around them. Who owns each city is always public.",
+    ]);
+
+    section("Combat", [
+      "A unit attacks one visible enemy unit within its range; any unit in a stack can be picked. Attacking uses the action and ends the unit's movement.",
+      "Damage = base damage × attacker's HP ÷ its max HP × (100% − the defender's terrain defense), rounded down, and at least 1.",
+      "If the defender survives and the attacker is within its range, it strikes back the same way with the HP it has left.",
+    ]);
+    table(
+      ["Base damage: attacker ↓ defender →"].concat(units.map(([, u]) => u.name)),
+      units.map(([code, u]) => [u.name].concat(damage.get(code) || [])),
+    );
+
+    body.append(el("h3", "Units"));
+    table(
+      ["Unit", "Cost", "HP", "Move", "Vision", "Range", "Abilities"],
+      units.map(([code, u]) => {
+        const abilities = u.flags.split(",").filter((/** @type {string} */ f) => ABILITIES[f]).map((/** @type {string} */ f) => ABILITIES[f]);
+        if (u.range[0] > 1) abilities.push("can't attack adjacent units");
+        const range = u.range[0] === u.range[1] ? String(u.range[0]) : u.range[0] + "–" + u.range[1];
+        return [u.name + " (" + code + ")", u.cost, u.max_hp, u.move, u.vision, range, abilities.join(", ") || "–"];
+      }),
+      6,
+    );
+
+    body.append(el("h3", "Terrain"));
+    const pal = v.dark ? TERRAIN.dark : TERRAIN.light;
+    table(
+      ["Terrain", "Move cost", "Defense", "Vision"],
+      Object.entries(v.info.terrain).map(([ch, t]) => {
+        const chip = el("span", "", "chip");
+        chip.style.background = /** @type {any} */ (pal)[ch] || "#888";
+        const label = document.createElement("span");
+        label.append(chip, t.name);
+        if (!t.move_cost) return [label, "can't enter", "–", "–"];
+        return [label, t.move_cost, t.defense + "%", t.vision_bonus ? "+" + t.vision_bonus : "0"];
+      }),
+    );
+
+    section("Time and limits", [
+      "Each turn a bot has its time bank plus " + secs(c.time_increment_ms) + ". " + c.time_keep_pct + "% of the time it doesn't use goes into the bank, up to " + secs(c.time_bank_cap_ms) + "; going over takes from the bank. The bank starts at " + secs(c.time_bank_ms) + ".",
+      secs(c.init_ms) + " to start up. At most " + num(c.max_orders_per_turn) + " orders per turn, and " + num(c.max_line_bytes) + " bytes per line.",
+    ]);
+  }
+
   // Navigation.
 
   /** @param {number} k */
@@ -1143,6 +1282,8 @@
       $("chart-box").hidden = $("army-legend").hidden = !info.army;
       if (info.army) buildLegend();
       updateChartTip();
+      buildRules();
+      $("rules-button").hidden = false;
       $("slider").max = String(v.ends.length - 1);
       $("empty").style.display = "none";
       const h = replay.header;
@@ -1179,9 +1320,15 @@
     draw();
   };
 
+  $("rules-button").onclick = () => $("rules").showModal();
+  // A click on the backdrop lands on the dialog itself, since its content fills it.
+  $("rules").addEventListener("click", (/** @type {MouseEvent} */ e) => {
+    if (e.target === $("rules")) $("rules").close();
+  });
+
   document.addEventListener("keydown", (e) => {
     const tag = /** @type {HTMLElement} */ (e.target).tagName;
-    if (!v.replay || tag === "INPUT" || tag === "SELECT") return;
+    if (!v.replay || tag === "INPUT" || tag === "SELECT" || $("rules").open) return;
     const keys = {
       " ": togglePlay,
       ArrowRight: () => setPos(e.shiftKey ? nextTurn() : v.pos + 1),
@@ -1292,6 +1439,7 @@
     redrawAll();
     drawChart();
     if (v.state) updateSide();
+    if (v.replay) buildRules();
   });
 
   const url = new URLSearchParams(location.search).get("replay");
