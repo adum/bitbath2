@@ -17,7 +17,9 @@ Each turn it runs five phases:
 
 The enemy's strike range is worked out from every enemy unit seen in the
 last few turns, not only those in view now: infantry see 2 hexes but strike
-from 4, so most attackers come out of the fog.
+from 4, so most attackers come out of the fog. Its picture of what it can
+see follows the concealment rule, so an enemy that steps into forest is
+still counted, and scouts are posted where they really uncover ground.
 
 On the last turn of the game only the tiebreak matters, so it plays for
 cities and army value alone.
@@ -89,6 +91,9 @@ class SmartBot(bb.Bot):
         self.rings = {}
         self.disks = {}
         self.vbonus = {h: m.terrain(h).vision_bonus for h in self.defense}
+        # Terrain that hides the units on it from distant observers.
+        self.conceal = {h: c for h in self.defense for c in [getattr(m.terrain(h), "conceal", 0)] if c}
+        self.views = {}
         self.ghosts = {}    # enemy id -> (Unit as last seen, round)
         self.loss_weight, self.expose, self.risk_weight, self.last_turn = LOSS_WEIGHT, EXPOSE, RISK, False
         self.menace, self.menaces = {}, {}
@@ -493,13 +498,29 @@ class SmartBot(bb.Bot):
         q, r = h
         return [(q + dq, r + dr) for dq, dr in self.disks[radius]]
 
+    def view(self, h, vision):
+        """The hexes an observer on h sees. Concealing terrain is seen from
+        that much closer only, but always from next door."""
+        if not self.conceal:
+            return self.disk(h, vision)
+        if vision not in self.views:
+            self.views[vision] = [(dq, dr, bb.distance((0, 0), (dq, dr))) for dq, dr in bb.disk((0, 0), vision)]
+        q, r = h
+        conceal = self.conceal
+        return [n for dq, dr, d in self.views[vision] for n in [(q + dq, r + dr)]
+                if d <= 1 or n not in conceal or d + conceal[n] <= vision]
+
+    def unit_view(self, u, h=None):
+        h = h or u.hex
+        return self.view(h, self.types[u.type].vision + self.vbonus.get(h, 0))
+
     def sight(self, units):
         """The hexes our cities and the given units can see."""
         seen = set()
         for c in self.state.my_cities():
-            seen.update(self.disk(c.hex, self.rules.city_vision))
+            seen.update(self.view(c.hex, self.rules.city_vision))
         for u in units:
-            seen.update(self.disk(u.hex, self.types[u.type].vision + self.vbonus.get(u.hex, 0)))
+            seen.update(self.unit_view(u))
         return seen
 
     def post_scouts(self, scouts):
@@ -522,8 +543,7 @@ class SmartBot(bb.Bot):
             t = self.types[u.type]
             best = None
             for h, dirs in self.reach(u).items():
-                view = self.disk(h, t.vision + self.vbonus.get(h, 0))
-                gain = sum(1 for v in view if v in want)
+                gain = sum(1 for v in self.unit_view(u, h) if v in want)
                 key = (gain - 30 * self.risk(h, u.type), -len(dirs))
                 if best is None or key > best[0]:
                     best = (key, h, dirs, gain)
@@ -532,7 +552,7 @@ class SmartBot(bb.Bot):
                 continue
             if best[2]:
                 self.go(u, best[2])
-            want -= set(self.disk(u.hex, t.vision + self.vbonus.get(u.hex, 0)))
+            want -= set(self.unit_view(u))
 
     def scout(self, u):
         """Scouts sit on an empty enemy city, which stops it building."""
