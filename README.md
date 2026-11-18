@@ -59,7 +59,7 @@ class MyBot(bb.Bot):
 bb.run(MyBot())
 ```
 
-[bots/greedy_bot.py](bots/greedy_bot.py) is a fuller example, including debug annotations that the viewer draws. A bot in another language implements the protocol in SPEC §6 directly. The golden test vectors in [tests/vectors](tests/vectors) check hex math and damage.
+[bots/greedy_bot.py](bots/greedy_bot.py) is a fuller example, including debug annotations that the viewer draws. [bots/smart_bot.py](bots/smart_bot.py) is a stronger heuristic bot that beats it: it focuses fire, masses units before attacking, and picks its builds from the damage table. A bot in another language implements the protocol in SPEC §6 directly. The golden test vectors in [tests/vectors](tests/vectors) check hex math and damage.
 
 [bots/solid_bot.py](bots/solid_bot.py) coordinates capturers, scores attacks from reachable hexes, and recruits first at threatened cities or near the front. It caches terrain distances to each city during setup to keep turns quick.
 
