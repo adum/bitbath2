@@ -78,6 +78,9 @@ struct TurnRecord {
     bank_ms: u64,
     used_ms: u64,
     orders: Vec<String>,
+    /// How many of `orders` the engine rejected. Re-simulation checks this,
+    /// so an engine that plays the orders differently is caught at once.
+    rejected: u64,
     late: Vec<String>,
     debug: Vec<String>,
     stderr: String,
@@ -96,6 +99,7 @@ impl TurnRecord {
             "bank_ms": self.bank_ms,
             "used_ms": self.used_ms,
             "orders": self.orders,
+            "rejected": self.rejected,
         });
         let obj = v.as_object_mut().expect("object");
         if !self.late.is_empty() {
@@ -296,6 +300,7 @@ fn run_turn(game: &mut Game, seat: &mut Seat, c: &Constants) -> (TurnRecord, Opt
         bank_ms: seat.bank_ms,
         used_ms: 0,
         orders: Vec::new(),
+        rejected: 0,
         late: Vec::new(),
         debug: Vec::new(),
         stderr: String::new(),
@@ -400,6 +405,7 @@ fn run_turn(game: &mut Game, seat: &mut Seat, c: &Constants) -> (TurnRecord, Opt
                         let reply = game.apply(line);
                         if reply.last().is_some_and(|l| l.starts_with("ERR")) {
                             seat.stats.invalid += 1;
+                            rec.rejected += 1;
                         }
                         bot.send(&reply);
                         rec.orders.push(line.to_string());

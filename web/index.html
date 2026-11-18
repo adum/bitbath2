@@ -16,6 +16,8 @@
     --p1: #d64541;
     --p2: #2f6fde;
     --neutral: #9a9a9a;
+    --warn-bg: #fdf0c8;
+    --warn-border: #d9a520;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -29,6 +31,8 @@
       --p1: #e8625c;
       --p2: #5590f5;
       --neutral: #8b8f94;
+      --warn-bg: #3d3214;
+      --warn-border: #a07a1a;
     }
   }
   * { box-sizing: border-box; }
@@ -101,6 +105,7 @@
   #rules-body td.text { white-space: normal; }
   .chip { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; border-radius: 3px; border: 1px solid rgba(0, 0, 0, .2); }
   header h1 { font-size: 16px; margin: 0; }
+  #mismatch { padding: 8px 16px; background: var(--warn-bg); border-bottom: 1px solid var(--warn-border); border-left: 4px solid var(--warn-border); }
   #matchup { color: var(--muted); }
   main { flex: 1; display: flex; min-height: 0; }
   #board { flex: 1; position: relative; min-width: 0; }
@@ -179,6 +184,11 @@
   <span id="matchup"></span>
   <button id="rules-button" title="The rules this game was played under" hidden>Rules</button>
 </header>
+<div id="mismatch" role="alert" hidden>
+  <strong>This replay doesn't play back the way it was recorded.</strong>
+  <span id="mismatch-text"></span>
+  The viewer and the game that recorded it come from different versions of bitbath. If the viewer is the older one, rebuild it with <span class="mono">python scripts/build_web.py</span> and reload this page.
+</div>
 <main>
   <div id="board">
     <canvas id="canvas"></canvas>

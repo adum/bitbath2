@@ -269,6 +269,11 @@ impl Viewer {
         for s in &self.steps[*start..step] {
             reply = apply(&mut game, s);
         }
+        // No turn step follows the last turn to end it, so end it here. That
+        // lets the round limit decide the game, as it did when it was played.
+        if step == self.steps.len() && game.player != 0 && game.outcome.is_none() {
+            game.end_turn();
+        }
 
         let mut out = format!(
             "{{\"step\":{step},\"round\":{},\"player\":{},\"gold\":[{},{}],\"units\":[",
@@ -360,5 +365,18 @@ mod tests {
             &s3[s3.find("\"reply\"").unwrap()..]
         );
         assert!(load(&setup, "X 1").is_err());
+    }
+
+    #[test]
+    fn the_last_step_reaches_the_round_limit() {
+        let mut rules = bitbath_engine::Rules::default();
+        rules.c.round_limit = 1;
+        let map = bitbath_engine::mapgen::generate(&rules, 3).unwrap();
+        let game = Game::new(rules, map);
+        let setup = game.setup_lines(true).join("\n");
+        let (viewer, _) = load(&setup, "T 1\nO B 0 I\nT 2\n").unwrap();
+        assert!(viewer.state_json(2).ends_with("\"outcome\":null}"));
+        // Player 1 built a unit, so the tiebreak gives them the bigger army.
+        assert!(viewer.state_json(3).ends_with("\"outcome\":[1,\"army\"]}"));
     }
 }

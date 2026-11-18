@@ -85,11 +85,13 @@ impl Replay {
     }
 
     /// Re-simulates every recorded order, calling `visit` with the game, the
-    /// turn record, and each order with its reply. Checks the outcome against
-    /// the recorded result; forfeits come from the result, since the runner
-    /// decides them.
+    /// turn record, and each order with its reply. Checks the re-simulation
+    /// against the recording: each turn's rejected orders (or, in replays
+    /// recorded before turns counted them, each player's total), then the
+    /// outcome. Forfeits come from the result, since the runner decides them.
     pub fn resimulate(&self, mut visit: impl FnMut(Visit)) -> Result<Game, String> {
         let mut game = self.game()?;
+        let mut rejected_by = [0u64; 3];
         for turn in self.turns() {
             if game.outcome.is_some() {
                 return Err("the replay continues after the game ended".into());
@@ -103,9 +105,13 @@ impl Replay {
                 return Err(format!("expected round {}, found {}", game.round, turn["round"]));
             }
             visit(Visit::TurnStart { game: &game });
+            let mut rejected = 0;
             for order in strings(&turn["orders"]) {
                 let before = AttackInfo::of(&game, &order);
                 let reply = game.apply(&order);
+                if reply.last().is_some_and(|l| l.starts_with("ERR")) {
+                    rejected += 1;
+                }
                 visit(Visit::Order {
                     game: &game,
                     order: &order,
@@ -113,25 +119,58 @@ impl Replay {
                     attack: before,
                 });
             }
+            if let Some(recorded) = turn["rejected"].as_u64().filter(|&r| r != rejected) {
+                return Err(mismatch(format!(
+                    "in round {}, the engine rejects {rejected} of player {player}'s orders, but {recorded} were rejected in the game",
+                    game.round
+                )));
+            }
+            rejected_by[player as usize] += rejected;
             game.end_turn();
             visit(Visit::TurnEnd { turn });
         }
         if let Some(result) = self.result() {
+            // The recorded count also includes orders refused for limits,
+            // which aren't in the replay, so only a higher count is wrong.
+            for p in 1..=2 {
+                if let Some(invalid) = result["stats"][p - 1]["invalid"].as_u64() {
+                    if rejected_by[p] > invalid {
+                        return Err(mismatch(format!(
+                            "the engine rejects {} of player {p}'s orders, but {invalid} were rejected in the game",
+                            rejected_by[p]
+                        )));
+                    }
+                }
+            }
             let winner = result["winner"].as_u64().unwrap_or(0) as u8;
             let reason = result["reason"].as_str().unwrap_or("");
             match &game.outcome {
+                // The engine decides these, so re-simulation must reach them.
+                None if ["elimination", "cities", "army", "draw"].contains(&reason) => {
+                    return Err(mismatch(format!(
+                        "the game ended by {reason}, but the re-simulated game doesn't end"
+                    )))
+                }
                 None => game.finish(winner, reason),
                 Some(o) if o.winner == winner && o.reason == reason => {}
                 Some(o) => {
-                    return Err(format!(
-                        "re-simulation ends with {} ({}), but the replay records {winner} ({reason})",
+                    return Err(mismatch(format!(
+                        "the re-simulated game ends with {} ({}), but the replay records {winner} ({reason})",
                         o.winner, o.reason
-                    ))
+                    )))
                 }
             }
         }
         Ok(game)
     }
+}
+
+/// Explains a re-simulation that disagrees with its replay.
+fn mismatch(what: String) -> String {
+    format!(
+        "this engine doesn't play the replay the way it was recorded: {what}. \
+         The replay was probably recorded by a different version of bitbath."
+    )
 }
 
 pub enum Visit<'a> {
@@ -337,4 +376,63 @@ pub fn summary(replay: &Replay, all_orders: bool) -> Result<String, String> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A one-turn replay in which player 1 builds twice from the same city,
+    /// so the engine accepts the first order and rejects the second.
+    fn replay(rejected: Option<u64>, result: Option<Value>) -> Replay {
+        let setup = [
+            "MAP 6 4",
+            "ROW C.....",
+            "ROW ......",
+            "ROW ......",
+            "ROW .....C",
+            "CITY 0 0 0 1",
+            "CITY 1 4 3 2",
+        ];
+        let mut turn = json!({"type": "turn", "round": 1, "player": 1, "orders": ["B 0 I", "B 0 I"]});
+        if let Some(r) = rejected {
+            turn["rejected"] = json!(r);
+        }
+        Replay {
+            header: json!({"type": "header", "setup": setup}),
+            records: [Some(turn), result].into_iter().flatten().collect(),
+        }
+    }
+
+    fn forfeit(invalid: u64) -> Value {
+        let stats = json!({"invalid": invalid});
+        json!({"type": "result", "winner": 2, "reason": "crash", "stats": [stats, stats]})
+    }
+
+    #[test]
+    fn rejected_counts_must_match() {
+        assert!(replay(Some(1), None).resimulate(|_| {}).is_ok());
+        let err = replay(Some(0), None).resimulate(|_| {}).unwrap_err();
+        assert!(
+            err.contains("in round 1, the engine rejects 1 of player 1's orders, but 0"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn older_replays_check_each_players_total() {
+        assert!(replay(None, Some(forfeit(1))).resimulate(|_| {}).is_ok());
+        let err = replay(None, Some(forfeit(0))).resimulate(|_| {}).unwrap_err();
+        assert!(err.contains("rejects 1 of player 1's orders, but 0"), "{err}");
+    }
+
+    #[test]
+    fn engine_outcomes_must_be_reached() {
+        let won = json!({"type": "result", "winner": 1, "reason": "elimination"});
+        let err = replay(Some(1), Some(won)).resimulate(|_| {}).unwrap_err();
+        assert!(err.contains("doesn't end"), "{err}");
+        let game = replay(Some(1), Some(forfeit(1))).resimulate(|_| {}).unwrap();
+        assert_eq!(game.outcome.map(|o| o.reason), Some("crash".to_string()));
+    }
 }

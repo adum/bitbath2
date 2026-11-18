@@ -480,13 +480,15 @@ Colors are `red`, `green`, `blue`, `yellow`, `orange`, `purple`, `white`, `black
 - **Init line:** startup problems, such as a missing `READY`, and stderr from initialization.
 - **One line per turn:**
   - the round, the player, and the time used;
-  - every order line received before the deadline, including rejected ones;
+  - every order line received before the deadline, including rejected ones, and how many were rejected;
   - late lines;
   - debug annotations;
   - stderr.
 - **Final line:** the result, plus stats for each player (invalid orders, late orders, timeouts, think time).
 
 **Re-simulation.** Replaying a game doesn't re-run the bots. The deterministic engine re-simulates the recorded orders, which keeps files small and verifiable. The web viewer does the same, using the engine compiled to wasm.
+
+Both check the re-simulation against the recording: each turn's count of rejected orders must match, and so must an outcome the engine decides. A mismatch means the engine differs from the one that recorded the game. `bitbath replay` reports it as an error, and the viewer shows a warning, since its usual cause is a viewer that wasn't rebuilt and reloaded.
 
 **Text summary.** `bitbath replay <file> --text` prints a turn-by-turn summary for humans and LLMs to read.
 
@@ -574,7 +576,7 @@ bitbath2/
   bots/            reference bots.
   tests/vectors/   golden test vectors shared by the engine and kits.
   configs/         rule presets.
-  scripts/         the viewer build and the test vector generator.
+  scripts/         the viewer build and server, and the test vector generator.
   docs/            RULES.md and PROTOCOL.md for bot authors (later).
 ```
 

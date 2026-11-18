@@ -29,7 +29,7 @@ To watch a game, build the viewer once:
 python scripts/build_web.py
 ```
 
-Then open `web/index.html` in a browser and choose a replay file, or drop one on the page. If you serve the repository over HTTP, `web/index.html?replay=/runs/<game>/replay.bbr` opens a replay directly. In the viewer:
+Then open `web/index.html` in a browser and choose a replay file, or drop one on the page. To open replays by URL instead, serve the repository with `python scripts/serve.py` and open `http://localhost:8000/web/index.html?replay=/runs/<game>/replay.bbr`. After rebuilding the viewer, reload the page; the viewer warns when a replay doesn't play back the way it was recorded, which usually means the viewer is out of date. In the viewer:
 
 - **Space** plays or pauses.
 - **← / →** step through orders.
@@ -81,7 +81,7 @@ kits/python/    Python starter kit and its tests.
 bots/           Reference bots: random_bot.py, greedy_bot.py, solid_bot.py.
 tests/vectors/  Golden test vectors shared by the engine and kits.
 configs/        Rule presets.
-scripts/        Viewer build and test vector generator.
+scripts/        Viewer build and server, and the test vector generator.
 ```
 
 ## Tests

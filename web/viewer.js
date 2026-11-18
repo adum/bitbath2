@@ -1293,9 +1293,18 @@
     draw();
   }
 
+  /** Shows or hides the warning about a replay that plays back differently. @param {string} problem */
+  function showMismatch(problem) {
+    const banner = document.getElementById("mismatch");
+    if (!banner) return; // an index.html from before the warning existed
+    $("mismatch-text").textContent = problem;
+    banner.hidden = !problem;
+  }
+
   /** @param {string} text */
   async function openText(text) {
     stop();
+    showMismatch("");
     try {
       const replay = parseReplay(text);
       if (!v.engine) v.engine = await Engine.create();
@@ -1311,6 +1320,7 @@
       v.marks = [];
       v.base = { ti: -1, state: null };
       v.chartHover = -1;
+      showMismatch(checkReplay());
       // The army chart needs the timeline that a current bitbath_wasm.js adds.
       $("chart-box").hidden = $("army-legend").hidden = !info.army;
       if (info.army) buildLegend();
@@ -1330,6 +1340,44 @@
       $("empty").style.display = "";
       $("error").textContent = String(e instanceof Error ? e.message : e);
     }
+  }
+
+  /**
+   * Compares the re-simulation with what the replay recorded: each turn's
+   * rejected orders (or each player's total, in replays recorded before
+   * turns counted them), then the outcome. Returns the first difference as a
+   * sentence, or "" if they agree.
+   */
+  function checkReplay() {
+    const { turns, turnStart, result } = v.replay;
+    const results = v.info.results;
+    const totals = [0, 0, 0];
+    for (let ti = 0; ti < turns.length; ti++) {
+      const t = turns[ti];
+      const end = ti + 1 < turns.length ? turnStart[ti + 1] : v.steps;
+      let rejected = 0;
+      for (let i = turnStart[ti] + 1; i < end; i++) if ((results[i] || "").startsWith("ERR")) rejected++;
+      if (typeof t.rejected === "number" && t.rejected !== rejected) {
+        return "In round " + t.round + ", the viewer rejects " + rejected + " of " + playerName(t.player) + "'s orders, but the game rejected " + (t.rejected || "none") + ".";
+      }
+      totals[t.player] += rejected;
+    }
+    if (!result) return "";
+    // The recorded totals also count orders refused for limits, which aren't
+    // in the replay, so only a higher count shows a difference.
+    for (const p of [1, 2]) {
+      const s = (result.stats || [])[p - 1];
+      if (s && typeof s.invalid === "number" && totals[p] > s.invalid) {
+        return "Over the game, the viewer rejects " + totals[p].toLocaleString() + " of " + playerName(p) + "'s orders, but the game rejected " + (s.invalid ? s.invalid.toLocaleString() : "none") + ".";
+      }
+    }
+    const end = v.engine.seek(v.steps).outcome;
+    const decided = ["elimination", "cities", "army", "draw"].includes(result.reason);
+    if (end ? end[0] !== result.winner || end[1] !== result.reason : decided) {
+      const recorded = result.winner ? playerName(result.winner) + " winning by " + result.reason : "a draw";
+      return "The game ended with " + recorded + ", but the viewer's game " + (end ? "ends differently" : "doesn't end") + ".";
+    }
+    return "";
   }
 
   /** @param {File} file */
