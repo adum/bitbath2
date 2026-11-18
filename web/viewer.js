@@ -657,12 +657,17 @@
     return parts.length < 2 ? parts.join("") : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
   }
 
-  /** Counts names into a phrase like "2 infantry and 1 scout", in first-seen order. @param {string[]} names */
-  function tally(names) {
+  /**
+   * Counts names into a phrase like "2 infantry and 1 scout", in first-seen
+   * order, or with `sep` between the counts instead.
+   * @param {string[]} names @param {string} [sep]
+   */
+  function tally(names, sep) {
     /** @type {Map<string, number>} */
     const counts = new Map();
     for (const name of names) counts.set(name, (counts.get(name) || 0) + 1);
-    return join(Array.from(counts, ([name, n]) => count(n, name)));
+    const parts = Array.from(counts, ([name, n]) => count(n, name));
+    return sep ? parts.join(sep) : join(parts);
   }
 
   /** What a player's units are, in the rules' order of unit types. @param {any[][]} units */
@@ -693,12 +698,17 @@
     return s + " " + who(c) + " holds " + cityCount(cities[c - 1]) + " to " + cities[2 - c] + ".";
   }
 
+  /** The turn summary's rows: always these, in this order, so the panel holds still. */
+  const SUMMARY_ROWS = ["Moved", "Attacked", "Damage", "Destroyed", "Lost", "Cities", "Built", "Issues", "Time"];
+
   /**
-   * Sums up the current turn so far in plain sentences, from the marks of
-   * its orders and their replies.
-   * @param {any} turn @param {number} ti @returns {string[]}
+   * Sums up the current turn so far as rows of label and value, from the
+   * marks of its orders and their replies. A row's value is "–" when nothing
+   * of its kind happened.
+   * @param {any} turn @param {number} ti @returns {string[][]}
    */
   function turnSummary(turn, ti) {
+    if (!turn) return SUMMARY_ROWS.map((label) => [label, "–"]);
     const first = v.replay.turnStart[ti];
     /** @type {Map<number, any[]>} */
     const units = new Map();
@@ -748,35 +758,33 @@
         spent += t ? t.cost : 0;
       }
     }
-    let orders = 0;
     let rejected = 0;
     for (let i = first + 1; i < v.pos; i++) {
-      orders++;
       if ((v.info.results[i] || "").startsWith("ERR")) rejected++;
     }
 
-    const lines = [];
-    if (turn.skipped) lines.push("Missed this turn.");
-    if (!orders) lines.push((turn.orders || []).length ? "No orders yet." : "No orders.");
-    if (moved.size) {
-      const short = stopped ? "; " + stopped + (stopped === 1 ? " was" : " were") + " stopped early" : "";
-      lines.push("Moved " + count(moved.size, "unit") + short + ".");
-    }
+    /** @type {Record<string, string>} */
+    const out = {};
+    if (moved.size) out.Moved = count(moved.size, "unit") + (stopped ? ", " + stopped + " stopped early" : "");
     if (attacks) {
-      lines.push("Attacked " + (attacks === 1 ? "once" : attacks + " times") + ", dealing " + dealt + " damage and taking " + (taken || "none") + ".");
-      const parts = [];
-      if (killed.length) parts.push("destroyed " + tally(killed));
-      if (lost.length) parts.push("lost " + tally(lost));
-      if (parts.length) lines.push(capitalize(parts.join("; ")) + ".");
+      out.Attacked = attacks === 1 ? "once" : attacks + " times";
+      out.Damage = dealt + " dealt, " + taken + " taken";
     }
-    if (captured.length) lines.push("Captured " + (captured.length === 1 ? "city " : "cities ") + join(captured.map(String)) + ".");
-    if (capturing.size) lines.push("Capturing " + (capturing.size === 1 ? "city " : "cities ") + join(Array.from(capturing.values())) + ".");
-    if (built.length) lines.push("Built " + tally(built) + " for " + spent + " gold.");
-    if (rejected) lines.push(count(rejected, "order") + (rejected === 1 ? " was" : " were") + " rejected.");
-    if (turn.late && turn.late.length) lines.push(count(turn.late.length, "order") + " came after the turn ended.");
-    if (turn.timeout) lines.push("Ran out of time.");
-    lines.push("Used " + turn.used_ms.toLocaleString() + " ms of " + turn.time_ms.toLocaleString() + ".");
-    return lines;
+    if (killed.length) out.Destroyed = tally(killed, ", ");
+    if (lost.length) out.Lost = tally(lost, ", ");
+    const cityNews = [];
+    if (captured.length) cityNews.push("captured " + captured.join(", "));
+    if (capturing.size) cityNews.push("capturing " + Array.from(capturing.values()).join(", "));
+    if (cityNews.length) out.Cities = cityNews.join("; ");
+    if (built.length) out.Built = tally(built, ", ") + " · " + spent + " gold";
+    const issues = [];
+    if (turn.skipped) issues.push("missed the turn");
+    if (rejected) issues.push(rejected + " rejected");
+    if (turn.late && turn.late.length) issues.push(turn.late.length + " late");
+    if (turn.timeout) issues.push("ran out of time");
+    if (issues.length) out.Issues = issues.join(" · ");
+    out.Time = turn.used_ms.toLocaleString() + " of " + turn.time_ms.toLocaleString() + " ms";
+    return SUMMARY_ROWS.map((label) => [label, out[label] || "–"]);
   }
 
   function updateSide() {
@@ -818,24 +826,35 @@
         el("td", String(st.gold[p - 1]), "num"),
         el("td", String(army[p - 1]), "num"),
       );
-      // What the army is made of, under its numbers.
-      const mix = el("td", composition(units), "mix");
+      // What the army is made of, under its numbers, in a box of fixed size
+      // (as are the other parts of the panel) so the panel holds still.
+      const text = composition(units);
+      const box = el("div", text);
+      box.title = text;
+      const mix = el("td", "", "mix");
       mix.colSpan = 5;
+      mix.append(box);
       const mixRow = document.createElement("tr");
       mixRow.append(mix);
       table.append(row, mixRow);
     }
-    $("standing").textContent = standing(army, cities);
+    const lead = standing(army, cities);
+    $("standing").textContent = lead;
+    $("standing").title = lead;
 
     const summary = $("summary");
+    summary.replaceChildren();
+    for (const [label, value] of turnSummary(turn, ti)) {
+      const cell = el("div", value, "value");
+      cell.title = value;
+      summary.append(el("div", label, "label"), cell);
+    }
     const orders = $("orders");
-    $("orders-box").hidden = !turn || !(turn.orders || []).length;
     if (!turn) {
-      summary.replaceChildren(el("div", "The game hasn't started.", "muted"));
       orders.replaceChildren();
+      $("orders-count").textContent = "No orders yet";
       v.listTurn = -1;
     } else {
-      summary.replaceChildren(...turnSummary(turn, ti).map((s) => el("div", s)));
       const first = v.replay.turnStart[ti] + 1;
       if (v.listTurn !== ti) {
         const list = turn.orders || [];
@@ -849,7 +868,7 @@
           row.onclick = () => setPos(first + j + 1);
           orders.append(row);
         });
-        $("orders-count").textContent = "All " + count(list.length, "order") + (rejected ? ", " + rejected + " rejected" : "");
+        $("orders-count").textContent = list.length ? "All " + count(list.length, "order") + (rejected ? ", " + rejected + " rejected" : "") : "No orders";
         v.listTurn = ti;
       }
       const cur = v.pos - 1 - first;
@@ -1284,6 +1303,7 @@
       updateChartTip();
       buildRules();
       $("rules-button").hidden = false;
+      $("orders-box").hidden = false;
       $("slider").max = String(v.ends.length - 1);
       $("empty").style.display = "none";
       const h = replay.header;
