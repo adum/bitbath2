@@ -105,7 +105,7 @@
     pos: 0,
     /** @type {any} */ state: null,
     /** What the current turn's orders did so far: see turnMarks(). @type {any[]} */ marks: [],
-    /** The units when turn `ti` started, for turnMarks(). @type {{ti: number, units: any[]}} */ base: { ti: -1, units: [] },
+    /** The state when turn `ti` started, for turnMarks(). @type {{ti: number, state: any}} */ base: { ti: -1, state: null },
     /** Units sliding along their paths during playback: see animateTo(). @type {any} */ anim: null,
     /** Positions at the start and after each turn. */ ends: [0],
     /** The index into `ends` of the turn shown. */ turnIdx: 0,
@@ -471,12 +471,12 @@
     if (v.pos === 0) return marks;
     const ti = v.replay.stepTurn[v.pos - 1];
     const first = v.replay.turnStart[ti];
-    if (v.base.ti !== ti) v.base = { ti, units: v.engine.seek(first + 1).units };
+    if (v.base.ti !== ti) v.base = { ti, state: v.engine.seek(first + 1) };
     /** @type {Map<number, number[]>} */
     const at = new Map();
     // Units built this turn can't move yet, so they are where they are now.
     for (const u of v.state.units) at.set(u[0], [u[3], u[4]]);
-    for (const u of v.base.units) at.set(u[0], [u[3], u[4]]);
+    for (const u of v.base.state.units) at.set(u[0], [u[3], u[4]]);
     for (let i = first + 1; i < v.pos; i++) {
       const t = v.replay.script[i].slice(2).trim().split(/\s+/);
       const result = v.info.results[i] || "";
@@ -498,13 +498,14 @@
         if (end) at.set(Number(t[1]), end);
         marks.push({ step: i, op: "M", id: Number(t[1]), ok, hexes });
       } else if (t[0] === "A" && from) {
-        const to = at.get(Number(t[2]));
-        marks.push({ step: i, op: "A", ok, hexes: to ? [from, to] : [from], kill: res[0] === "OK" && res[1] === "0" });
+        const target = Number(t[2]);
+        const to = at.get(target);
+        marks.push({ step: i, op: "A", id: Number(t[1]), target, ok, hexes: to ? [from, to] : [from], kill: res[0] === "OK" && res[1] === "0" });
       } else if (t[0] === "C" && from) {
         marks.push({ step: i, op: "C", ok, hexes: [from] });
       } else if (t[0] === "B") {
         const city = v.info.cities[Number(t[1])];
-        if (city) marks.push({ step: i, op: "B", ok, hexes: [[city[0], city[1]]] });
+        if (city) marks.push({ step: i, op: "B", type: t[2], ok, hexes: [[city[0], city[1]]] });
       }
     }
     return marks;
@@ -629,6 +630,157 @@
     return e;
   }
 
+  // Plain-language summaries for the side panel.
+
+  /** @param {string} s */
+  function capitalize(s) {
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  /** A unit name's plural: "infantry" and "cavalry" stay, "pikeman" becomes "pikemen". @param {string} noun */
+  function plural(noun) {
+    if (/(ry|s)$/.test(noun)) return noun;
+    if (noun.endsWith("man")) return noun.slice(0, -3) + "men";
+    return noun + "s";
+  }
+
+  /** @param {number} n @param {string} noun */
+  function count(n, noun) {
+    return n + " " + (n === 1 ? noun : plural(noun));
+  }
+
+  /** @param {number} n */
+  function cityCount(n) {
+    return n === 1 ? "1 city" : n + " cities";
+  }
+
+  /** Joins phrases as "a, b and c". @param {string[]} parts */
+  function join(parts) {
+    return parts.length < 2 ? parts.join("") : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
+  }
+
+  /** Counts names into a phrase like "2 infantry and 1 scout", in first-seen order. @param {string[]} names */
+  function tally(names) {
+    /** @type {Map<string, number>} */
+    const counts = new Map();
+    for (const name of names) counts.set(name, (counts.get(name) || 0) + 1);
+    return join(Array.from(counts, ([name, n]) => count(n, name)));
+  }
+
+  /** What a player's units are, in the rules' order of unit types. @param {any[][]} units */
+  function composition(units) {
+    const names = [];
+    for (const code of Object.keys(v.info.units)) {
+      for (const u of units) if (u[2] === code) names.push(v.info.units[code].name);
+    }
+    return names.length ? tally(names) : "no units";
+  }
+
+  /** A player's name, with the side added when both players share a name. @param {number} p */
+  function who(p) {
+    return playerName(p) + (playerName(1) === playerName(2) ? " (P" + p + ")" : "");
+  }
+
+  /** Says who is ahead in army value and in cities. @param {number[]} army @param {number[]} cities */
+  function standing(army, cities) {
+    const ahead = (/** @type {number[]} */ xs) => (xs[0] >= xs[1] ? 1 : 2);
+    const a = ahead(army);
+    const [hi, lo] = [army[a - 1], army[2 - a]];
+    let s;
+    if (!lo) s = hi ? who(a) + " has the only army." : "Neither side has an army.";
+    else if (hi < lo * 1.1) s = "The armies are about even.";
+    else s = who(a) + "'s army is " + (hi / lo < 10 ? (hi / lo).toFixed(1) : Math.round(hi / lo)) + "× " + who(3 - a) + "'s.";
+    const c = ahead(cities);
+    if (cities[0] === cities[1]) return s + " Each side holds " + cityCount(cities[0]) + ".";
+    return s + " " + who(c) + " holds " + cityCount(cities[c - 1]) + " to " + cities[2 - c] + ".";
+  }
+
+  /**
+   * Sums up the current turn so far in plain sentences, from the marks of
+   * its orders and their replies.
+   * @param {any} turn @param {number} ti @returns {string[]}
+   */
+  function turnSummary(turn, ti) {
+    const first = v.replay.turnStart[ti];
+    /** @type {Map<number, any[]>} */
+    const units = new Map();
+    for (const u of v.state.units) units.set(u[0], u);
+    for (const u of v.base.state.units) units.set(u[0], u);
+    const name = (/** @type {number} */ id) => {
+      const u = units.get(id);
+      return u && v.info.units[u[2]] ? v.info.units[u[2]].name : "unit";
+    };
+    // Hit points as the turn's fights go, to work out the damage done.
+    const hp = new Map(Array.from(units.values(), (u) => [u[0], u[5]]));
+    const moved = new Set();
+    let stopped = 0;
+    let attacks = 0;
+    let dealt = 0;
+    let taken = 0;
+    let spent = 0;
+    /** @type {string[]} */ const killed = [];
+    /** @type {string[]} */ const lost = [];
+    /** @type {string[]} */ const built = [];
+    /** @type {number[]} */ const captured = [];
+    /** @type {Map<number, string>} */ const capturing = new Map();
+    for (const m of v.marks) {
+      if (!m.ok) continue;
+      const res = (v.info.results[m.step] || "").split(/\s+/);
+      if (m.op === "M") {
+        moved.add(m.id);
+        if (res[0] === "PART") stopped++;
+      } else if (m.op === "A" && m.hexes.length === 2) {
+        const [dHp, aHp] = [Number(res[1]), Number(res[2])];
+        attacks++;
+        dealt += (hp.get(m.target) || 0) - dHp;
+        taken += (hp.get(m.id) || 0) - aHp;
+        hp.set(m.target, dHp);
+        hp.set(m.id, aHp);
+        if (dHp === 0) killed.push(name(m.target));
+        if (aHp === 0) lost.push(name(m.id));
+      } else if (m.op === "C") {
+        const [q, r] = m.hexes[0];
+        const city = v.info.cities.findIndex((/** @type {number[]} */ c) => c[0] === q && c[1] === r);
+        capturing.delete(city);
+        if (res[1] === "captured") captured.push(city);
+        else capturing.set(city, city + " (" + res[1] + "/" + res[2] + ")");
+      } else if (m.op === "B") {
+        const t = v.info.units[m.type];
+        built.push(t ? t.name : m.type);
+        spent += t ? t.cost : 0;
+      }
+    }
+    let orders = 0;
+    let rejected = 0;
+    for (let i = first + 1; i < v.pos; i++) {
+      orders++;
+      if ((v.info.results[i] || "").startsWith("ERR")) rejected++;
+    }
+
+    const lines = [];
+    if (turn.skipped) lines.push("Missed this turn.");
+    if (!orders) lines.push((turn.orders || []).length ? "No orders yet." : "No orders.");
+    if (moved.size) {
+      const short = stopped ? "; " + stopped + (stopped === 1 ? " was" : " were") + " stopped early" : "";
+      lines.push("Moved " + count(moved.size, "unit") + short + ".");
+    }
+    if (attacks) {
+      lines.push("Attacked " + (attacks === 1 ? "once" : attacks + " times") + ", dealing " + dealt + " damage and taking " + (taken || "none") + ".");
+      const parts = [];
+      if (killed.length) parts.push("destroyed " + tally(killed));
+      if (lost.length) parts.push("lost " + tally(lost));
+      if (parts.length) lines.push(capitalize(parts.join("; ")) + ".");
+    }
+    if (captured.length) lines.push("Captured " + (captured.length === 1 ? "city " : "cities ") + join(captured.map(String)) + ".");
+    if (capturing.size) lines.push("Capturing " + (capturing.size === 1 ? "city " : "cities ") + join(Array.from(capturing.values())) + ".");
+    if (built.length) lines.push("Built " + tally(built) + " for " + spent + " gold.");
+    if (rejected) lines.push(count(rejected, "order") + (rejected === 1 ? " was" : " were") + " rejected.");
+    if (turn.late && turn.late.length) lines.push(count(turn.late.length, "order") + " came after the turn ended.");
+    if (turn.timeout) lines.push("Ran out of time.");
+    lines.push("Used " + turn.used_ms.toLocaleString() + " ms of " + turn.time_ms.toLocaleString() + ".");
+    return lines;
+  }
+
   function updateSide() {
     const st = v.state;
     const ti = v.pos > 0 ? v.replay.stepTurn[v.pos - 1] : -1;
@@ -646,12 +798,15 @@
     const head = document.createElement("tr");
     for (const label of ["", "cities", "units", "gold", "army"]) head.append(el("th", label));
     table.append(head);
+    const army = [0, 0];
+    const cities = [0, 0];
     for (const p of [1, 2]) {
       const units = st.units.filter((/** @type {any[]} */ u) => u[1] === p);
-      const army = units.reduce((/** @type {number} */ sum, /** @type {any[]} */ u) => {
+      army[p - 1] = units.reduce((/** @type {number} */ sum, /** @type {any[]} */ u) => {
         const t = v.info.units[u[2]];
         return sum + (t ? Math.floor((t.cost * u[5]) / t.max_hp) : 0);
       }, 0);
+      cities[p - 1] = st.cities.filter((/** @type {number[]} */ c) => c[0] === p).length;
       const row = document.createElement("tr");
       const name = el("td", playerName(p));
       const sw = el("span", "", "swatch");
@@ -660,36 +815,43 @@
       if (st.player === p && turn) name.style.fontWeight = "600";
       row.append(
         name,
-        el("td", String(st.cities.filter((/** @type {number[]} */ c) => c[0] === p).length), "num"),
+        el("td", String(cities[p - 1]), "num"),
         el("td", String(units.length), "num"),
         el("td", String(st.gold[p - 1]), "num"),
-        el("td", String(army), "num"),
+        el("td", String(army[p - 1]), "num"),
       );
-      table.append(row);
+      // What the army is made of, under its numbers.
+      const mix = el("td", composition(units), "mix");
+      mix.colSpan = 5;
+      const mixRow = document.createElement("tr");
+      mixRow.append(mix);
+      table.append(row, mixRow);
     }
+    $("standing").textContent = standing(army, cities);
 
-    const info = $("turn-info");
+    const summary = $("summary");
     const orders = $("orders");
+    $("orders-box").hidden = !turn || !(turn.orders || []).length;
     if (!turn) {
-      info.textContent = "";
+      summary.replaceChildren(el("div", "The game hasn't started.", "muted"));
       orders.replaceChildren();
       v.listTurn = -1;
     } else {
-      const flags = [];
-      if (turn.skipped) flags.push("missed turn");
-      if (turn.timeout) flags.push("timed out");
-      if (turn.late) flags.push(turn.late.length + " late");
-      info.textContent = "used " + turn.used_ms + " of " + turn.time_ms + " ms" + (flags.length ? " · " + flags.join(", ") : "");
+      summary.replaceChildren(...turnSummary(turn, ti).map((s) => el("div", s)));
       const first = v.replay.turnStart[ti] + 1;
       if (v.listTurn !== ti) {
+        const list = turn.orders || [];
+        let rejected = 0;
         orders.replaceChildren();
-        (turn.orders || []).forEach((/** @type {string} */ o, /** @type {number} */ j) => {
+        list.forEach((/** @type {string} */ o, /** @type {number} */ j) => {
           const result = v.info.results[first + j] || "";
+          if (result.startsWith("ERR")) rejected++;
           const row = el("div", o + "  → " + result, result.startsWith("ERR") ? "err" : "");
           row.title = result;
           row.onclick = () => setPos(first + j + 1);
           orders.append(row);
         });
+        $("orders-count").textContent = "All " + count(list.length, "order") + (rejected ? ", " + rejected + " rejected" : "");
         v.listTurn = ti;
       }
       const cur = v.pos - 1 - first;
@@ -977,7 +1139,7 @@
       v.hover = null;
       v.listTurn = -1;
       v.marks = [];
-      v.base = { ti: -1, units: [] };
+      v.base = { ti: -1, state: null };
       v.chartHover = -1;
       // The army chart needs the timeline that a current bitbath_wasm.js adds.
       $("chart-box").hidden = $("army-legend").hidden = !info.army;
