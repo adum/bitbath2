@@ -461,7 +461,7 @@ The clock is Fischer-style with partial banking.
 **Debug annotations** are recorded in the replay and drawn by the viewer, up to 1000 per turn:
 
 - `D HEX <q> <r> <color> [label]`
-- `D LINE <q1> <r1> <q2> <r2> <color>`
+- `D LINE <q1> <r1> <q2> <r2> <color>`, drawn as an arrow from the first hex to the second
 - `D TEXT <text>`
 
 Colors are `red`, `green`, `blue`, `yellow`, `orange`, `purple`, `white`, `black`, or `#rrggbb`.

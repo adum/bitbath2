@@ -416,14 +416,13 @@
     ctx.stroke();
   }
 
-  /** @param {CanvasRenderingContext2D} ctx @param {[number, number][]} pts */
-  function arrow(ctx, pts) {
+  /** @param {CanvasRenderingContext2D} ctx @param {[number, number][]} pts @param {number} [k] the head's length */
+  function arrow(ctx, pts, k = v.geo.size * 0.4) {
     if (pts.length < 2) return;
     polyline(ctx, pts);
     const [x1, y1] = pts[pts.length - 2];
     const [x2, y2] = pts[pts.length - 1];
     const a = Math.atan2(y2 - y1, x2 - x1);
-    const k = v.geo.size * 0.4;
     ctx.beginPath();
     ctx.moveTo(x2, y2);
     ctx.lineTo(x2 - k * Math.cos(a - 0.45), y2 - k * Math.sin(a - 0.45));
@@ -609,13 +608,12 @@
           ctx.fillText(label, x, y - s * 0.8);
         }
       } else if (t[1] === "LINE" && t.length >= 7) {
-        const a = center(Number(t[2]), Number(t[3]));
-        const b = center(Number(t[4]), Number(t[5]));
-        ctx.strokeStyle = debugColor(t[6]);
-        ctx.beginPath();
-        ctx.moveTo(a[0], a[1]);
-        ctx.lineTo(b[0], b[1]);
-        ctx.stroke();
+        // Lines point from the first hex to the second, and are see-through
+        // so a bot's many lines don't hide the map.
+        ctx.strokeStyle = ctx.fillStyle = debugColor(t[6]);
+        ctx.globalAlpha = 0.5;
+        arrow(ctx, [center(Number(t[2]), Number(t[3])), center(Number(t[4]), Number(t[5]))], s * 0.3);
+        ctx.globalAlpha = 1;
       }
     }
   }
