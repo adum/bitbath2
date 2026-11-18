@@ -2,7 +2,7 @@
 
 A turn-based, two-player strategy game on a hex map, played by programs. Bots talk to the engine over stdin and stdout, so they can be written in any language. Bitbath is first an LLM benchmark for strategic bot programming, and second a game for people who like writing bots. [SPEC.md](SPEC.md) has the full design.
 
-Status: milestones M1–M3 are built. That covers the engine, the `bitbath` runner with a Python starter kit and two reference bots, and a browser replay viewer.
+Status: milestones M1–M3 are built. That covers the engine, the `bitbath` runner with a Python starter kit, and a browser replay viewer. The reference bots include random, greedy, and solid opponents.
 
 ## Quick start
 
@@ -12,7 +12,7 @@ The commands below work as written in PowerShell, Git Bash, and Linux or macOS s
 
 ```bash
 cargo build --release
-target/release/bitbath play --p1 "python bots/greedy_bot.py" --p2 "python bots/random_bot.py" --map seed:42
+target/release/bitbath play --p1 "python bots/solid_bot.py" --p2 "python bots/greedy_bot.py" --map seed:42
 ```
 
 Each game gets a directory under `runs/` with its replay, `replay.bbr`, and a working directory for each bot.
@@ -61,6 +61,8 @@ bb.run(MyBot())
 
 [bots/greedy_bot.py](bots/greedy_bot.py) is a fuller example, including debug annotations that the viewer draws. A bot in another language implements the protocol in SPEC §6 directly. The golden test vectors in [tests/vectors](tests/vectors) check hex math and damage.
 
+[bots/solid_bot.py](bots/solid_bot.py) coordinates capturers, scores attacks from reachable hexes, and recruits first at threatened cities or near the front. It caches terrain distances to each city during setup to keep turns quick.
+
 ## Rules and maps
 
 - `--map seed:<n>` generates a point-symmetric map.
@@ -76,7 +78,7 @@ runner/         Rust: the bitbath command (bot processes, clocks, replays).
 wasm/           The engine compiled to wasm for the viewer.
 web/            The replay viewer.
 kits/python/    Python starter kit and its tests.
-bots/           Reference bots: random_bot.py, greedy_bot.py.
+bots/           Reference bots: random_bot.py, greedy_bot.py, solid_bot.py.
 tests/vectors/  Golden test vectors shared by the engine and kits.
 configs/        Rule presets.
 scripts/        Viewer build and test vector generator.
