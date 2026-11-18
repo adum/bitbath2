@@ -1,0 +1,13 @@
+# A large map for testing scale: twice the default width and height, so four
+# times the area, with the same density of cities (48 in all). Armies grow to
+# several hundred units a side, so this exercises bot speed, replay size, and
+# the viewer as well as long-range play.
+map_width = 80
+map_height = 60            # must be even
+neutral_cities = 46        # must be even
+round_limit = 400          # crossing the map takes about twice as long
+
+# More units to move each turn, so bots get twice the default time.
+time_bank_ms = 10000
+time_increment_ms = 2000
+time_bank_cap_ms = 20000

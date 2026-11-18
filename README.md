@@ -67,7 +67,7 @@ bb.run(MyBot())
 
 - `--map seed:<n>` generates a point-symmetric map.
 - `--map <file>` loads a hand-made map, written as `MAP`, `ROW`, and `CITY` lines. `bitbath map --map seed:<n> --lines` prints one to start from.
-- `--config <file>` overrides rules. [configs/default.toml](configs/default.toml) lists the keys, and [configs/small.toml](configs/small.toml) is a short game on a small map.
+- `--config <file>` overrides rules. [configs/default.toml](configs/default.toml) lists the keys. [configs/small.toml](configs/small.toml) is a short game on a small map, and [configs/large.toml](configs/large.toml) is a map four times the default size, for testing how bots and tools cope with scale.
 - `--set key=value` overrides a single rule.
 
 ## Repository layout

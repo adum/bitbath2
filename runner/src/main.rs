@@ -360,4 +360,25 @@ mod tests {
         assert_eq!(default_name("python ../bots/random_bot.py 7"), "random");
         assert_eq!(default_name("./mybot.exe --fast"), "mybot");
     }
+
+    /// Every preset in configs/ loads, and the generator can make its maps.
+    #[test]
+    fn presets_generate_maps() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs");
+        let mut presets = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "toml") {
+                continue;
+            }
+            let name = path.display().to_string();
+            let rules = load_rules(Some(&name), &[]).unwrap_or_else(|e| panic!("{e}"));
+            for seed in 0..3 {
+                let map = mapgen::generate(&rules, seed).unwrap_or_else(|e| panic!("{name}: {e}"));
+                map.validate(&rules).unwrap_or_else(|e| panic!("{name}: {e}"));
+            }
+            presets += 1;
+        }
+        assert!(presets >= 3, "expected the default, small, and large presets");
+    }
 }
