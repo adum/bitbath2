@@ -162,6 +162,17 @@
    "outcome": {"winner": 1, "reason": "elimination"}
   },
   {
+   "name": "a city can't build on the turn it's captured",
+   "player": 1, "round": 1, "gold": [300, 300],
+   "cities": ["2 0 1 120"],
+   "units": ["1 1 I 0 5 100"],
+   "steps": [
+    {"order": "C 1", "reply": ["OK captured"]},
+    {"order": "B 2 I", "reply": ["ERR city_used"]},
+    {"order": "B 0 I", "reply": ["OK 2"]}
+   ]
+  },
+  {
    "name": "build",
    "player": 1, "round": 1, "gold": [50, 300],
    "units": ["1 1 I 0 0 100", "2 2 I 0 5 100"],

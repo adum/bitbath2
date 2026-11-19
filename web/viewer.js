@@ -357,11 +357,11 @@
   /**
    * Floats the damage of the attacks from step `from` on over the units they
    * hit. A turn's attacks follow each other, so numbers on one hex don't pile up.
-   * @param {number} from @param {number} persp
+   * @param {number} from @param {number} persp @param {number} delay how long to wait before the first, in ms
    */
-  function floatDamage(from, persp) {
+  function floatDamage(from, persp, delay) {
     const sees = (/** @type {number[]} */ h) => !persp || visibleTo(h[0], h[1], persp);
-    let t0 = performance.now();
+    let t0 = performance.now() + delay;
     for (const m of v.marks) {
       if (m.step < from || m.op !== "A" || !m.ok || m.hexes.length !== 2) continue;
       const before = v.floats.length;
@@ -1471,8 +1471,10 @@
       for (const [id, path] of paths) if (owner.get(id) !== persp && !path.some(sees)) paths.delete(id);
       ghosts = ghosts.filter((/** @type {any[]} */ u) => u[1] === persp || sees([u[3], u[4]]));
     }
-    if (ms >= 40 && k > from) floatDamage(from, persp);
-    if (ms < 40 || (!paths.size && (movesOnly || !ghosts.length))) return 0;
+    const slides = ms >= 40 && (paths.size > 0 || (!movesOnly && ghosts.length > 0));
+    // The numbers wait for units on the move to get most of the way there.
+    if (ms >= 40 && k > from) floatDamage(from, persp, slides && paths.size ? ms * 0.7 : 0);
+    if (!slides) return 0;
     // Every unit moves at the same speed, so the longest path sets the time.
     let len = 1;
     for (const path of paths.values()) len = Math.max(len, path.length - 1);

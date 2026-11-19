@@ -239,7 +239,7 @@ class City:
         self.id, self.q, self.r, self.owner = id, q, r, owner
         self.capturer = 0
         self.progress = 0
-        self.built = False      # built a unit this turn
+        self.built = False      # built a unit or was captured this turn, so can't build
 
     @property
     def hex(self):
@@ -358,6 +358,7 @@ class Bot:
             city = self.state.city_at(unit.hex)
             if reply.values == ["captured"]:
                 city.owner, city.capturer, city.progress = self.player, 0, 0
+                city.built = True
             else:
                 city.capturer, city.progress = self.player, int(reply.values[0])
         return reply

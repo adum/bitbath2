@@ -187,7 +187,7 @@ A unit attacks one enemy unit of its choosing.
 
 - **Where:** at a city you own that has no enemy units on it and fewer than `stack_limit` of your units.
 - **Cost:** you pay the unit's cost, and the new unit appears on the city hex.
-- **Limit:** one build per city per turn.
+- **Limit:** one build per city per turn, and none on the turn the city is captured.
 - **New units** can't move or act until your next turn.
 
 ### 3.6 Cities
@@ -436,7 +436,7 @@ This is player 1's first turn. Player 2's starting units are IDs 4–6, and the 
 - **Moving, then attacking.** A `no_move_attack` unit that has changed hexes this turn gets `acted` if it attacks. A unit stopped by an ambush before its first step hasn't moved.
 - **Attacking from a zone of control.** An attack needs the unit's action, not movement points, so a unit whose move ended next to an enemy can still attack.
 - **Ambush.** The hex the mover bumped into becomes visible, so the ambusher arrives as a `SEE` event before the `PART` line.
-- **Building.** A city with an enemy unit on it gets `city_used`, and one holding `stack_limit` of your units gets `stack_full`. A city can build on the turn it is captured.
+- **Building.** A city that already built this turn, was captured this turn, or has an enemy unit on it gets `city_used`, and one holding `stack_limit` of your units gets `stack_full`. A captured city can build from its new owner's next turn.
 - **Order of checks.** When an order has several problems, the error reported is the first one found, checking in this order: syntax, the unit or city named, the unit's state (`new_unit`, then `acted`), and then the order's own conditions. The golden test vectors pin the cases down.
 - **`END`.** During your turn, any `END` line ends it. The round number matters only when resyncing after a missed deadline (§7).
 - **Other lines.** An unknown keyword gets `ERR syntax`, and empty lines are ignored. An order beyond `max_orders_per_turn`, or a line longer than `max_line_bytes`, gets `ERR limit`; an over-long `D` line is dropped without a reply. Orders sent after the game ends get `ERR late`.
@@ -650,3 +650,4 @@ bitbath2/
 - **Default scale** (2026-11-02): 40 × 30 maps, with roughly 100–200 units per side at most. Small presets for manual play and large presets as rule variants come later. Revisit after the M4 balance pass if games feel cramped.
 - **Concealment** (2026-11-18): forest hides the units in it from all but nearby observers (`conceal` 1, §4), so forests are worth more than their defense, scouts have a spotting job, and archers need spotters. Line-of-sight blocking was rejected: with vision of 2–4 hexes it changes little, and its tie-breaking would be easy for kits to get subtly wrong.
 - **First unit balance pass** (2026-11-18): pikemen move 3 instead of 2, archers lost `no_move_attack` so they can move and shoot in one turn, and cavalry costs 225 instead of 250. Before, no build beat an all-infantry army. Every unit has 100 HP, so infantry gives the most HP and damage per gold; archers lost even to pikemen, and pikemen were too slow to catch cavalry. In about 2,900 test games between fixed build mixes, each counter in §3.3 now wins its matchup, and a build that adapts to the opponent beats all four fixed mixes it was tested against. Archers are still the weakest unit, and a lower archer cost made no clear difference.
+- **Building after capture** (2026-11-18): a captured city can't build until its new owner's next turn, so the old owner gets a turn to strike back before the city can produce a defender.

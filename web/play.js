@@ -134,7 +134,9 @@
       const lines = this.begin(this.human);
       this.log = this.describe(Kit.View.fromTurn(this.world, this.human, lines).logs);
       this.busy = false;
-      V.setPos(v.steps);
+      // As a step of playback, so the damage numbers of the opponent's
+      // attacks go on floating into the human's turn.
+      V.setPos(v.steps, true);
     }
 
     /** Puts the opponent's last turn into words, from the turn message's LOG lines. @param {string[][]} logs */

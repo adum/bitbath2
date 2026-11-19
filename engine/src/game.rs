@@ -30,7 +30,7 @@ pub struct City {
     /// The player with capture progress here, or 0.
     pub capturer: u8,
     pub progress: u32,
-    /// Already built a unit this turn.
+    /// Built a unit or was captured this turn, so it can't build until its owner's next turn.
     pub built: bool,
 }
 
@@ -613,6 +613,7 @@ impl Game {
         city.owner = player;
         city.capturer = 0;
         city.progress = 0;
+        city.built = true;
         self.logs[(3 - player) as usize].push(format!("LOG CITY {ci} {old} {player}"));
         self.reveal(hex, self.rules.c.city_vision, out);
         out.push("OK captured".into());
@@ -648,7 +649,10 @@ impl Game {
             return reject("unknown", format!("there is no unit type '{}'", t[2]));
         };
         if self.cities[ci].built {
-            return reject("city_used", format!("city {ci} already built a unit this turn"));
+            return reject(
+                "city_used",
+                format!("city {ci} already built a unit or was captured this turn"),
+            );
         }
         let hex = self.cities[ci].hex;
         let i = self.map.index(hex);
@@ -855,5 +859,27 @@ mod tests {
         assert_eq!(msg[0], "TURN 1");
         assert_eq!(msg.last().unwrap(), "GO");
         g.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn a_captured_city_builds_from_its_owners_next_turn() {
+        let rules = Rules::default();
+        let map = crate::mapgen::generate(&rules, 7).unwrap();
+        let mut g = Game::empty(rules, map);
+        let ci = g.cities.iter().position(|c| c.owner == 0).unwrap();
+        let infantry = g.rules.unit_index('I').unwrap();
+        let id = g.spawn(1, infantry, g.cities[ci].hex, false);
+        g.cities[ci].capturer = 1;
+        g.cities[ci].progress = 150;
+        g.begin_turn(1);
+        assert_eq!(g.apply(&format!("C {id}")).last().unwrap(), "OK captured");
+        let reply = g.apply(&format!("B {ci} I"));
+        assert!(reply.last().unwrap().starts_with("ERR city_used "), "{reply:?}");
+        g.end_turn();
+        g.begin_turn(2);
+        g.end_turn();
+        g.begin_turn(1);
+        let reply = g.apply(&format!("B {ci} I"));
+        assert!(reply.last().unwrap().starts_with("OK "), "{reply:?}");
     }
 }

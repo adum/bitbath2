@@ -3,10 +3,12 @@
 Run with: python kits/python/test_bitbath.py
 """
 
+import io
 import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bitbath as bb  # noqa: E402
@@ -142,6 +144,21 @@ class Pathfinding(unittest.TestCase):
         field = bot.distance_field([enemy.hex])
         self.assertEqual(field[(2, 2)], 1)
         self.assertEqual(field[(0, 2)], 3)
+
+
+class Orders(unittest.TestCase):
+    def test_a_captured_city_cant_build_this_turn(self):
+        bot = make_bot(["C.....", "......", "......", "......"])
+        city = bb.City(0, 0, 0, 0)
+        bot.state = bb.State(1, [city])
+        unit = bb.Unit(1, 1, "I", 0, 0, 100)
+        bot.state.units = {1: unit}
+        with mock.patch.object(bb, "_read_line", lambda: "OK captured"), \
+                mock.patch.object(bb, "_out", io.StringIO()), \
+                mock.patch.object(bot, "time_left", lambda: 10 ** 6):
+            self.assertTrue(bot.capture(unit))
+        self.assertEqual(city.owner, 1)
+        self.assertTrue(city.built)
 
 
 if __name__ == "__main__":
