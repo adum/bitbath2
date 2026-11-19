@@ -1234,9 +1234,9 @@
    * Moves to position `k`, with the units that move on the way sliding along
    * their paths for `ms` milliseconds. Units killed on the way stay until the
    * slide ends.
-   * @param {number} k @param {number} ms
+   * @param {number} k @param {number} ms @param {boolean} [movesOnly] slide only if a unit moved
    */
-  function animateTo(k, ms) {
+  function animateTo(k, ms, movesOnly) {
     const from = v.pos;
     const old = v.state;
     setPos(k);
@@ -1249,7 +1249,7 @@
     }
     const alive = new Set(v.state.units.map((/** @type {any[]} */ u) => u[0]));
     const ghosts = old ? old.units.filter((/** @type {any[]} */ u) => !alive.has(u[0])) : [];
-    if (ms < 40 || (!paths.size && !ghosts.length)) return;
+    if (ms < 40 || (!paths.size && (movesOnly || !ghosts.length))) return;
     // Every unit moves at the same speed, so the longest path sets the time.
     let len = 1;
     for (const path of paths.values()) len = Math.max(len, path.length - 1);
@@ -1265,6 +1265,19 @@
       if (v.anim) requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
+  }
+
+  /** How long a unit takes to slide when stepping one order: short enough to feel instant. */
+  const STEP_MS = 110;
+
+  /**
+   * Steps forward one order. A unit that moves slides along its path, to show
+   * where it went. Any other navigation, or a held key, snaps instead.
+   * @param {boolean} [snap]
+   */
+  function stepForward(snap) {
+    if (snap) setPos(v.pos + 1);
+    else animateTo(v.pos + 1, STEP_MS, true);
   }
 
   function tick() {
@@ -1392,7 +1405,7 @@
   $("prev-turn").onclick = () => setPos(prevTurn());
   $("prev").onclick = () => setPos(v.pos - 1);
   $("play").onclick = togglePlay;
-  $("next").onclick = () => setPos(v.pos + 1);
+  $("next").onclick = () => stepForward();
   $("next-turn").onclick = () => setPos(nextTurn());
   $("last").onclick = () => setPos(v.steps);
   $("slider").oninput = () => setPos(v.ends[Number($("slider").value)] || 0);
@@ -1413,7 +1426,7 @@
     if (!v.replay || tag === "INPUT" || tag === "SELECT" || $("rules").open) return;
     const keys = {
       " ": togglePlay,
-      ArrowRight: () => setPos(e.shiftKey ? nextTurn() : v.pos + 1),
+      ArrowRight: () => (e.shiftKey ? setPos(nextTurn()) : stepForward(e.repeat)),
       ArrowLeft: () => setPos(e.shiftKey ? prevTurn() : v.pos - 1),
       ArrowDown: () => setPos(nextTurn()),
       ArrowUp: () => setPos(prevTurn()),
