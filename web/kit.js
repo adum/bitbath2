@@ -144,7 +144,7 @@ var BitbathKit = (function () {
       this.owner = owner;
       this.capturer = 0;
       this.progress = 0;
-      /** Built a unit this turn. */ this.built = false;
+      /** Built a unit or was captured this turn, so it can't build. */ this.built = false;
     }
 
     get hex() {
@@ -527,7 +527,7 @@ var BitbathKit = (function () {
       const city = this.view.cityAt(unit.hex);
       if (reply.ok && city) {
         unit.acted = true;
-        if (reply.values[0] === "captured") Object.assign(city, { owner: this.player, capturer: 0, progress: 0 });
+        if (reply.values[0] === "captured") Object.assign(city, { owner: this.player, capturer: 0, progress: 0, built: true });
         else Object.assign(city, { capturer: this.player, progress: Number(reply.values[0]) });
       }
       return reply;
