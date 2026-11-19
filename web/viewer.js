@@ -382,12 +382,21 @@
 
   /** @param {CanvasRenderingContext2D} ctx @param {any[]} u @param {number} x @param {number} y @param {number} rad */
   function drawUnit(ctx, u, x, y, rad) {
-    const [, owner, code, , , hp, , flags] = u;
+    const [, owner, code, , , hp, mp, flags] = u;
     const type = v.info.units[code];
     const maxHp = type ? type.max_hp : 100;
-    ctx.globalAlpha = owner === v.state.player && flags & 1 ? 0.55 : 1;
+    // The units of the player whose turn it is fade as they are used up: a
+    // little with no movement left, and more once they have attacked or
+    // captured, which ends their turn.
+    const alpha = owner !== v.state.player ? 1 : flags & 1 ? 0.5 : mp === 0 ? 0.75 : 1;
     ctx.beginPath();
     ctx.arc(x, y, rad, 0, 2 * Math.PI);
+    if (alpha < 1) {
+      // A faded unit still hides the move lines under it.
+      ctx.fillStyle = cssVar("--bg");
+      ctx.fill();
+    }
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = playerColor(owner);
     ctx.fill();
     ctx.lineWidth = Math.max(1, rad * 0.14);
