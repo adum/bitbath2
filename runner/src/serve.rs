@@ -5,7 +5,8 @@
 //! the messages and answers the orders. The bridge only starts a bot and
 //! carries lines between the page and the bot's stdin and stdout.
 //!
-//! It runs only the commands named when it was started, never one the page
+//! It offers the bots it finds in the repository (see `discover`) and the
+//! commands named when it was started. It never runs a command the page
 //! sends, and it listens on this machine only. Requests must come from its
 //! own pages, so no other site open in the browser can start a bot.
 //!
@@ -42,7 +43,10 @@ pub struct Offer {
 
 pub struct Options {
     pub port: u16,
+    /// The bots named on the command line.
     pub bots: Vec<Offer>,
+    /// Whether to offer the bots found in the repository too.
+    pub discover: bool,
     pub memory_mb: u64,
     /// The directory served: the repository, with `web/` and `runs/` in it.
     pub root: PathBuf,
@@ -107,16 +111,17 @@ pub fn serve(opts: Options) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", opts.port))
         .map_err(|e| format!("can't listen on port {}: {e}", opts.port))?;
     println!("Serving Bitbath at http://localhost:{}/web/index.html", opts.port);
-    if opts.bots.is_empty() {
-        println!("No bots on offer. Add some with --bot <name>=<command>.");
-    }
-    for b in &opts.bots {
-        println!("  bot {}: {}", b.name, b.command);
-    }
     let server = Arc::new(Server {
         opts,
         sessions: Mutex::new(HashMap::new()),
     });
+    let offers = server.offers();
+    if offers.is_empty() {
+        println!("No bots on offer. Add some with --bot <name>=<command>.");
+    }
+    for b in &offers {
+        println!("  bot {}: {}", b.name, b.command);
+    }
     for stream in listener.incoming().flatten() {
         let server = Arc::clone(&server);
         thread::spawn(move || connection(&server, stream));
@@ -224,7 +229,102 @@ fn local_host(host: &str) -> bool {
     matches!(name, "localhost" | "127.0.0.1" | "[::1]")
 }
 
+/// The bots found in the repository at `root`: each Python file in `bots/`,
+/// run with Python, and each program in `target/release/` but `bitbath`
+/// itself. It doesn't check that they are bots: one that isn't fails when a
+/// game with it starts, which costs less than naming every bot by hand.
+pub fn discover(root: &Path) -> Vec<Offer> {
+    let files = |dir: &str| {
+        let mut names: Vec<String> = std::fs::read_dir(root.join(dir))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        names
+    };
+    let stem = |file: &str| Path::new(file).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let mut found = Vec::new();
+    for file in files("bots") {
+        if file.ends_with(".py") {
+            found.push((stem(&file), format!("{python} \"bots/{file}\"")));
+        }
+    }
+    for file in files("target/release") {
+        if is_program(&root.join("target/release").join(&file)) && stem(&file) != "bitbath" {
+            found.push((stem(&file), format!("\"target/release/{file}\"")));
+        }
+    }
+    let mut offers: Vec<Offer> = Vec::new();
+    for (stem, command) in found {
+        let name = offer_name(&stem, |n| offers.iter().any(|o| o.name == n));
+        offers.push(Offer { name, command });
+    }
+    offers
+}
+
+#[cfg(windows)]
+fn is_program(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+}
+
+#[cfg(not(windows))]
+fn is_program(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.extension().is_none() && std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+}
+
+/// A bot's name from its file's stem: without a `_bot` suffix, in plain
+/// characters, and with a number added if `taken` says the name is in use.
+fn offer_name(stem: &str, taken: impl Fn(&str) -> bool) -> String {
+    let base = stem.strip_suffix("_bot").filter(|s| !s.is_empty()).unwrap_or(stem);
+    let base: String = base
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .take(28)
+        .collect();
+    let base = if base.is_empty() { "bot".to_string() } else { base };
+    let mut name = base.clone();
+    let mut n = 2;
+    while taken(&name) {
+        name = format!("{base}-{n}");
+        n += 1;
+    }
+    name
+}
+
 impl Server {
+    /// The bots on offer now: the ones named on the command line, then the
+    /// ones found in the repository, so a bot built or written while the
+    /// server runs is there the next time the page asks.
+    fn offers(&self) -> Vec<Offer> {
+        let mut offers: Vec<Offer> = self
+            .opts
+            .bots
+            .iter()
+            .map(|b| Offer {
+                name: b.name.clone(),
+                command: b.command.clone(),
+            })
+            .collect();
+        if self.opts.discover {
+            for found in discover(&self.opts.root) {
+                if offers.iter().any(|o| o.command == found.command) {
+                    continue;
+                }
+                let name = offer_name(&found.name, |n| offers.iter().any(|o| o.name == n));
+                offers.push(Offer {
+                    name,
+                    command: found.command,
+                });
+            }
+        }
+        offers
+    }
+
     fn handle(&self, r: &Request) -> Response {
         let host = r.headers.get("host").map(String::as_str).unwrap_or("");
         if !local_host(host) {
@@ -244,7 +344,7 @@ impl Server {
         let session = r.query.get("session").map(String::as_str).unwrap_or("");
         match (r.method.as_str(), api) {
             ("GET", "bots") => Response::json(json!({
-                "bots": self.opts.bots.iter().map(|b| json!({"name": b.name, "command": b.command})).collect::<Vec<_>>(),
+                "bots": self.offers().iter().map(|b| json!({"name": b.name, "command": b.command})).collect::<Vec<_>>(),
             })),
             ("POST", "start") => self.start(r.query.get("bot").map(String::as_str).unwrap_or("")),
             ("POST", "io") => self.io(session, &r.body, r.query.get("wait").and_then(|w| w.parse().ok())),
@@ -286,7 +386,8 @@ impl Server {
     }
 
     fn start(&self, name: &str) -> Response {
-        let Some(offer) = self.opts.bots.iter().find(|b| b.name == name) else {
+        let offers = self.offers();
+        let Some(offer) = offers.iter().find(|b| b.name == name) else {
             return Response::error("404 Not Found", &format!("no bot named '{name}' is on offer"));
         };
         let mut sessions = self.sessions.lock().expect("sessions lock");
@@ -393,6 +494,24 @@ mod tests {
         assert!(!local_host("example.com:8000"));
         assert!(!local_host("localhost.example.com"));
         assert!(!local_host(""));
+    }
+
+    #[test]
+    fn names_bots_by_their_files() {
+        assert_eq!(offer_name("greedy_bot", |_| false), "greedy");
+        assert_eq!(offer_name("_bot", |_| false), "_bot");
+        assert_eq!(offer_name("my bot.v2", |_| false), "my_bot_v2");
+        assert_eq!(offer_name("greedy_bot", |n| n == "greedy" || n == "greedy-2"), "greedy-3");
+    }
+
+    #[test]
+    fn discovers_the_repository_bots() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let found = discover(&root);
+        let greedy = found.iter().find(|o| o.name == "greedy").expect("bots/greedy_bot.py");
+        assert!(greedy.command.ends_with("\"bots/greedy_bot.py\""), "{}", greedy.command);
+        assert!(found.iter().all(|o| !o.command.contains("bitbath.") && !o.command.ends_with("bitbath\"")));
+        assert!(discover(&root.join("no-such-directory")).is_empty());
     }
 
     #[test]

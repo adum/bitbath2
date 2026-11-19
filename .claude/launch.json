@@ -10,7 +10,7 @@
     {
       "name": "serve",
       "runtimeExecutable": "target/release/bitbath",
-      "runtimeArgs": ["serve", "--port", "8770", "--bot", "greedy=python bots/greedy_bot.py", "--bot", "smart=python bots/smart_bot.py", "--bot", "broken=python -c \"import sys; sys.exit(3)\""],
+      "runtimeArgs": ["serve", "--port", "8770"],
       "port": 8770
     }
   ]

@@ -51,16 +51,18 @@ You see the game through your own fog of war:
 
 When the game ends, it becomes a replay: you can step through it with both sides in view, and save it as a `.bbr` file.
 
-To play against a bot on disk, let `bitbath serve` serve the page, and name the bots it may run:
+To play against a bot on disk, let `bitbath serve` serve the page:
 
 ```bash
-target/release/bitbath serve --bot greedy="python bots/greedy_bot.py" --bot smart="python bots/smart_bot.py"
+target/release/bitbath serve
 ```
 
-Then open `http://localhost:8000/web/index.html`. The bots you named are in the New game dialog's opponent list, marked "on disk", after the built-in ones.
+Then open `http://localhost:8000/web/index.html`. The New game dialog's opponent list now also has the bots on disk, marked "on disk", after the built-in ones.
+
+- **Which bots.** The server offers every Python file in `bots/` and every program in `target/release/`, named by its file without `_bot`. It doesn't check that they are bots, so the list can hold a program that isn't one. Add any other bot with `--bot <name>=<command>`, and pass `--no-discover` to offer only those.
 
 - **The page is still the referee.** The server only starts the bot and carries its lines to the page and back.
-- **Only the bots you name.** The server runs the commands given with `--bot` and no others, listens on this machine only, and answers only its own pages.
+- **Nothing from the page.** The server runs only the bots it offers, never a command the page sends. It listens on this machine only, and answers only its own pages.
 - **No clock.** A bot is told it has the rules' time for a turn, but the page doesn't hold it to that. A bot that takes over 30 seconds for a turn, or exits, forfeits.
 - **The bot's stderr** goes into the replay, turn by turn, as in a game the runner plays.
 

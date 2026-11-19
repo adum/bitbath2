@@ -25,10 +25,11 @@ Usage:
       summary; --orders adds every order and its reply.
   bitbath map [--map seed:<n> | <file>] [--config <file>] [--set <key>=<value>] [--lines]
       Prints a map. --lines prints it in the map file format instead.
-  bitbath serve [--port <n>] [--bot <name>=<command>]... [--memory-mb <n>]
+  bitbath serve [--port <n>] [--bot <name>=<command>]... [--no-discover] [--memory-mb <n>]
       Serves the viewer's page at http://localhost:<port>/web/index.html (default
-      port 8000), from the current directory. Each --bot is a bot to play
-      against by hand in the page, next to the ones built into it.
+      port 8000), from the current directory, with bots to play against by
+      hand in the page: the Python files in bots/, the programs in
+      target/release/, and each --bot. --no-discover offers only the --bot ones.
 
 Example:
   bitbath play --p1 \"python bots/greedy_bot.py\" --p2 \"python bots/random_bot.py\" --map seed:42
@@ -327,7 +328,7 @@ fn cmd_replay(args: &[String]) -> Result<(), String> {
 }
 
 fn cmd_serve(args: &[String]) -> Result<(), String> {
-    let a = Args::parse(args, &["--port", "--bot", "--memory-mb"], &[])?;
+    let a = Args::parse(args, &["--port", "--bot", "--memory-mb"], &["--no-discover"])?;
     if let Some(extra) = a.positional.first() {
         return Err(format!("unexpected argument '{extra}'"));
     }
@@ -354,6 +355,7 @@ fn cmd_serve(args: &[String]) -> Result<(), String> {
     serve::serve(serve::Options {
         port,
         bots,
+        discover: !a.has("--no-discover"),
         memory_mb,
         root,
     })
