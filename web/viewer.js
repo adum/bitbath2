@@ -351,7 +351,15 @@
       hexPath(ctx, x, y, v.geo.size * 0.97);
       ctx.strokeStyle = cssVar("--text");
       ctx.lineWidth = 2;
+      // Dotted when the picked unit can't get to the hex this turn.
+      if (v.play && v.play.outOfReach(v.hover[0], v.hover[1])) {
+        ctx.setLineDash([0.1, 6.5]);
+        ctx.lineCap = "round";
+        ctx.lineWidth = 3;
+      }
       ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineCap = "butt";
     }
   }
 

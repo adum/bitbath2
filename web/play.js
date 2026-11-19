@@ -509,6 +509,14 @@
       this.render();
     }
 
+    /** Whether a unit is picked that can neither move to the hex this turn nor attack onto it. @param {number} q @param {number} r */
+    outOfReach(q, r) {
+      const unit = this.unit();
+      if (!unit || this.over || !this.myTurn()) return false;
+      if (unit.hex[0] === q && unit.hex[1] === r) return false;
+      return !this.reach.has(this.world.index([q, r])) && !this.targets.some((t) => t.q === q && t.r === r);
+    }
+
     /** Extra lines for the viewer's hover box: what a click on the hex would do. @param {number} q @param {number} r @returns {string[]} */
     hoverLines(q, r) {
       const unit = this.unit();
