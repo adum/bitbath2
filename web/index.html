@@ -208,6 +208,23 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
   }
   #menu button { text-align: left; white-space: nowrap; }
+  /* What an attack on the enemy under the pointer would do. It sits beside
+     the fight, and the pointer goes through it. */
+  #forecast {
+    position: absolute; z-index: 2; pointer-events: none; padding: 8px 10px; white-space: nowrap; font-size: 13px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  }
+  #forecast .fc-fight + .fc-fight { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+  #forecast .fc-row { display: grid; grid-template-columns: 9.5em 96px 5.2em 5.6em; gap: 8px; align-items: center; margin: 3px 0; }
+  #forecast .fc-who { overflow: hidden; text-overflow: ellipsis; }
+  #forecast .fc-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+  #forecast .fc-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
+  #forecast .fc-lose { background: repeating-linear-gradient(135deg, #f03e3e 0 3px, #ffa8a8 3px 6px); }
+  #forecast .fc-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  #forecast .fc-num b { color: var(--text); }
+  #forecast .fc-delta { font-weight: 700; color: #f03e3e; font-variant-numeric: tabular-nums; }
+  #forecast .fc-delta.none { font-weight: 400; color: var(--muted); }
+  #forecast .fc-hint { margin-top: 6px; color: var(--muted); font-size: 12px; }
   #error { color: var(--p1); white-space: pre-wrap; }
   @media (max-width: 800px) {
     main { flex-direction: column; }
@@ -235,6 +252,7 @@
   <div id="board">
     <canvas id="canvas"></canvas>
     <div id="menu" hidden></div>
+    <div id="forecast" hidden></div>
     <div id="empty">
       <div>Open a replay (<span class="mono">.bbr</span>) or drop one here.</div>
       <div>Replays are written to <span class="mono">runs/</span> by <span class="mono">bitbath play</span>.</div>

@@ -54,6 +54,7 @@
       /** @type {Set<number>} */ this.zoc = new Set();
       /** The ids of the human's units with something left to do. @type {number[]} */ this.ready = [];
       /** Why the last order didn't do what was asked, if it didn't. */ this.problem = "";
+      /** What the attack forecast on show was worked out from, so it is built once. */ this.forecastKey = "";
       /** The turn being played: its record in the replay. @type {any} */ this.turn = null;
       this.turnStart = 0;
       this.stats = [newStats(), newStats()];
@@ -329,6 +330,7 @@
     close() {
       this.closed = true;
       closeMenu();
+      $("forecast").hidden = true;
       if (current === this) current = null;
     }
 
@@ -364,6 +366,88 @@
       return out;
     }
 
+    /**
+     * Shows, beside the enemy under the pointer, what an attack by the picked
+     * unit would do to each side: hit points before and after, as bars and
+     * as numbers.
+     */
+    showForecast() {
+      const card = $("forecast");
+      const unit = this.unit();
+      const hex = v.hover;
+      const targets = unit && hex && this.myTurn() && !v.anim && $("menu").hidden ? this.targets.filter((t) => t.q === hex[0] && t.r === hex[1]) : [];
+      if (!unit || !hex || !targets.length) {
+        card.hidden = true;
+        this.forecastKey = "";
+        return;
+      }
+      const g = v.geo;
+      const key = [v.pos, unit.id, hex, g.size, g.ox, g.oy, g.w, g.h].join(" ");
+      if (key === this.forecastKey) return;
+      this.forecastKey = key;
+      const row = (/** @type {any} */ u, /** @type {number} */ after) => {
+        const max = this.kit.unitType(u).max_hp;
+        const out = el("div", "", "fc-row");
+        const who = el("span", (u.owner === this.human ? "Your " : "Enemy ") + this.kit.unitType(u).name, "fc-who");
+        const dot = el("span", "", "fc-dot");
+        dot.style.background = V.playerColor(u.owner);
+        who.prepend(dot);
+        const bar = el("span", "", "fc-bar");
+        const keep = el("span", "");
+        keep.style.background = V.playerColor(u.owner);
+        keep.style.width = (100 * after) / max + "%";
+        const lose = el("span", "", "fc-lose");
+        lose.style.width = (100 * (u.hp - after)) / max + "%";
+        bar.append(keep, lose);
+        const num = el("span", u.hp + " → ", "fc-num");
+        num.append(el("b", String(after)));
+        const lost = u.hp - after;
+        const delta = el("span", !after ? "destroyed" : lost ? "−" + lost : "no damage", "fc-delta" + (lost ? "" : " none"));
+        out.append(who, bar, num, delta);
+        return out;
+      };
+      card.replaceChildren(
+        ...targets.map((t) => {
+          const [theirs, mine] = this.kit.predict(unit, t);
+          const fight = el("div", "", "fc-fight");
+          fight.append(row(t, theirs), row(unit, mine));
+          return fight;
+        }),
+      );
+      if (targets.length > 1) card.append(el("div", "Click to choose which one to attack.", "fc-hint"));
+      card.hidden = false;
+
+      // Beside the target, and preferably beyond it as the attacker sees it.
+      // Of the places that fit, it takes the one that covers the fewest
+      // units, and never the two that are fighting.
+      const s = g.size;
+      const [w, h] = [card.offsetWidth, card.offsetHeight];
+      const [tx, ty] = V.center(hex[0], hex[1]);
+      const [ax, ay] = V.center(unit.hex[0], unit.hex[1]);
+      const gap = s * 1.05 + 6;
+      /** @type {Map<number, number>} */
+      const weight = new Map();
+      for (const u of this.kit.view.units.values()) weight.set(this.world.index(u.hex), 1);
+      weight.set(this.world.index(hex), 100);
+      weight.set(this.world.index(unit.hex), 100);
+      let best = null;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const x = Math.max(4, Math.min(g.w - w - 4, dx > 0 ? tx + gap : dx < 0 ? tx - gap - w : tx - w / 2));
+        const y = Math.max(4, Math.min(g.h - h - 4, dy > 0 ? ty + gap : dy < 0 ? ty - gap - h : ty - h / 2));
+        let cost = 0;
+        for (const [i, k] of weight) {
+          const [ux, uy] = V.center(...this.world.hex(i));
+          if (ux + s * 0.85 > x && ux - s * 0.85 < x + w && uy + s * 0.85 > y && uy - s * 0.85 < y + h) cost += k;
+        }
+        // Among equals, the side away from the attacker wins.
+        const away = (dx * (tx - ax) + dy * (ty - ay)) / (Math.hypot(dx, dy) * (Math.hypot(tx - ax, ty - ay) || 1));
+        const score = cost * 10 - away;
+        if (!best || score < best.score) best = { x, y, score };
+      }
+      card.style.left = /** @type {any} */ (best).x + "px";
+      card.style.top = /** @type {any} */ (best).y + "px";
+    }
+
     /** Under the units: where the picked unit can go, and the way to the hex under the pointer. @param {CanvasRenderingContext2D} ctx */
     drawUnder(ctx) {
       const unit = this.unit();
@@ -390,6 +474,7 @@
 
     /** Over the units: a ring on the picked unit or hex, and on each enemy the unit can attack. @param {CanvasRenderingContext2D} ctx */
     drawOver(ctx) {
+      this.showForecast();
       if (this.over || !this.sel) return;
       const s = v.geo.size;
       const unit = this.unit();
