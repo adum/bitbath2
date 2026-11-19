@@ -856,10 +856,6 @@
           row.append(button("Capture (C) · " + what, () => this.capture(), "primary"));
           box.append(row);
         }
-        if (this.targets.length) {
-          box.append(el("div", "Attack", "label"));
-          for (const t of this.targets) box.append(button(V.capitalize(this.forecast(t)), () => this.order("A " + unit.id + " " + t.id), "unit"));
-        }
       }
       if (city && city.owner === this.human && mine) {
         // A reason that holds for a unit costing nothing holds for them all.
