@@ -168,6 +168,8 @@
       /** Not taking orders: the opponent is moving. */ this.busy = true;
       /** What the human saw of the opponent's last turn, as the viewer's marks. @type {any[]} */ this.seen = [];
       /** What that turn did to the human, in words. @type {string[]} */ this.log = [];
+      /** The same in numbers, as [label, count, whether it is the human's loss]. @type {[string, number, boolean][]} */ this.tally = [];
+      /** The hit points of the human's units as the opponent's turn began, by id. @type {Map<number, number>} */ this.hps = new Map();
       /** @type {any} */ this.world = null;
       /** The human's view of the state shown, and the helpers on it. @type {any} */ this.kit = null;
       /** The hex picked, and the unit picked on it, if any. @type {{hex: number[], unit: number | null} | null} */ this.sel = null;
@@ -232,7 +234,11 @@
       this.busy = true;
       this.sel = null;
       this.problem = "";
-      for (const u of this.kit ? this.kit.view.myUnits() : []) this.types.set(u.id, u.type);
+      this.hps.clear();
+      for (const u of this.kit ? this.kit.view.myUnits() : []) {
+        this.types.set(u.id, u.type);
+        this.hps.set(u.id, u.hp);
+      }
       const lines = this.begin(3 - this.human, this.bot.clock);
       const turn = this.turn;
       let over = false;
@@ -279,7 +285,9 @@
 
     humanTurn() {
       const lines = this.begin(this.human);
-      this.log = this.describe(Kit.View.fromTurn(this.world, this.human, lines).logs);
+      const logs = Kit.View.fromTurn(this.world, this.human, lines).logs;
+      this.log = this.describe(logs);
+      this.tally = this.count(logs);
       this.busy = false;
       // As a step of playback, so the damage numbers of the opponent's
       // attacks go on floating into the human's turn.
@@ -300,6 +308,23 @@
         if (t[0] === "CITY") return t[2] === String(this.human) ? "You lost city " + t[1] + "." : this.botName + " took city " + t[1] + ".";
         return t.join(" ");
       });
+    }
+
+    /** Adds the opponent's last turn up, from the same LOG lines. @param {string[][]} logs @returns {[string, number, boolean][]} */
+    count(logs) {
+      let [hits, damage, lost, killed, cities] = [0, 0, 0, 0, 0];
+      for (const t of logs) {
+        if (t[0] === "HIT") {
+          const [id, hp] = [Number(t[5]), Number(t[6])];
+          const before = this.hps.get(id);
+          hits++;
+          if (before !== undefined) damage += Math.max(0, before - hp);
+          this.hps.set(id, hp);
+          if (!hp) lost++;
+          if (t[7] === "0") killed++;
+        } else if (t[0] === "CITY" && t[2] === String(this.human)) cities++;
+      }
+      return [["attacks", hits, true], ["damage", damage, true], ["units lost", lost, true], ["cities lost", cities, true], ["they lost", killed, false]];
     }
 
     endTurn() {
@@ -780,6 +805,13 @@
       $("selection").hidden = $("play-last").hidden = this.over;
       $("end-turn").disabled = !mine;
       $("next-unit").disabled = !mine || !this.ready.length;
+      const tally = $("play-tally");
+      tally.replaceChildren();
+      for (const [label, n, bad] of this.tally) {
+        const cell = el("div", "", n ? (bad ? "bad" : "good") : "");
+        cell.append(el("b", String(n)), el("span", label));
+        tally.append(cell);
+      }
       const log = $("play-log");
       log.replaceChildren();
       for (const line of this.log.length ? this.log : ["Nothing happened to your units or cities."]) log.append(el("div", line));

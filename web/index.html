@@ -202,6 +202,12 @@
   #selection button.unit { display: block; width: 100%; margin: 2px 0; }
   #selection button.chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   #selection button.spent { color: var(--muted); }
+  #play-tally { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 6px; text-align: center; }
+  #play-tally div { padding: 3px 0; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
+  #play-tally b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  #play-tally span { display: block; font-size: 11px; white-space: nowrap; }
+  #play-tally .bad b { color: #f03e3e; }
+  #play-tally .good b { color: #2f9e44; }
   #play-log { height: 5.6em; overflow-y: auto; font-size: 13px; color: var(--muted); }
   #menu {
     position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 4px; padding: 6px;
@@ -273,6 +279,7 @@
       <div id="selection"></div>
       <div id="play-last">
         <h2>Opponent's last turn</h2>
+        <div id="play-tally"></div>
         <div id="play-log"></div>
       </div>
     </section>
