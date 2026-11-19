@@ -2,7 +2,7 @@
 
 A turn-based, two-player strategy game on a hex map, played by programs. Bots talk to the engine over stdin and stdout, so they can be written in any language. Bitbath is first an LLM benchmark for strategic bot programming, and second a game for people who like writing bots. [SPEC.md](SPEC.md) has the full design.
 
-Status: milestones M1–M3 are built. That covers the engine, the `bitbath` runner with a Python starter kit, and a browser replay viewer. The reference bots include random, greedy, and solid opponents.
+Status: milestones M1–M3 are built. That covers the engine, the `bitbath` runner with a Python starter kit, and a browser replay viewer, which also lets you play against a built-in bot. The reference bots include random, greedy, and solid opponents.
 
 ## Quick start
 
@@ -35,6 +35,21 @@ Then open `web/index.html` in a browser and choose a replay file, or drop one on
 - **← / →** step through orders.
 - **↑ / ↓** jump between turns.
 - **Scroll** to zoom, and **drag** to pan.
+
+## Playing by hand
+
+The viewer's page also plays games: you against a bot built into the page. Click **New game**, then pick an opponent, a map size, and a side. The `random` bot is for learning the controls, and `greedy` puts up a fight. Nothing else needs to run, since the game runs in the page on the same engine.
+
+You see the game through your own fog of war:
+
+- **Click** one of your units to select it. The hexes it can reach are tinted, and the enemies it can attack are ringed.
+- **Click a tinted hex** to move there, or **a ringed enemy** to attack it. Hovering shows the path, or what the attack would do.
+- **Shift-click** moves onto a hex that holds your own units; a plain click selects one of them instead.
+- **C** captures the city the unit stands on.
+- **Click one of your cities** to build there, or press a unit's letter, such as **I** for infantry.
+- **N** or **Tab** selects the next unit with something left to do, **Esc** deselects, and **E** or **Enter** ends your turn.
+
+When the game ends, it becomes a replay: you can step through it with both sides in view, and save it as a `.bbr` file.
 
 ## Writing a bot
 
@@ -76,7 +91,7 @@ bb.run(MyBot())
 engine/         Rust: rules, map generation, vision, order processing. No I/O.
 runner/         Rust: the bitbath command (bot processes, clocks, replays).
 wasm/           The engine compiled to wasm for the viewer.
-web/            The replay viewer.
+web/            The replay viewer and play UI, with its built-in bots.
 kits/python/    Python starter kit and its tests.
 bots/           Reference bots: random_bot.py, greedy_bot.py, solid_bot.py.
 tests/vectors/  Golden test vectors shared by the engine and kits.

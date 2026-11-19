@@ -1,6 +1,8 @@
 // @ts-check
 // Bitbath replay viewer (SPEC §8). It re-simulates a replay's orders with the
 // engine compiled to wasm (wasm/src/lib.rs) and draws the game on a canvas.
+// It also shows games as they are played in the page: play.js adds each step
+// to a replay that grows, and takes the human player's orders.
 /* global BITBATH_WASM_BASE64 */
 "use strict";
 
@@ -64,6 +66,52 @@
       this.ex.bb_seek(step);
       return JSON.parse(this.out());
     }
+
+    // Live games: see "Live games" below.
+
+    /** Calls an export that takes one string, and throws its error. @param {string} fn @param {string} text */
+    call(fn, text) {
+      const [p, l] = this.put(text);
+      const n = this.ex[fn](p, l);
+      this.ex.bb_free(p, l);
+      if (n < 0) throw new Error(this.out());
+      return this.out();
+    }
+
+    /** The setup lines of a new game on a generated map. @param {string} config `key = value` lines, with the map's `seed` */
+    setup(config) {
+      if (!this.ex.bb_setup) throw new Error("web/bitbath_wasm.js is out of date. Rebuild it with: python scripts/build_web.py");
+      return this.call("bb_setup", config).split("\n");
+    }
+
+    /** The engine, protocol and generator versions, for a replay's header. */
+    versions() {
+      this.ex.bb_versions();
+      return JSON.parse(this.out());
+    }
+
+    /** Adds a step to the end of the loaded game and returns its reply lines. @param {string} line `T <player>` or `O <order>` */
+    push(line) {
+      const out = this.call("bb_push", line);
+      return out ? out.split("\n") : [];
+    }
+
+    /** Ends the turn being played. Returns whether that ended the game. */
+    end() {
+      return this.ex.bb_end() === 1;
+    }
+
+    /** The init message for a player (SPEC §6.2). @param {number} player @returns {string[]} */
+    initMessage(player) {
+      if (this.ex.bb_init_message(player) < 0) throw new Error(this.out());
+      return this.out().split("\n");
+    }
+
+    /** The turn message for the player whose turn it is (SPEC §6.3). @returns {string[]} */
+    turnMessage() {
+      if (this.ex.bb_turn_message(0, 0) < 0) throw new Error(this.out());
+      return this.out().split("\n");
+    }
   }
 
   /** Splits a replay into records and builds the engine's step script. */
@@ -100,6 +148,8 @@
   const v = {
     /** @type {Engine | null} */ engine: null,
     /** @type {any} */ replay: null,
+    /** The game being played in the page and its controls (play.js), or null for a replay. @type {any} */ play: null,
+    /** Where each unit was last drawn, as [x, y, radius] by unit id. @type {Map<number, number[]>} */ unitPos: new Map(),
     /** @type {any} */ info: null,
     steps: 0,
     pos: 0,
@@ -136,6 +186,19 @@
   function playerName(player) {
     const p = v.replay && v.replay.header.players[player - 1];
     return p ? p.name : "player " + player;
+  }
+
+  /**
+   * The player whose fog of war can't be lifted: the human in a game that is
+   * still being played. It is 0 for replays and finished games.
+   */
+  function fogged() {
+    return v.play && !v.play.over ? v.play.human : 0;
+  }
+
+  /** The player whose view is drawn, or 0 for both. */
+  function viewOf() {
+    return fogged() || Number($("view").value);
   }
 
   // Geometry: pointy-top hexes, odd rows shifted right (SPEC §3.1).
@@ -262,18 +325,20 @@
     const ctx = /** @type {CanvasRenderingContext2D} */ (cv.getContext("2d"));
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cv.width, cv.height);
-    if (!v.state || !v.geo || !v.terrain) return;
+    if (!v.state || !v.geo || !v.terrain || !v.terrain.width || !v.terrain.height) return;
     ctx.drawImage(v.terrain, 0, 0);
     ctx.setTransform(v.geo.dpr, 0, 0, v.geo.dpr, 0, 0);
-    const persp = Number($("view").value);
+    const persp = viewOf();
     drawCities(ctx, persp);
     if (persp) drawFog(ctx, persp);
     drawDebug(ctx);
     drawTrails(ctx, persp);
+    if (v.play) v.play.drawUnder(ctx);
     // A move's line goes under the units, so it never covers their letters.
     drawOrder(ctx, persp, true);
     drawUnits(ctx, persp);
     drawOrder(ctx, persp, false);
+    if (v.play) v.play.drawOver(ctx);
     if (v.hover) {
       const [x, y] = center(v.hover[0], v.hover[1]);
       hexPath(ctx, x, y, v.geo.size * 0.97);
@@ -353,6 +418,7 @@
     // While units slide during playback, the moving ones are drawn on their
     // own, and units killed on the way stay until the slide ends.
     const still = a ? v.state.units.filter((/** @type {any[]} */ u) => !a.paths.has(u[0])).concat(a.ghosts) : v.state.units;
+    v.unitPos = new Map();
     /** @type {Map<string, any[]>} */
     const byHex = new Map();
     for (const u of still) {
@@ -372,10 +438,14 @@
     if (!a) return;
     for (const u of v.state.units) {
       const path = a.paths.get(u[0]);
-      if (!path || hidden(u)) continue;
+      if (!path) continue;
+      const d = Math.min(path.length - 1, a.p * a.len);
+      // The other side's unit shows only while it crosses hexes in view.
+      const h = path[Math.round(d)];
+      if (persp && u[1] !== persp && !visibleTo(h[0], h[1], persp)) continue;
       // Sized for the stack it ends in, so it doesn't change size on arrival.
       const n = v.state.units.filter((/** @type {any[]} */ w) => w[3] === u[3] && w[4] === u[4]).length;
-      const [x, y] = pointAlong(path, Math.min(path.length - 1, a.p * a.len));
+      const [x, y] = pointAlong(path, d);
       drawUnit(ctx, u, x, y, stackRadius(n));
     }
   }
@@ -385,6 +455,7 @@
     const [, owner, code, , , hp, mp, flags] = u;
     const type = v.info.units[code];
     const maxHp = type ? type.max_hp : 100;
+    v.unitPos.set(u[0], [x, y, rad]);
     // The units of the player whose turn it is fade as they are used up: a
     // little with no movement left, and more once they have attacked or
     // captured, which ends their turn.
@@ -552,12 +623,9 @@
     const s = v.geo.size;
     const a = v.anim;
     ctx.save();
-    ctx.globalAlpha = 0.7;
-    ctx.strokeStyle = playerColor(v.state.player);
     ctx.lineWidth = Math.max(2, s * 0.13);
     ctx.lineCap = ctx.lineJoin = "round";
-    for (const m of v.marks) {
-      if (!m.ok || (a && m.step >= a.from) || !shown(m, persp)) continue;
+    const trail = (/** @type {any} */ m) => {
       if (m.op === "M") {
         polyline(ctx, centers(m.hexes));
       } else if (m.op === "A" && m.hexes.length === 2) {
@@ -565,6 +633,18 @@
         polyline(ctx, pts);
         if (m.kill) cross(ctx, pts[1], s * 0.3);
       }
+    };
+    // In a game being played, what the human saw of the opponent's last turn
+    // stays on the map through their own.
+    if (fogged() && v.state.player === persp) {
+      ctx.globalAlpha = 0.45;
+      ctx.strokeStyle = playerColor(3 - persp);
+      for (const m of v.play.seen) trail(m);
+    }
+    ctx.globalAlpha = 0.7;
+    ctx.strokeStyle = playerColor(v.state.player);
+    for (const m of v.marks) {
+      if (m.ok && !(a && m.step >= a.from) && shown(m, persp)) trail(m);
     }
     if (a) {
       for (const path of a.paths.values()) {
@@ -617,7 +697,8 @@
 
   /** Draws the D HEX and D LINE annotations of the current turn. @param {CanvasRenderingContext2D} ctx */
   function drawDebug(ctx) {
-    if (!$("debug").checked || v.pos === 0) return;
+    // A bot's annotations are its plans, so its opponent doesn't see them.
+    if (!$("debug").checked || v.pos === 0 || fogged()) return;
     const turn = v.replay.turns[v.replay.stepTurn[v.pos - 1]];
     const s = v.geo.size;
     ctx.lineWidth = Math.max(1.5, s * 0.12);
@@ -721,9 +802,22 @@
     if (!lo) s = hi ? who(a) + " has the only army." : "Neither side has an army.";
     else if (hi < lo * 1.1) s = "The armies are about even.";
     else s = who(a) + "'s army is " + (hi / lo < 10 ? (hi / lo).toFixed(1) : Math.round(hi / lo)) + "× " + who(3 - a) + "'s.";
-    const c = ahead(cities);
-    if (cities[0] === cities[1]) return s + " Each side holds " + cityCount(cities[0]) + ".";
-    return s + " " + who(c) + " holds " + cityCount(cities[c - 1]) + " to " + cities[2 - c] + ".";
+    return s + " " + cityStanding(cities);
+  }
+
+  /** Says who holds more cities. @param {number[]} cities */
+  function cityStanding(cities) {
+    const c = cities[0] >= cities[1] ? 1 : 2;
+    if (cities[0] === cities[1]) return "Each side holds " + cityCount(cities[0]) + ".";
+    return who(c) + " holds " + cityCount(cities[c - 1]) + " to " + cities[2 - c] + ".";
+  }
+
+  /** The value of some units: each one's cost scaled by the HP it has left (SPEC §3.8). @param {any[][]} units */
+  function armyValue(units) {
+    return units.reduce((sum, u) => {
+      const t = v.info.units[u[2]];
+      return sum + (t ? Math.floor((t.cost * u[5]) / t.max_hp) : 0);
+    }, 0);
   }
 
   /** The turn summary's rows: always these, in this order, so the panel holds still. */
@@ -811,7 +905,9 @@
     if (turn.late && turn.late.length) issues.push(turn.late.length + " late");
     if (turn.timeout) issues.push("ran out of time");
     if (issues.length) out.Issues = issues.join(" · ");
-    out.Time = turn.used_ms.toLocaleString() + " of " + turn.time_ms.toLocaleString() + " ms";
+    // Games played in the page have no clock, so they show only the time taken.
+    if (turn.time_ms) out.Time = turn.used_ms.toLocaleString() + " of " + turn.time_ms.toLocaleString() + " ms";
+    else if (turn.used_ms) out.Time = (turn.used_ms / 1000).toFixed(1) + " s";
     return SUMMARY_ROWS.map((label) => [label, out[label] || "–"]);
   }
 
@@ -819,6 +915,10 @@
     const st = v.state;
     const ti = v.pos > 0 ? v.replay.stepTurn[v.pos - 1] : -1;
     const turn = ti >= 0 ? v.replay.turns[ti] : null;
+    // In a game being played, the human sees of the opponent only what the
+    // fog of war lets them: the units in sight, and none of the orders.
+    const fog = fogged();
+    const secretTurn = !!(fog && turn && turn.player !== fog);
     let title = "Start";
     if (turn) title = "Round " + st.round + " · " + playerName(st.player) + " (P" + st.player + ")";
     if (v.pos === v.steps && v.replay.result) {
@@ -835,11 +935,9 @@
     const army = [0, 0];
     const cities = [0, 0];
     for (const p of [1, 2]) {
-      const units = st.units.filter((/** @type {any[]} */ u) => u[1] === p);
-      army[p - 1] = units.reduce((/** @type {number} */ sum, /** @type {any[]} */ u) => {
-        const t = v.info.units[u[2]];
-        return sum + (t ? Math.floor((t.cost * u[5]) / t.max_hp) : 0);
-      }, 0);
+      const secret = !!fog && p !== fog;
+      const units = st.units.filter((/** @type {any[]} */ u) => u[1] === p && !(secret && !visibleTo(u[3], u[4], fog)));
+      army[p - 1] = armyValue(units);
       cities[p - 1] = st.cities.filter((/** @type {number[]} */ c) => c[0] === p).length;
       const row = document.createElement("tr");
       const name = el("td", playerName(p));
@@ -850,13 +948,13 @@
       row.append(
         name,
         el("td", String(cities[p - 1]), "num"),
-        el("td", String(units.length), "num"),
-        el("td", String(st.gold[p - 1]), "num"),
-        el("td", String(army[p - 1]), "num"),
+        el("td", secret ? "?" : String(units.length), "num"),
+        el("td", secret ? "?" : String(st.gold[p - 1]), "num"),
+        el("td", secret ? "?" : String(army[p - 1]), "num"),
       );
       // What the army is made of, under its numbers, in a box of fixed size
       // (as are the other parts of the panel) so the panel holds still.
-      const text = composition(units);
+      const text = secret ? (units.length ? "In sight: " + composition(units) : "None in sight") : composition(units);
       const box = el("div", text);
       box.title = text;
       const mix = el("td", "", "mix");
@@ -866,21 +964,21 @@
       mixRow.append(mix);
       table.append(row, mixRow);
     }
-    const lead = standing(army, cities);
+    const lead = fog ? cityStanding(cities) : standing(army, cities);
     $("standing").textContent = lead;
     $("standing").title = lead;
 
     const summary = $("summary");
     summary.replaceChildren();
-    for (const [label, value] of turnSummary(turn, ti)) {
+    for (const [label, value] of turnSummary(secretTurn ? null : turn, ti)) {
       const cell = el("div", value, "value");
       cell.title = value;
       summary.append(el("div", label, "label"), cell);
     }
     const orders = $("orders");
-    if (!turn) {
+    if (!turn || secretTurn) {
       orders.replaceChildren();
-      $("orders-count").textContent = "No orders yet";
+      $("orders-count").textContent = secretTurn ? "The opponent's orders are hidden" : "No orders yet";
       v.listTurn = -1;
     } else {
       const first = v.replay.turnStart[ti] + 1;
@@ -893,7 +991,7 @@
           if (result.startsWith("ERR")) rejected++;
           const row = el("div", o + "  → " + result, result.startsWith("ERR") ? "err" : "");
           row.title = result;
-          row.onclick = () => setPos(first + j + 1);
+          if (!fog) row.onclick = () => setPos(first + j + 1);
           orders.append(row);
         });
         $("orders-count").textContent = list.length ? "All " + count(list.length, "order") + (rejected ? ", " + rejected + " rejected" : "") : "No orders";
@@ -906,11 +1004,11 @@
       });
     }
     const line = v.pos > 0 ? v.replay.script[v.pos - 1] : "";
-    $("reply").textContent = line.startsWith("O ") ? line.slice(2) + "\n→ " + st.reply.join("\n→ ") : "";
+    $("reply").textContent = line.startsWith("O ") && !secretTurn ? line.slice(2) + "\n→ " + st.reply.join("\n→ ") : "";
 
     const notes = $("notes");
     notes.replaceChildren();
-    if (turn && $("debug").checked) {
+    if (turn && $("debug").checked && !fog) {
       const texts = (turn.debug || []).filter((/** @type {string} */ d) => d.startsWith("D TEXT ")).map((/** @type {string} */ d) => d.slice(7));
       if (texts.length) {
         notes.append(el("h2", "Debug text"), el("pre", texts.join("\n"), "mono"));
@@ -940,6 +1038,7 @@
     v.turnIdx = turnIdx;
     $("slider").value = String(turnIdx);
     $("position").textContent = "turn " + (ti + 1) + "/" + v.replay.turns.length + " · step " + v.pos + "/" + v.steps;
+    if (v.play) v.play.update();
     updateHover();
   }
 
@@ -953,20 +1052,25 @@
     const ch = v.info.rows[r][q + Math.floor(r / 2)];
     const t = v.info.terrain[ch];
     const lines = ["(" + q + "," + r + ") " + (t ? t.name + ", defense " + t.defense + "%, move " + (t.move_cost || "-") : ch)];
+    // In a game being played, the fog of war hides what is on the hex.
+    const fog = fogged();
+    const seen = !fog || visibleTo(q, r, fog);
     v.info.cities.forEach((/** @type {number[]} */ c, /** @type {number} */ i) => {
       if (c[0] === q && c[1] === r) {
         const [owner, capturer, progress] = v.state.cities[i];
         let text = "city " + i + ", " + (owner ? "owned by " + playerName(owner) : "neutral");
-        if (capturer) text += ", " + playerName(capturer) + " capturing " + progress + "/" + v.info.capture_points;
+        if (capturer && seen) text += ", " + playerName(capturer) + " capturing " + progress + "/" + v.info.capture_points;
         lines.push(text);
       }
     });
+    if (fog && !seen) lines.push("out of sight");
     for (const u of v.state.units) {
-      if (u[3] === q && u[4] === r) {
+      if (u[3] === q && u[4] === r && (seen || u[1] === fog)) {
         const type = v.info.units[u[2]];
         lines.push("unit " + u[0] + " " + playerName(u[1]) + " " + (type ? type.name : u[2]) + " " + u[5] + " hp, " + u[6] + " mp" + (u[7] & 1 ? ", acted" : "") + (u[7] & 4 ? ", new" : ""));
       }
     }
+    if (fog) lines.push(...v.play.hoverLines(q, r));
     box.textContent = lines.join("\n");
   }
 
@@ -1267,7 +1371,9 @@
    * Moves to position `k`, with the units that move on the way sliding along
    * their paths for `ms` milliseconds. Units killed on the way stay until the
    * slide ends.
+   * In one player's view, only what that player sees of it is worth a slide.
    * @param {number} k @param {number} ms @param {boolean} [movesOnly] slide only if a unit moved
+   * @returns {number} how long the slide takes: 0 if there is nothing to slide
    */
   function animateTo(k, ms, movesOnly) {
     const from = v.pos;
@@ -1281,8 +1387,15 @@
       paths.set(m.id, path ? path.concat(m.hexes.slice(1)) : m.hexes);
     }
     const alive = new Set(v.state.units.map((/** @type {any[]} */ u) => u[0]));
-    const ghosts = old ? old.units.filter((/** @type {any[]} */ u) => !alive.has(u[0])) : [];
-    if (ms < 40 || (!paths.size && (movesOnly || !ghosts.length))) return;
+    let ghosts = old ? old.units.filter((/** @type {any[]} */ u) => !alive.has(u[0])) : [];
+    const persp = viewOf();
+    if (persp) {
+      const sees = (/** @type {number[]} */ h) => visibleTo(h[0], h[1], persp);
+      const owner = new Map(v.state.units.concat(ghosts).map((/** @type {any[]} */ u) => [u[0], u[1]]));
+      for (const [id, path] of paths) if (owner.get(id) !== persp && !path.some(sees)) paths.delete(id);
+      ghosts = ghosts.filter((/** @type {any[]} */ u) => u[1] === persp || sees([u[3], u[4]]));
+    }
+    if (ms < 40 || (!paths.size && (movesOnly || !ghosts.length))) return 0;
     // Every unit moves at the same speed, so the longest path sets the time.
     let len = 1;
     for (const path of paths.values()) len = Math.max(len, path.length - 1);
@@ -1298,6 +1411,7 @@
       if (v.anim) requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
+    return ms;
   }
 
   /** How long a unit takes to slide when stepping one order: short enough to feel instant. */
@@ -1347,14 +1461,23 @@
     banner.hidden = !problem;
   }
 
-  /** @param {string} text */
-  async function openText(text) {
+  async function engine() {
+    if (!v.engine) v.engine = await Engine.create();
+    return v.engine;
+  }
+
+  /**
+   * Shows a game from its start: a replay, or with `play` a game that is
+   * about to be played in the page.
+   * @param {any} replay @param {any} [play]
+   */
+  async function show(replay, play) {
     stop();
+    if (v.play) v.play.close();
     showMismatch("");
     try {
-      const replay = parseReplay(text);
-      if (!v.engine) v.engine = await Engine.create();
-      const { steps, info } = v.engine.load(replay.header.setup.join("\n"), replay.script.join("\n"));
+      const { steps, info } = (await engine()).load(replay.header.setup.join("\n"), replay.script.join("\n"));
+      v.play = play || null;
       v.replay = replay;
       v.info = info;
       v.steps = steps;
@@ -1366,9 +1489,7 @@
       v.marks = [];
       v.base = { ti: -1, state: null };
       v.chartHover = -1;
-      showMismatch(checkReplay());
-      // The army chart needs the timeline that a current bitbath_wasm.js adds.
-      $("chart-box").hidden = $("army-legend").hidden = !info.army;
+      if (!play) showMismatch(checkReplay());
       if (info.army) buildLegend();
       updateChartTip();
       buildRules();
@@ -1379,13 +1500,93 @@
       const h = replay.header;
       $("matchup").textContent = h.players[0].name + " (P1) vs " + h.players[1].name + " (P2) · " + h.map + " · " + info.width + "×" + info.height;
       document.title = h.players[0].name + " vs " + h.players[1].name + " · Bitbath";
+      syncMode();
       computeGeo();
       buildTerrain();
       setPos(0);
+      return true;
     } catch (e) {
+      v.play = null;
+      syncMode();
       $("empty").style.display = "";
       $("error").textContent = String(e instanceof Error ? e.message : e);
+      return false;
     }
+  }
+
+  /** @param {string} text */
+  async function openText(text) {
+    let replay;
+    try {
+      replay = parseReplay(text);
+    } catch (e) {
+      $("error").textContent = String(e instanceof Error ? e.message : e);
+      return;
+    }
+    await show(replay);
+  }
+
+  // Live games. A game played in the page is a replay that grows: each step
+  // goes to the engine and onto the end of the replay, so everything that
+  // shows a replay shows the game so far. While it is being played, the
+  // human sees it through their fog of war, always at its latest step.
+
+  /** Fits the page to what is shown: a replay, or a game being played. */
+  function syncMode() {
+    const fog = fogged();
+    document.body.classList.toggle("live", !!fog);
+    document.body.classList.toggle("played", !!v.play);
+    // The army chart needs the timeline that a current bitbath_wasm.js adds,
+    // and would give away the opponent's strength during a game.
+    $("chart-box").hidden = $("army-legend").hidden = !!fog || !v.info || !v.info.army;
+  }
+
+  /**
+   * Starts a game to be played in the page, from a replay header.
+   * @param {any} header @param {any} play the game's controls: see play.js
+   */
+  function openLive(header, play) {
+    return show({ header, turns: [], script: [], stepTurn: [], turnStart: [], init: null, result: null }, play);
+  }
+
+  /**
+   * Adds a step to the game being played and returns its reply lines. With
+   * a turn record, the step starts that turn; otherwise it is an order of
+   * the current turn. Call setPos or animateTo afterwards to show it.
+   * @param {string} line `T <player>` or `O <order>` @param {any} [turn]
+   * @returns {string[]}
+   */
+  function append(line, turn) {
+    const r = v.replay;
+    const reply = /** @type {Engine} */ (v.engine).push(line);
+    if (turn) {
+      r.turnStart.push(r.script.length);
+      r.turns.push(turn);
+    } else {
+      r.turns[r.turns.length - 1].orders.push(line.slice(2));
+    }
+    r.script.push(line);
+    r.stepTurn.push(r.turns.length - 1);
+    v.info.results.push(reply[reply.length - 1] || "");
+    v.steps++;
+    v.ends = [0].concat(r.turnStart.slice(1), [v.steps]);
+    v.listTurn = -1;
+    $("slider").max = String(v.ends.length - 1);
+    return reply;
+  }
+
+  /** Ends the game being played: from here on it is a replay like any other. @param {any} result the replay's result record */
+  function finishLive(result) {
+    v.replay.result = result;
+    v.play.over = true;
+    v.info.army = v.ends.map((e) => {
+      const units = /** @type {Engine} */ (v.engine).seek(e).units;
+      return [1, 2].map((p) => armyValue(units.filter((/** @type {any[]} */ u) => u[1] === p)));
+    });
+    $("view").value = "0";
+    buildLegend();
+    syncMode();
+    setPos(v.steps);
   }
 
   /**
@@ -1442,7 +1643,10 @@
   $("next-turn").onclick = () => setPos(nextTurn());
   $("last").onclick = () => setPos(v.steps);
   $("slider").oninput = () => setPos(v.ends[Number($("slider").value)] || 0);
-  $("view").onchange = () => draw();
+  $("view").onchange = () => {
+    updateSide();
+    draw();
+  };
   $("debug").onchange = () => {
     updateSide();
     draw();
@@ -1456,7 +1660,9 @@
 
   document.addEventListener("keydown", (e) => {
     const tag = /** @type {HTMLElement} */ (e.target).tagName;
-    if (!v.replay || tag === "INPUT" || tag === "SELECT" || $("rules").open) return;
+    if (!v.replay || tag === "INPUT" || tag === "SELECT" || document.querySelector("dialog[open]")) return;
+    // A game being played stays at its latest step, and has its own keys.
+    if (fogged()) return v.play.key(e);
     const keys = {
       " ": togglePlay,
       ArrowRight: () => (e.shiftKey ? setPos(nextTurn()) : stepForward(e.repeat)),
@@ -1477,14 +1683,29 @@
   const canvas = $("canvas");
   /** @type {null | {x: number, y: number, pan: number[], moved: boolean}} */
   let drag = null;
+  /** Whether the last press on the map became a drag, so it isn't also a click. */
+  let dragged = false;
   canvas.addEventListener("mousedown", (/** @type {MouseEvent} */ e) => {
-    drag = { x: e.clientX, y: e.clientY, pan: v.pan.slice(), moved: false };
+    dragged = false;
+    if (e.button === 0) drag = { x: e.clientX, y: e.clientY, pan: v.pan.slice(), moved: false };
   });
   window.addEventListener("mouseup", () => (drag = null));
+  // In a game being played, a click picks a unit or gives it an order, and a
+  // right click drops the selection.
+  canvas.addEventListener("click", (/** @type {MouseEvent} */ e) => {
+    if (!v.info || !fogged() || dragged) return;
+    const rect = canvas.getBoundingClientRect();
+    v.play.click(hexAt(e.clientX - rect.left, e.clientY - rect.top), e.clientX - rect.left, e.clientY - rect.top, e.shiftKey);
+  });
+  canvas.addEventListener("contextmenu", (/** @type {MouseEvent} */ e) => {
+    if (!fogged()) return;
+    e.preventDefault();
+    v.play.click(null, 0, 0, false);
+  });
   canvas.addEventListener("mousemove", (/** @type {MouseEvent} */ e) => {
     if (!v.info) return;
     if (drag && (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3 || drag.moved)) {
-      drag.moved = true;
+      drag.moved = dragged = true;
       v.pan = [drag.pan[0] + e.clientX - drag.x, drag.pan[1] + e.clientY - drag.y];
       redrawAll();
       return;
@@ -1520,6 +1741,7 @@
     { passive: false },
   );
   canvas.addEventListener("dblclick", () => {
+    if (fogged()) return; // clicks give orders there, and often come in pairs
     v.zoom = 1;
     v.pan = [0, 0];
     redrawAll();
@@ -1578,6 +1800,9 @@
       .catch((e) => ($("error").textContent = String(e.message || e)));
   }
 
-  // For tests and embedding: window.bitbathViewer.open(text).
-  /** @type {any} */ (window).bitbathViewer = { open: openText, state: v, setPos };
+  // For play.js, tests and embedding: window.bitbathViewer.open(text).
+  /** @type {any} */ (window).bitbathViewer = {
+    open: openText, state: v, setPos, $, el, engine, openLive, append, finishLive, animateTo, draw, updateSide, STEP_MS,
+    center, hexPath, polyline, arrow, centers, playerColor, cssVar, visibleTo, shown, capitalize,
+  };
 })();

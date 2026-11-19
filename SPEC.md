@@ -1,6 +1,6 @@
 # Bitbath: Design Spec
 
-**Status:** draft, 2026-11-02. Milestones M1–M3 are built (§13).
+**Status:** draft, 2026-11-02. Milestones M1–M3 are built, and so is the first part of M5: human play in the browser (§13).
 
 - Decisions from the original brief are treated as settled, as are those listed under [Resolved](#resolved) in §14.
 - Details that building the engine and runner settled are recorded where they belong. [§6.6](#66-edge-cases) collects the protocol ones.
@@ -283,6 +283,14 @@ The engine talks to two *players* over the protocol in §6. All three modes use 
 | 3. Combo | a supervisor that runs a bot process and can pause between turns to consult an LLM | M5 |
 
 **Manual play needs small maps.** A human can't direct hundreds of units by hand, and an LLM reading a large state every turn gets expensive. The project should ship small-map configs for this mode.
+
+**Human play in the browser (built).** The viewer's page also plays a game: a human against a bot built into the page.
+
+- **No runner:** the game runs in the page, on the engine compiled to wasm. There is no clock.
+- **Same display:** the game is a replay that grows as it is played, so the viewer shows it with the code that shows replays. Until the game ends, the human sees it through their own fog of war, and only at its latest step.
+- **Orders:** the page turns clicks into the orders of §6.4. Its conveniences stay outside the engine: where a unit can move, the path there, and what an attack would do.
+- **Built-in bots:** `random` and `greedy`, ported to JavaScript on a small kit (`web/kit.js`). The page hands a bot the init and turn messages of §6, and the bot sends back order lines and reads their replies. A bot running somewhere else could stand behind the same two calls, which is how the page would connect to arbitrary bots later.
+- **Afterwards:** a finished game is a replay like any other. It can be stepped through with both sides in view, and saved as a `.bbr` file.
 
 **Conveniences belong outside the engine.** "Move to x,y", standing orders, and auto-explore go in the kit library, the UI, or the LLM harness. This keeps engine orders atomic and the rules unambiguous.
 
@@ -572,7 +580,7 @@ bitbath2/
   engine/          Rust: rules, state, map generation, vision, replay re-simulation. Pure: no I/O, clock, or threads.
   runner/          Rust binary `bitbath`: bot processes, protocol I/O, clocks, replays, tournaments.
   wasm/            the engine compiled to wasm for the browser, behind a small C ABI.
-  web/             JavaScript + Canvas replay viewer, type-checked with @ts-check; later the human play UI.
+  web/             JavaScript + Canvas replay viewer and human play UI, type-checked with @ts-check.
   kits/python/     Python starter kit.
   bots/            reference bots.
   tests/vectors/   golden test vectors shared by the engine and kits.
@@ -618,7 +626,7 @@ bitbath2/
    - the `solid` bot, the tournament runner, and ratings
    - a first balance pass on damage and costs
    - benchmark time controls, chosen from measured bot think times (§14)
-5. **M5, Other modes:** human play in the browser, the LLM harness (mode 1), and the mode 3 supervisor.
+5. **M5, Other modes:** human play in the browser (done, against bots built into the page; §5), the LLM harness (mode 1), and the mode 3 supervisor.
 6. **Later:**
    - the WASI/fuel launcher and more language kits
    - shroud, and suspending the idle bot

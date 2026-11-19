@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bitbath Viewer</title>
+<title>Bitbath</title>
 <style>
   :root {
     --bg: #f6f5f1;
@@ -82,12 +82,25 @@
   .muted { color: var(--muted); }
   [hidden] { display: none !important; }
   #rules-button { margin-left: auto; }
-  #rules {
+  dialog {
     width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; padding: 0;
     color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
     box-shadow: 0 10px 40px rgba(0, 0, 0, .3);
   }
-  #rules::backdrop { background: rgba(0, 0, 0, .4); }
+  dialog::backdrop { background: rgba(0, 0, 0, .4); }
+  #new-game { width: min(440px, calc(100vw - 32px)); }
+  #new-game-body { padding: 12px 16px 16px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 12px; align-items: center; }
+  #new-game-body select, #new-game-body input { width: 100%; }
+  #new-game-body input {
+    font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px;
+  }
+  #new-game-body .wide { grid-column: 1 / -1; }
+  #new-game-body .hint { grid-column: 2; margin-top: -6px; font-size: 12px; color: var(--muted); }
+  #new-game-error { color: var(--p1); }
+  #start { justify-self: end; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  button:disabled:hover { border-color: var(--border); }
   .dialog-head {
     position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
     padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
@@ -167,6 +180,34 @@
     flex-direction: column; gap: 8px; color: var(--muted); text-align: center; padding: 16px;
   }
   #board.dragging { outline: 3px dashed var(--accent); outline-offset: -8px; }
+  /* A game played in the page: its controls sit on top of the side panel. A
+     game still being played stays at its latest step, so it has no transport. */
+  #game, #live-help { display: none; }
+  .played #game { display: block; margin-bottom: 16px; }
+  .live #transport, .live #slider, .live #settings { display: none; }
+  .live #live-help { display: block; grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+  .live #canvas { cursor: pointer; }
+  kbd {
+    font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; padding: 0 4px;
+    border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+  }
+  #play-status { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #play-note { color: var(--muted); font-size: 13px; height: 1.4em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #play-note.warn { color: var(--p1); }
+  #play-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  #selection { height: 16em; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+  #selection .row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+  #selection .label { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  #selection button { text-align: left; }
+  #selection button.unit { display: block; width: 100%; margin: 2px 0; }
+  #selection button.chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  #selection button.spent { color: var(--muted); }
+  #play-log { height: 5.6em; overflow-y: auto; font-size: 13px; color: var(--muted); }
+  #menu {
+    position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 4px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  }
+  #menu button { text-align: left; white-space: nowrap; }
   #error { color: var(--p1); white-space: pre-wrap; }
   @media (max-width: 800px) {
     main { flex-direction: column; }
@@ -180,6 +221,7 @@
 <body>
 <header>
   <h1>Bitbath</h1>
+  <button id="new-game-button" title="Play a game against a built-in bot">New game</button>
   <input type="file" id="file" accept=".bbr,.jsonl,.json">
   <span id="matchup"></span>
   <button id="rules-button" title="The rules this game was played under" hidden>Rules</button>
@@ -192,13 +234,30 @@
 <main>
   <div id="board">
     <canvas id="canvas"></canvas>
+    <div id="menu" hidden></div>
     <div id="empty">
       <div>Open a replay (<span class="mono">.bbr</span>) or drop one here.</div>
       <div>Replays are written to <span class="mono">runs/</span> by <span class="mono">bitbath play</span>.</div>
+      <div><button id="play-button" class="primary">Play against a bot</button></div>
       <div id="error"></div>
     </div>
   </div>
   <aside id="side">
+    <section id="game">
+      <div id="play-status"></div>
+      <div id="play-note"></div>
+      <div id="play-buttons">
+        <button id="end-turn" class="primary" title="End your turn (E or Enter)">End turn</button>
+        <button id="next-unit" title="Select the next unit with something left to do (N or Tab)">Next unit</button>
+        <button id="save-replay" title="Download this game as a replay file">Save replay</button>
+        <button id="play-again">New game</button>
+      </div>
+      <div id="selection"></div>
+      <div id="play-last">
+        <h2>Opponent's last turn</h2>
+        <div id="play-log"></div>
+      </div>
+    </section>
     <h2 id="turn-title">No replay</h2>
     <table class="players" id="players"></table>
     <p id="standing"></p>
@@ -215,6 +274,10 @@
   </aside>
 </main>
 <footer>
+  <div id="live-help">
+    Click a unit, then a tinted hex to move or a ringed enemy to attack. <kbd>Shift</kbd>-click moves onto your own units.
+    <kbd>C</kbd> captures, <kbd>N</kbd> picks the next unit, <kbd>Esc</kbd> deselects, and <kbd>E</kbd> ends your turn. Scroll to zoom, drag to pan.
+  </div>
   <div id="army-legend" hidden></div>
   <div id="chart-box" hidden>
     <canvas id="chart" role="img" aria-label="Each player's army value after each turn"></canvas>
@@ -254,7 +317,34 @@
   </form>
   <div id="rules-body" tabindex="-1" autofocus></div>
 </dialog>
+<dialog id="new-game" aria-labelledby="new-game-title">
+  <form method="dialog" class="dialog-head">
+    <h2 id="new-game-title">New game</h2>
+    <button title="Close (Esc)" aria-label="Close">✕</button>
+  </form>
+  <div id="new-game-body">
+    <label for="opponent">Opponent</label>
+    <select id="opponent"></select>
+    <div class="hint" id="opponent-about"></div>
+    <label for="map-size">Map</label>
+    <select id="map-size"></select>
+    <div class="hint" id="map-about"></div>
+    <label for="side-choice">You play</label>
+    <select id="side-choice">
+      <option value="1">Red, moving first</option>
+      <option value="2">Blue, moving second</option>
+    </select>
+    <label for="seed">Map seed</label>
+    <input id="seed" type="number" min="0" step="1" placeholder="random">
+    <div class="hint">The same seed and map size always give the same map.</div>
+    <div class="wide" id="new-game-error"></div>
+    <button id="start" class="primary wide">Start</button>
+  </div>
+</dialog>
 <script src="bitbath_wasm.js"></script>
+<script src="kit.js"></script>
+<script src="bots.js"></script>
 <script src="viewer.js"></script>
+<script src="play.js"></script>
 </body>
 </html>

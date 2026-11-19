@@ -1,11 +1,13 @@
-//! The engine compiled to wasm for the replay viewer (SPEC §8).
+//! The engine compiled to wasm for the replay viewer (SPEC §8) and for games
+//! played in the browser (SPEC §5).
 //!
 //! This exposes a small C ABI instead of using wasm-bindgen, so building it
 //! needs only cargo and the `wasm32-unknown-unknown` target. Strings cross
 //! the boundary as UTF-8 in wasm memory: JavaScript copies inputs into
 //! buffers from `bb_alloc` and reads outputs at `bb_out_ptr`/`bb_out_len`.
 
-use bitbath_engine::Game;
+use bitbath_engine::mapgen::{self, GENERATOR_VERSION};
+use bitbath_engine::{Game, Rules, ENGINE_VERSION, PROTOCOL_VERSION};
 use std::cell::RefCell;
 use std::fmt::Write as _;
 
@@ -19,6 +21,11 @@ struct Viewer {
     steps: Vec<Step>,
     /// The game before each turn-start step, as (step index, game).
     snapshots: Vec<(usize, Game)>,
+    /// The game after every step, where a live game adds its next one.
+    tip: Game,
+    /// Whether the last turn is still being played. A replay's last turn is
+    /// over; a live game's is open until `bb_end` ends it.
+    open: bool,
 }
 
 thread_local! {
@@ -109,6 +116,98 @@ pub extern "C" fn bb_seek(step: u32) -> i32 {
     })
 }
 
+/// Outputs the setup lines for a new game on a generated map (see
+/// `new_setup`). Returns 0, or -1 with an error message as the output.
+///
+/// # Safety
+/// `ptr` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn bb_setup(ptr: *const u8, len: usize) -> i32 {
+    match new_setup(&input(ptr, len)) {
+        Ok(setup) => {
+            set_out(setup);
+            0
+        }
+        Err(e) => {
+            set_out(e);
+            -1
+        }
+    }
+}
+
+/// Outputs the engine, protocol, and generator versions as JSON, for the
+/// header of a replay recorded in the browser.
+#[no_mangle]
+pub extern "C" fn bb_versions() {
+    set_out(format!(
+        "{{\"bitbath\":{},\"protocol\":{PROTOCOL_VERSION},\"generator\":{GENERATOR_VERSION}}}",
+        esc(ENGINE_VERSION)
+    ));
+}
+
+/// Runs `f` on the loaded game. Returns -1 with an error message as the
+/// output if no game is loaded or `f` fails.
+fn with_viewer(f: impl FnOnce(&mut Viewer) -> Result<i32, String>) -> i32 {
+    let result = VIEWER.with(|v| match v.borrow_mut().as_mut() {
+        Some(viewer) => f(viewer),
+        None => Err("no game is loaded".into()),
+    });
+    result.unwrap_or_else(|e| {
+        set_out(e);
+        -1
+    })
+}
+
+/// Adds one step, written as in `bb_load`'s script, to the end of the loaded
+/// game: this is how a live game is played. Outputs the step's reply lines
+/// and returns 0, or returns -1 with an error message as the output.
+///
+/// # Safety
+/// `ptr` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn bb_push(ptr: *const u8, len: usize) -> i32 {
+    let line = input(ptr, len);
+    with_viewer(|viewer| {
+        let step = parse_step(&line)?.ok_or("empty step")?;
+        set_out(viewer.push(step).join("\n"));
+        Ok(0)
+    })
+}
+
+/// Ends the turn being played in a live game. Returns 1 if that ended the
+/// game, 0 if not, and -1 if no game is loaded.
+#[no_mangle]
+pub extern "C" fn bb_end() -> i32 {
+    with_viewer(|viewer| Ok(viewer.end() as i32))
+}
+
+/// Outputs the init message for `player` (SPEC §6.2). Returns 0, or -1 if no
+/// game is loaded.
+#[no_mangle]
+pub extern "C" fn bb_init_message(player: u32) -> i32 {
+    with_viewer(|viewer| {
+        if player != 1 && player != 2 {
+            return Err(format!("bad player {player}"));
+        }
+        set_out(viewer.tip.init_message(player as u8).join("\n"));
+        Ok(0)
+    })
+}
+
+/// Outputs the turn message (SPEC §6.3) for the player whose turn it is in a
+/// live game: what that player knows, and nothing more. Returns 0, or -1 if
+/// no turn is being played.
+#[no_mangle]
+pub extern "C" fn bb_turn_message(time_ms: u32, bank_ms: u32) -> i32 {
+    with_viewer(|viewer| {
+        if viewer.tip.player == 0 || !viewer.open {
+            return Err("no turn is being played".into());
+        }
+        set_out(viewer.tip.turn_message(time_ms as u64, bank_ms as u64).join("\n"));
+        Ok(0)
+    })
+}
+
 fn apply(game: &mut Game, step: &Step) -> Vec<String> {
     match step {
         Step::Turn(player) => {
@@ -124,21 +223,54 @@ fn apply(game: &mut Game, step: &Step) -> Vec<String> {
     }
 }
 
+/// Parses one line of a script. Empty lines hold no step.
+fn parse_step(line: &str) -> Result<Option<Step>, String> {
+    if let Some(p) = line.strip_prefix("T ") {
+        let player = p.trim().parse().map_err(|_| format!("bad step '{line}'"))?;
+        if player != 1 && player != 2 {
+            return Err(format!("bad player in '{line}'"));
+        }
+        Ok(Some(Step::Turn(player)))
+    } else if let Some(order) = line.strip_prefix("O ") {
+        Ok(Some(Step::Order(order.to_string())))
+    } else if line.trim().is_empty() {
+        Ok(None)
+    } else {
+        Err(format!("bad step '{line}'"))
+    }
+}
+
+/// Rules and a generated map for a new game, as setup lines (SPEC §6.2) with
+/// the `START` line. `config` holds `key = value` lines as in the files in
+/// configs/, plus `seed` for the map generator.
+fn new_setup(config: &str) -> Result<String, String> {
+    let mut rules = Rules::default();
+    let mut seed = 0u64;
+    for line in config.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| format!("'{line}' isn't key = value"))?;
+        let (key, value) = (key.trim(), value.trim().trim_matches('"'));
+        if key == "seed" {
+            seed = value.parse().map_err(|_| format!("seed: '{value}' is not a number"))?;
+        } else {
+            rules.set(key, value)?;
+        }
+    }
+    rules.validate()?;
+    let map = mapgen::generate(&rules, seed)?;
+    Ok(Game::new(rules, map).setup_lines(true).join("\n"))
+}
+
 fn load(setup: &str, script: &str) -> Result<(Viewer, String), String> {
     let game = Game::from_setup(setup.lines())?;
     let mut steps = Vec::new();
     for line in script.lines() {
-        if let Some(p) = line.strip_prefix("T ") {
-            let player = p.trim().parse().map_err(|_| format!("bad step '{line}'"))?;
-            if player != 1 && player != 2 {
-                return Err(format!("bad player in '{line}'"));
-            }
-            steps.push(Step::Turn(player));
-        } else if let Some(order) = line.strip_prefix("O ") {
-            steps.push(Step::Order(order.to_string()));
-        } else if !line.trim().is_empty() {
-            return Err(format!("bad step '{line}'"));
-        }
+        steps.extend(parse_step(line)?);
     }
     let mut info = info_json(&game);
     let mut snapshots = vec![(0, game.clone())];
@@ -165,7 +297,13 @@ fn load(setup: &str, script: &str) -> Result<(Viewer, String), String> {
         results.join(","),
         army.join(",")
     );
-    Ok((Viewer { steps, snapshots }, info))
+    let viewer = Viewer {
+        steps,
+        snapshots,
+        tip: g,
+        open: false,
+    };
+    Ok((viewer, info))
 }
 
 fn army_json(game: &Game) -> String {
@@ -258,6 +396,27 @@ fn info_json(game: &Game) -> String {
 }
 
 impl Viewer {
+    /// Adds a step to a live game and returns its reply lines.
+    fn push(&mut self, step: Step) -> Vec<String> {
+        if matches!(step, Step::Turn(_)) && !self.steps.is_empty() {
+            self.snapshots.push((self.steps.len(), self.tip.clone()));
+        }
+        let reply = apply(&mut self.tip, &step);
+        self.steps.push(step);
+        self.open = true;
+        reply
+    }
+
+    /// Ends the turn being played in a live game. Returns whether that
+    /// ended the game.
+    fn end(&mut self) -> bool {
+        if self.tip.player != 0 {
+            self.tip.end_turn();
+        }
+        self.open = false;
+        self.tip.outcome.is_some()
+    }
+
     fn state_json(&self, step: usize) -> String {
         let step = step.min(self.steps.len());
         // Resume from the last snapshot strictly before `step`, so the reply
@@ -271,7 +430,7 @@ impl Viewer {
         }
         // No turn step follows the last turn to end it, so end it here. That
         // lets the round limit decide the game, as it did when it was played.
-        if step == self.steps.len() && game.player != 0 && game.outcome.is_none() {
+        if step == self.steps.len() && !self.open && game.player != 0 && game.outcome.is_none() {
             game.end_turn();
         }
 
@@ -302,7 +461,7 @@ impl Viewer {
         let cities: Vec<String> = game
             .cities
             .iter()
-            .map(|c| format!("[{},{},{}]", c.owner, c.capturer, c.progress))
+            .map(|c| format!("[{},{},{},{}]", c.owner, c.capturer, c.progress, c.built as u8))
             .collect();
         out.push_str(&cities.join(","));
 
@@ -378,5 +537,40 @@ mod tests {
         assert!(viewer.state_json(2).ends_with("\"outcome\":null}"));
         // Player 1 built a unit, so the tiebreak gives them the bigger army.
         assert!(viewer.state_json(3).ends_with("\"outcome\":[1,\"army\"]}"));
+    }
+
+    #[test]
+    fn a_live_game_matches_its_replay() {
+        let config = "map_width = 20\nmap_height = 14 # small\nneutral_cities = 4\nround_limit = 1\nseed = 5";
+        let setup = new_setup(config).unwrap();
+        assert!(setup.starts_with("MAP 20 14\n"), "{setup}");
+        assert!(new_setup("nope = 1").is_err());
+        assert!(new_setup("map_height = 7").is_err());
+
+        let (mut live, _) = load(&setup, "").unwrap();
+        let mut script = String::new();
+        let mut replies = Vec::new();
+        for line in ["T 1", "O B 0 I", "O M 99 0", "T 2", "O B 1 S"] {
+            let reply = live.push(parse_step(line).unwrap().unwrap());
+            replies.push(reply.last().cloned().unwrap_or_default());
+            script.push_str(line);
+            script.push('\n');
+            // The turn is open, so the round limit hasn't ended the game.
+            assert!(live.state_json(live.steps.len()).ends_with("\"outcome\":null}"));
+        }
+        assert!(replies[1].starts_with("OK "), "{replies:?}");
+        assert!(replies[2].starts_with("ERR unknown"), "{replies:?}");
+        assert_eq!(live.tip.turn_message(0, 0)[0], "TURN 1");
+
+        assert!(live.end());
+        let (replay, info) = load(&setup, &script).unwrap();
+        for k in 0..=5 {
+            assert_eq!(live.state_json(k), replay.state_json(k));
+        }
+        // Player 1's infantry is worth more than player 2's scout.
+        assert!(live.state_json(5).ends_with("\"outcome\":[1,\"army\"]}"));
+        for reply in &replies {
+            assert!(info.contains(&esc(reply)), "{reply}");
+        }
     }
 }
