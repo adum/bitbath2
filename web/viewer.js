@@ -106,6 +106,7 @@
     /** @type {any} */ state: null,
     /** What the current turn's orders did so far: see turnMarks(). @type {any[]} */ marks: [],
     /** The state when turn `ti` started, for turnMarks(). @type {{ti: number, state: any}} */ base: { ti: -1, state: null },
+    /** The ids of the units built in the current turn so far. @type {Set<number>} */ built: new Set(),
     /** Units sliding along their paths during playback: see animateTo(). @type {any} */ anim: null,
     /** Positions at the start and after each turn. */ ends: [0],
     /** The index into `ends` of the turn shown. */ turnIdx: 0,
@@ -394,6 +395,17 @@
     if (flags & 4) ctx.setLineDash([2, 2]);
     ctx.stroke();
     ctx.setLineDash([]);
+    if (v.built.has(u[0])) {
+      // A small white dot on the corner of a unit built this turn. New units
+      // stand on cities, whose outline has the player's color, so the dot
+      // doesn't use it.
+      ctx.beginPath();
+      ctx.arc(x + rad * 0.7, y - rad * 0.7, Math.max(1.5, rad * 0.3), 0, 2 * Math.PI);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, rad * 0.1);
+      ctx.stroke();
+    }
     if (rad >= 5) {
       ctx.fillStyle = "#fff";
       ctx.font = "bold " + Math.round(rad * 1.1) + "px system-ui, sans-serif";
@@ -1214,6 +1226,11 @@
     v.pos = Math.max(0, Math.min(v.steps, k));
     v.state = v.engine.seek(v.pos);
     v.marks = turnMarks();
+    v.built = new Set();
+    if (v.pos > 0) {
+      const had = new Set(v.base.state.units.map((/** @type {any[]} */ u) => u[0]));
+      for (const u of v.state.units) if (!had.has(u[0])) v.built.add(u[0]);
+    }
     updateSide();
     draw();
     drawChart();
