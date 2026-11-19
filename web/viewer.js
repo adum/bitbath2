@@ -1690,8 +1690,8 @@
     if (e.button === 0) drag = { x: e.clientX, y: e.clientY, pan: v.pan.slice(), moved: false };
   });
   window.addEventListener("mouseup", () => (drag = null));
-  // In a game being played, a click picks a unit or gives it an order, and a
-  // right click drops the selection.
+  // In a game being played, a click picks a unit or gives it an order. A
+  // right click gives the order too, and drops the selection where there is none to give.
   canvas.addEventListener("click", (/** @type {MouseEvent} */ e) => {
     if (!v.info || !fogged() || dragged) return;
     const rect = canvas.getBoundingClientRect();
@@ -1700,7 +1700,9 @@
   canvas.addEventListener("contextmenu", (/** @type {MouseEvent} */ e) => {
     if (!fogged()) return;
     e.preventDefault();
-    v.play.click(null, 0, 0, false);
+    if (!v.info || dragged) return;
+    const rect = canvas.getBoundingClientRect();
+    v.play.context(hexAt(e.clientX - rect.left, e.clientY - rect.top), e.clientX - rect.left, e.clientY - rect.top);
   });
   canvas.addEventListener("mousemove", (/** @type {MouseEvent} */ e) => {
     if (!v.info) return;

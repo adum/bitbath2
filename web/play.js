@@ -284,7 +284,7 @@
           return openMenu(x, y, targets.map((t) => ({ label: "Attack " + this.forecast(t), run: () => this.order("A " + unit.id + " " + t.id) })));
         }
         // A click on the human's own units picks one of them, so joining
-        // them takes Shift.
+        // them takes a right click, or Shift.
         const dirs = this.reach.get(this.world.index(hex));
         if (dirs !== undefined && (shift || !mine.length)) return this.order("M " + unit.id + " " + dirs);
       }
@@ -293,6 +293,19 @@
       const at = this.sel && this.sel.hex[0] === hex[0] && this.sel.hex[1] === hex[1] ? mine.findIndex((/** @type {any} */ u) => u.id === /** @type {any} */ (this.sel).unit) : -1;
       const pick = at >= 0 ? mine[(at + 1) % mine.length] : mine.find((/** @type {any} */ u) => this.ready.includes(u.id)) || mine[0];
       this.select({ hex, unit: pick.id });
+    }
+
+    /**
+     * A right click on the map: the picked unit goes to the hex or attacks
+     * it, even where a click would pick one of the human's own units instead.
+     * Anywhere else, it drops the selection.
+     * @param {number[] | null} hex @param {number} x @param {number} y
+     */
+    context(hex, x, y) {
+      if (menuWasOpen || !this.kit) return;
+      const can = hex && this.unit() && this.myTurn() && (this.reach.has(this.world.index(hex)) || this.targets.some((t) => t.q === hex[0] && t.r === hex[1]));
+      if (can) this.click(hex, x, y, true);
+      else this.select(null);
     }
 
     /** @param {KeyboardEvent} e */
@@ -346,6 +359,7 @@
         const cost = Kit.walk(unit.hex, dirs).slice(1).reduce((/** @type {number} */ sum, /** @type {number[]} */ h) => sum + this.world.terrain(h).move_cost, 0);
         const stops = this.zoc.has(i) && !this.kit.unitType(unit).skirmish;
         out.push("move: " + cost + " of " + unit.mp + " mp" + (stops ? ", and stop in a zone of control" : ""));
+        if (this.kit.view.friendsAt([q, r])) out.push("right-click to move onto your own units");
       }
       return out;
     }
@@ -533,7 +547,7 @@
    */
   async function start(options) {
     const kind = Bots.list.find((/** @type {any} */ b) => b.id === options.bot) || Bots.list[0];
-    const map = MAPS.find((m) => m.id === options.map) || MAPS[1];
+    const map = MAPS.find((m) => m.id === options.map) || MAPS[0];
     const human = options.human === 2 ? 2 : 1;
     const engine = await V.engine();
     const setup = engine.setup(map.config + "\nseed = " + options.seed);
@@ -571,7 +585,6 @@
 
   const abouts = [fill("opponent", Bots.list, "opponent-about"), fill("map-size", MAPS, "map-about")];
   $("opponent").value = Bots.list[Bots.list.length - 1].id;
-  $("map-size").value = "small";
   abouts.forEach((about) => about());
 
   function openDialog() {
