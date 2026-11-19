@@ -312,6 +312,10 @@ mod job {
         limit: u64,
     }
 
+    // SAFETY: a job handle isn't tied to the thread that opened it, and the
+    // struct owns its handle. `bitbath serve` hands bots between threads.
+    unsafe impl Send for Job {}
+
     pub fn prepare(_cmd: &mut Command, _memory_mb: u64) {}
 
     pub fn attach(child: &Child, memory_mb: u64) -> Option<Job> {

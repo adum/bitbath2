@@ -1,9 +1,10 @@
-//! The `bitbath` command: plays bot-vs-bot games, reads replays, and shows
-//! maps (SPEC §10).
+//! The `bitbath` command: plays bot-vs-bot games, reads replays, shows maps,
+//! and serves the viewer's page with bots to play against (SPEC §10).
 
 mod bot;
 mod play;
 mod replay;
+mod serve;
 
 use bitbath_engine::{mapgen, parse_setup, Game, Rules};
 use std::path::{Path, PathBuf};
@@ -24,6 +25,10 @@ Usage:
       summary; --orders adds every order and its reply.
   bitbath map [--map seed:<n> | <file>] [--config <file>] [--set <key>=<value>] [--lines]
       Prints a map. --lines prints it in the map file format instead.
+  bitbath serve [--port <n>] [--bot <name>=<command>]... [--memory-mb <n>]
+      Serves the viewer's page at http://localhost:<port>/web/index.html (default
+      port 8000), from the current directory. Each --bot is a bot to play
+      against by hand in the page, next to the ones built into it.
 
 Example:
   bitbath play --p1 \"python bots/greedy_bot.py\" --p2 \"python bots/random_bot.py\" --map seed:42
@@ -35,6 +40,7 @@ fn main() {
         Some("play") => cmd_play(&args[1..]),
         Some("replay") => cmd_replay(&args[1..]),
         Some("map") => cmd_map(&args[1..]),
+        Some("serve") => cmd_serve(&args[1..]),
         None | Some("help" | "--help" | "-h") => {
             print!("{USAGE}");
             Ok(())
@@ -320,6 +326,56 @@ fn cmd_replay(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn cmd_serve(args: &[String]) -> Result<(), String> {
+    let a = Args::parse(args, &["--port", "--bot", "--memory-mb"], &[])?;
+    if let Some(extra) = a.positional.first() {
+        return Err(format!("unexpected argument '{extra}'"));
+    }
+    let port = match a.get("--port") {
+        Some(s) => s.parse().map_err(|_| format!("bad --port '{s}'"))?,
+        None => 8000,
+    };
+    let memory_mb = match a.get("--memory-mb") {
+        Some(s) => s.parse().map_err(|_| format!("bad --memory-mb '{s}'"))?,
+        None => 2048,
+    };
+    let mut bots: Vec<serve::Offer> = Vec::new();
+    for spec in a.all("--bot") {
+        let (name, command) = parse_offer(spec)?;
+        if bots.iter().any(|b| b.name == name) {
+            return Err(format!("--bot {spec}: there are two bots named '{name}'"));
+        }
+        bots.push(serve::Offer { name, command });
+    }
+    let root = std::env::current_dir().map_err(|e| format!("no current directory: {e}"))?;
+    if !root.join("web").join("index.html").is_file() {
+        return Err("there is no web/index.html here: run bitbath serve from the repository".into());
+    }
+    serve::serve(serve::Options {
+        port,
+        bots,
+        memory_mb,
+        root,
+    })
+}
+
+/// Splits a `--bot` value into the bot's name and command. The name goes
+/// into file paths and page text, so it is kept plain.
+fn parse_offer(spec: &str) -> Result<(String, String), String> {
+    let (name, command) = spec
+        .split_once('=')
+        .ok_or_else(|| format!("--bot {spec}: expected <name>=<command>"))?;
+    let (name, command) = (name.trim(), command.trim());
+    let plain = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    if name.is_empty() || name.len() > 32 || !name.chars().all(plain) {
+        return Err(format!("--bot {spec}: a name is up to 32 letters, digits, '-' and '_'"));
+    }
+    if bot::split_command(command)?.is_empty() {
+        return Err(format!("--bot {spec}: the command is empty"));
+    }
+    Ok((name.to_string(), command.to_string()))
+}
+
 fn cmd_map(args: &[String]) -> Result<(), String> {
     let a = Args::parse(args, &["--map", "--config", "--set"], &["--lines"])?;
     let rules = load_rules(a.get("--config"), &a.all("--set"))?;
@@ -365,6 +421,18 @@ mod tests {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(20_394), (2025, 11, 2));
         assert_eq!(civil_from_days(11_016), (2000, 2, 29));
+    }
+
+    #[test]
+    fn bot_offers() {
+        assert_eq!(
+            parse_offer("greedy=python bots/greedy_bot.py").unwrap(),
+            ("greedy".to_string(), "python bots/greedy_bot.py".to_string())
+        );
+        assert_eq!(parse_offer("a=b --x=1").unwrap().1, "b --x=1");
+        for bad in ["python bots/greedy_bot.py", "=x", "a b=x", "../a=x", "a=", "a='x"] {
+            assert!(parse_offer(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

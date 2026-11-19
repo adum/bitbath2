@@ -22,6 +22,128 @@
     { id: "standard", name: "Standard", about: "40 × 30 hexes, 10 neutral cities, 200 rounds: what bots play, and a lot to run by hand.", config: "" },
   ];
 
+  /**
+   * How long a bot on disk may take over a turn, in ms. The page keeps no
+   * clock (SPEC §7), so this is only there to end a game with a bot that hangs.
+   */
+  const BOT_TURN_MS = 30000;
+
+  /** Why a bot on disk can't go on: `reason` is the forfeit's (SPEC §6.4), and the message says what happened. */
+  class BotFailure extends Error {
+    /** @param {string} reason @param {string} message */
+    constructor(reason, message) {
+      super(message);
+      this.reason = reason;
+    }
+  }
+
+  /**
+   * A bot on disk, run by `bitbath serve` (SPEC §5). It is a player like the
+   * built-in ones: the page hands it the init and turn messages, and it
+   * sends back order lines. Here those lines go to a process, through the
+   * server, one request for each line the bot sends.
+   */
+  class RemoteBot {
+    /** @param {string} name @param {string} command */
+    constructor(name, command) {
+      this.name = name;
+      this.command = command;
+      this.session = "";
+      /** What the bot wrote to stderr since it was last taken. */ this.stderr = "";
+      /** Its turn messages carry a clock, since it may plan its time by it. */ this.clock = true;
+      /** How long it has to answer the init message, in ms. */ this.initMs = 10000;
+    }
+
+    /** @param {string} path @param {string[]} lines @returns {Promise<any>} */
+    async call(path, lines) {
+      let res;
+      try {
+        res = await fetch("/api/" + path, { method: "POST", body: lines.join("\n") });
+      } catch (e) {
+        throw new BotFailure("crash", "bitbath serve stopped answering");
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new BotFailure("crash", data.error || "bitbath serve answered " + res.status);
+      if (data.stderr) this.stderr += data.stderr;
+      return data;
+    }
+
+    /** Starts the bot's process. */
+    async connect() {
+      this.session = (await this.call("start?bot=" + encodeURIComponent(this.name), [])).session;
+    }
+
+    /**
+     * Writes lines to the bot, then reads its next line.
+     * @param {string[]} lines @param {number} deadline when to stop waiting, as performance.now() counts
+     * @param {string} late the forfeit's reason if the line doesn't come in time
+     */
+    async read(lines, deadline, late) {
+      const wait = Math.max(0, Math.round(deadline - performance.now()));
+      const data = await this.call("io?session=" + this.session + "&wait=" + wait, lines);
+      if (data.eof) throw new BotFailure(data.reason || "crash", "the bot " + (data.note || "stopped"));
+      if (data.timeout) throw new BotFailure(late, late === "init" ? "the bot sent no READY in time" : "the bot didn't end its turn within " + BOT_TURN_MS / 1000 + " seconds");
+      return data;
+    }
+
+    /** @param {string[]} lines */
+    async init(lines) {
+      const deadline = performance.now() + this.initMs;
+      let pending = lines;
+      for (;;) {
+        const data = await this.read(pending, deadline, "init");
+        pending = [];
+        if (data.line !== undefined && data.line.trim() === "READY") return;
+      }
+    }
+
+    /** @param {string[]} lines @param {(line: string) => string[] | null} send */
+    async turn(lines, send) {
+      const deadline = performance.now() + BOT_TURN_MS;
+      let pending = lines;
+      for (;;) {
+        const data = await this.read(pending, deadline, "hang");
+        pending = [];
+        if (data.long !== undefined) {
+          // As the runner answers a line over the limit (SPEC §6.6).
+          if (!data.long.startsWith("D")) pending = ["ERR limit lines may be at most 1024 bytes"];
+          continue;
+        }
+        const line = data.line.trim();
+        if (!line) continue;
+        if (line.split(/\s+/)[0] === "END") return;
+        const reply = send(line);
+        if (!reply) return;
+        pending = reply;
+      }
+    }
+
+    takeStderr() {
+      const text = this.stderr;
+      this.stderr = "";
+      return text;
+    }
+
+    /** Stops the bot's process, after sending it some last lines. @param {string[]} [lines] */
+    async stop(lines) {
+      const session = this.session;
+      this.session = "";
+      if (!session) return;
+      remotes.delete(this);
+      try {
+        await this.call("stop?session=" + session, lines || []);
+      } catch (e) {
+        // The bot is gone either way.
+      }
+    }
+  }
+
+  /** The bots on disk now running, to stop them when the page goes away. @type {Set<RemoteBot>} */
+  const remotes = new Set();
+  window.addEventListener("pagehide", () => {
+    for (const bot of remotes) if (bot.session) navigator.sendBeacon("/api/stop?session=" + bot.session);
+  });
+
   /** How long the opponent's turn takes to play out on the map, in ms. */
   const TURN_MS = 700;
 
@@ -54,6 +176,7 @@
       /** @type {Set<number>} */ this.zoc = new Set();
       /** The ids of the human's units with something left to do. @type {number[]} */ this.ready = [];
       /** Why the last order didn't do what was asked, if it didn't. */ this.problem = "";
+      /** What went wrong with a bot on disk, if that ended the game. */ this.failNote = "";
       /** What the attack forecast on show was worked out from, so it is built once. */ this.forecastKey = "";
       /** The turn being played: its record in the replay. @type {any} */ this.turn = null;
       this.turnStart = 0;
@@ -63,12 +186,21 @@
 
     // Turns.
 
-    /** Starts a player's turn and returns its turn message. @param {number} player @returns {string[]} */
-    begin(player) {
+    /**
+     * Starts a player's turn and returns its turn message.
+     * @param {number} player @param {boolean} [clock] whether the message carries a clock: the rules' time for a turn that uses none of the bank
+     * @returns {string[]}
+     */
+    begin(player, clock) {
       this.turn = { type: "turn", round: 0, player, time_ms: 0, bank_ms: 0, used_ms: 0, orders: [], rejected: 0 };
       V.append("T " + player, this.turn);
       this.turnStart = performance.now();
-      const lines = v.engine.turnMessage();
+      const c = this.world.c;
+      const bank = clock ? c.time_bank_ms || 5000 : 0;
+      const time = clock ? bank + (c.time_increment_ms || 1000) : 0;
+      this.turn.time_ms = time;
+      this.turn.bank_ms = bank;
+      const lines = v.engine.turnMessage(time, bank);
       this.turn.round = Number(lines[0].split(/\s+/)[1]);
       return lines;
     }
@@ -101,10 +233,13 @@
       this.sel = null;
       this.problem = "";
       for (const u of this.kit ? this.kit.view.myUnits() : []) this.types.set(u.id, u.type);
-      const lines = this.begin(3 - this.human);
+      const lines = this.begin(3 - this.human, this.bot.clock);
       const turn = this.turn;
       let over = false;
-      this.bot.turn(lines, (/** @type {string} */ line) => {
+      /** @type {any} */ let failure = null;
+      const play = this.bot.turn(lines, (/** @type {string} */ line) => {
+        // Another game has taken the engine.
+        if (this.closed) return null;
         if (line.startsWith("D ")) {
           // Debug annotations, kept for the replay (SPEC §8).
           if (!turn.debug) turn.debug = [];
@@ -118,12 +253,24 @@
         if (reply[reply.length - 1] === "OK captured" && v.engine.seek(v.steps).outcome) over = true;
         return reply;
       });
+      // A built-in bot has played by now. A bot on disk takes a while, and
+      // may fail: then it forfeits, once its turn has been played out.
+      try {
+        await play;
+      } catch (e) {
+        failure = e instanceof BotFailure ? e : new BotFailure("crash", String(e));
+      }
+      if (this.closed) return;
+      if (this.bot.takeStderr) {
+        const text = this.bot.takeStderr();
+        if (text) turn.stderr = text;
+      }
       const ended = this.end();
       // Play the turn out on the map, as far as the human sees it.
       const ms = V.animateTo(v.steps, TURN_MS);
       if (ms) await sleep(ms + 40);
       if (this.closed) return;
-      if (ended) return this.finish();
+      if (ended || failure) return this.finish(failure);
       // An attack shows where the attacker stood (SPEC §6.3); a move shows
       // only where the human watched all of it.
       this.seen = v.marks.filter((/** @type {any} */ m) => m.ok && ((m.op === "A" && m.hexes.length === 2) || (m.op === "M" && V.shown(m, this.human))));
@@ -161,16 +308,25 @@
       this.botTurn();
     }
 
-    /** The game has ended: records the result, and hands the game to the viewer as a finished replay. */
-    finish() {
+    /**
+     * The game has ended: records the result, and hands the game to the viewer as a finished replay.
+     * @param {any} [failure] what went wrong with a bot on disk: it forfeits, unless the game ended by itself
+     */
+    finish(failure) {
       const st = v.engine.seek(v.steps);
-      const [winner, reason] = st.outcome || [0, "draw"];
+      const [winner, reason] = st.outcome || (failure ? [this.human, failure.reason] : [0, "draw"]);
+      this.failNote = failure && !st.outcome ? V.capitalize(failure.message) + "." : "";
+      const result = { type: "result" };
+      if (this.bot.stop) {
+        // The bot hears how it ended (SPEC §6.4), and what it says last goes into the replay.
+        const seat = 2 - this.human;
+        this.bot.stop(["GAMEOVER " + winner + " " + reason]).then(() => (/** @type {any} */ (result).stderr[seat] = this.bot.takeStderr()));
+      }
       const count = (/** @type {(p: number) => number} */ f) => [f(1), f(2)];
       this.busy = true;
       this.sel = null;
       closeMenu();
-      V.finishLive({
-        type: "result",
+      V.finishLive(Object.assign(result, {
         winner,
         reason,
         round: st.round,
@@ -178,7 +334,7 @@
         units: count((p) => st.units.filter((/** @type {any[]} */ u) => u[1] === p).length),
         stats: this.stats,
         stderr: ["", ""],
-      });
+      }));
     }
 
     /** The game as the text of a replay file (SPEC §8). */
@@ -331,6 +487,7 @@
     /** Another game or a replay is taking this one's place. */
     close() {
       this.closed = true;
+      if (this.bot.stop) this.bot.stop();
       closeMenu();
       $("forecast").hidden = true;
       if (current === this) current = null;
@@ -605,7 +762,7 @@
       else if (mine) status = "Your turn · round " + v.state.round + " of " + this.world.c.round_limit;
       $("play-status").textContent = status;
       let note = "";
-      if (this.over) note = "Step through the game below, or save it as a replay.";
+      if (this.over) note = (this.failNote ? this.failNote + " " : "") + "Step through the game below, or save it as a replay.";
       else if (this.problem) note = this.problem;
       else if (mine) note = this.ready.length ? this.ready.length + (this.ready.length === 1 ? " unit has" : " units have") + " something left to do." : "No unit has anything left to do.";
       $("play-note").textContent = $("play-note").title = note;
@@ -720,11 +877,11 @@
   // Starting a game.
 
   /**
-   * Starts a game against a built-in bot.
+   * Starts a game against a bot: one built into the page, or one on disk.
    * @param {{bot: string, map: string, human: number, seed: number}} options the ids of a bot and a map size, the human's player number, and the map's seed
    */
   async function start(options) {
-    const kind = Bots.list.find((/** @type {any} */ b) => b.id === options.bot) || Bots.list[0];
+    const kind = opponents.find((b) => b.id === options.bot) || opponents[0];
     const map = MAPS.find((m) => m.id === options.map) || MAPS[0];
     const human = options.human === 2 ? 2 : 1;
     const engine = await V.engine();
@@ -733,14 +890,26 @@
     const header = Object.assign({ type: "header" }, engine.versions(), {
       map: "seed:" + options.seed,
       seed: options.seed,
-      players: names.map((name) => ({ name, command: name === "Human" ? "a person in the browser" : "built-in " + kind.id + " bot" })),
+      players: names.map((name) => ({ name, command: name === "Human" ? "a person in the browser" : kind.command })),
       setup,
     });
-    const game = new Game(human, kind.create(options.seed), kind.name);
+    // A bot on disk that can't start stops the game before it opens.
+    const bot = await kind.create(options.seed);
+    const game = new Game(human, bot, kind.name);
     game.world = new Kit.World(setup);
-    if (!(await V.openLive(header, game))) throw new Error($("error").textContent);
+    if (!(await V.openLive(header, game))) {
+      if (bot.stop) bot.stop();
+      throw new Error($("error").textContent);
+    }
     current = game;
-    game.bot.init(engine.initMessage(3 - human));
+    try {
+      if (bot.initMs) bot.initMs = game.world.c.init_ms || bot.initMs;
+      await bot.init(engine.initMessage(3 - human));
+    } catch (e) {
+      if (!game.closed) game.finish(e instanceof BotFailure ? e : new BotFailure("crash", String(e)));
+      return game;
+    }
+    if (game.closed) return game;
     if (human === 1) game.humanTurn();
     else game.botTurn();
     return game;
@@ -748,11 +917,18 @@
 
   // The new game dialog.
 
-  /** @param {string} id @param {{id: string, name: string, about: string}[]} items @param {string} aboutId */
+  /**
+   * The bots to play against: the ones built into the page, then the ones
+   * `bitbath serve` offers, if that is what serves the page.
+   * @type {{id: string, name: string, label?: string, about: string, command: string, create: (seed: number) => any}[]}
+   */
+  const opponents = Bots.list.map((/** @type {any} */ b) => Object.assign({ command: "built-in " + b.id + " bot" }, b));
+
+  /** @param {string} id @param {{id: string, name: string, label?: string, about: string}[]} items @param {string} aboutId */
   function fill(id, items, aboutId) {
     const select = $(id);
     for (const item of items) {
-      const option = el("option", item.name);
+      const option = el("option", item.label || item.name);
       option.value = item.id;
       select.append(option);
     }
@@ -761,9 +937,38 @@
     return about;
   }
 
-  const abouts = [fill("opponent", Bots.list, "opponent-about"), fill("map-size", MAPS, "map-about")];
-  $("opponent").value = Bots.list[Bots.list.length - 1].id;
+  const abouts = [fill("opponent", opponents, "opponent-about"), fill("map-size", MAPS, "map-about")];
+  $("opponent").value = opponents[opponents.length - 1].id;
   abouts.forEach((about) => about());
+
+  // The bots on disk. A page opened as a file, or served by anything but
+  // `bitbath serve`, has none.
+  if (location.protocol.startsWith("http")) {
+    fetch("/api/bots")
+      .then((res) => (res.ok ? res.json() : { bots: [] }))
+      .then((/** @type {{bots: {name: string, command: string}[]}} */ data) => {
+        for (const b of data.bots || []) {
+          const item = {
+            id: "disk:" + b.name,
+            name: b.name,
+            label: b.name + " (on disk)",
+            about: "Runs on this machine: " + b.command,
+            command: b.command,
+            create: async () => {
+              const bot = new RemoteBot(b.name, b.command);
+              await bot.connect();
+              remotes.add(bot);
+              return bot;
+            },
+          };
+          opponents.push(item);
+          const option = el("option", item.label);
+          option.value = item.id;
+          $("opponent").append(option);
+        }
+      })
+      .catch(() => {});
+  }
 
   function openDialog() {
     $("new-game-error").textContent = "";

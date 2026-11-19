@@ -107,9 +107,13 @@
       return this.out().split("\n");
     }
 
-    /** The turn message for the player whose turn it is (SPEC §6.3). @returns {string[]} */
-    turnMessage() {
-      if (this.ex.bb_turn_message(0, 0) < 0) throw new Error(this.out());
+    /**
+     * The turn message for the player whose turn it is (SPEC §6.3).
+     * @param {number} [timeMs] the time it says the turn has @param {number} [bankMs] and the bank it says is left
+     * @returns {string[]}
+     */
+    turnMessage(timeMs, bankMs) {
+      if (this.ex.bb_turn_message(timeMs || 0, bankMs || 0) < 0) throw new Error(this.out());
       return this.out().split("\n");
     }
   }

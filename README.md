@@ -51,6 +51,19 @@ You see the game through your own fog of war:
 
 When the game ends, it becomes a replay: you can step through it with both sides in view, and save it as a `.bbr` file.
 
+To play against a bot on disk, let `bitbath serve` serve the page, and name the bots it may run:
+
+```bash
+target/release/bitbath serve --bot greedy="python bots/greedy_bot.py" --bot smart="python bots/smart_bot.py"
+```
+
+Then open `http://localhost:8000/web/index.html`. The bots you named are in the New game dialog's opponent list, marked "on disk", after the built-in ones.
+
+- **The page is still the referee.** The server only starts the bot and carries its lines to the page and back.
+- **Only the bots you name.** The server runs the commands given with `--bot` and no others, listens on this machine only, and answers only its own pages.
+- **No clock.** A bot is told it has the rules' time for a turn, but the page doesn't hold it to that. A bot that takes over 30 seconds for a turn, or exits, forfeits.
+- **The bot's stderr** goes into the replay, turn by turn, as in a game the runner plays.
+
 ## Writing a bot
 
 The Python kit in [kits/python/bitbath.py](kits/python/bitbath.py) handles the protocol, tracks the game state, and provides hex math, pathfinding, and a combat predictor that matches the engine:

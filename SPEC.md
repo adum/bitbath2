@@ -289,7 +289,12 @@ The engine talks to two *players* over the protocol in §6. All three modes use 
 - **No runner:** the game runs in the page, on the engine compiled to wasm. There is no clock.
 - **Same display:** the game is a replay that grows as it is played, so the viewer shows it with the code that shows replays. Until the game ends, the human sees it through their own fog of war, and only at its latest step.
 - **Orders:** the page turns clicks into the orders of §6.4. Its conveniences stay outside the engine: where a unit can move, the path there, and what an attack would do.
-- **Built-in bots:** `random` and `greedy`, ported to JavaScript on a small kit (`web/kit.js`). The page hands a bot the init and turn messages of §6, and the bot sends back order lines and reads their replies. A bot running somewhere else could stand behind the same two calls, which is how the page would connect to arbitrary bots later.
+- **Built-in bots:** `random` and `greedy`, ported to JavaScript on a small kit (`web/kit.js`). The page hands a bot the init and turn messages of §6, and the bot sends back order lines and reads their replies.
+- **Bots on disk:** a page can't start a program, so `bitbath serve` serves the page and runs bots for it. Such a bot stands behind the same two calls as a built-in one.
+  - **A bridge, not a referee:** the page's engine still builds the messages and answers the orders. The server starts the bot and carries lines between the page and the bot's stdin and stdout, one request for each line the bot sends.
+  - **Which bots:** only the commands named with `--bot <name>=<command>` when the server starts, never one the page sends. The server listens on this machine only, and turns away requests that don't come from its own pages.
+  - **Time:** the turn message says the bot has the rules' time for a turn that uses none of its bank, but nothing holds it to that. A bot forfeits by `hang` if a turn takes over 30 seconds, by `init` if it sends no `READY` within `init_ms`, and by `crash` or `memory` if it exits.
+  - **stderr** goes into the replay's turn records, as the runner's does.
 - **Afterwards:** a finished game is a replay like any other. It can be stepped through with both sides in view, and saved as a `.bbr` file.
 
 **Conveniences belong outside the engine.** "Move to x,y", standing orders, and auto-explore go in the kit library, the UI, or the LLM harness. This keeps engine orders atomic and the rules unambiguous.
@@ -541,6 +546,8 @@ bitbath play --p1 "python bots/greedy_bot.py" --p2 "./mybot.exe" --map seed:42 -
 - its whole process tree killed when it exits. This uses a Job Object on Windows and a process group on Unix.
 
 The runner sets `PYTHONUNBUFFERED=1` for every bot, as a backstop for Python bots that forget to flush.
+
+**`bitbath serve`** serves the viewer's page and runs the bots a human plays against in it (§5). Those bots get the same protections, with `runs/serve/<name>` as the working directory.
 
 **I/O threads.** Each bot has its own reader and writer threads with queues. A bot that never reads its replies can't deadlock the engine.
 
