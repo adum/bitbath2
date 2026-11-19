@@ -476,6 +476,7 @@
     // own, and units killed on the way stay until the slide ends.
     const still = a ? v.state.units.filter((/** @type {any[]} */ u) => !a.paths.has(u[0])).concat(a.ghosts) : v.state.units;
     v.unitPos = new Map();
+    const picked = v.play && !v.play.over && v.play.sel ? v.play.sel.unit : null;
     /** @type {Map<string, any[]>} */
     const byHex = new Map();
     for (const u of still) {
@@ -487,10 +488,15 @@
     for (const list of byHex.values()) {
       const [x, y] = center(list[0][3], list[0][4]);
       const n = list.length;
-      list.forEach((u, j) => {
+      const place = (/** @type {any[]} */ u, /** @type {number} */ j) => {
         const off = n <= 4 ? STACK[n][j] : [0.38 * Math.cos((2 * Math.PI * j) / n), 0.38 * Math.sin((2 * Math.PI * j) / n)];
         drawUnit(ctx, u, x + off[0] * s, y + off[1] * s, stackRadius(n));
-      });
+      };
+      // The unit picked in a game is drawn last, in its usual place, so its
+      // neighbors in the stack don't cover it or its health bar.
+      const top = list.findIndex((u) => u[0] === picked);
+      list.forEach((u, j) => j !== top && place(u, j));
+      if (top >= 0) place(list[top], top);
     }
     if (!a) return;
     for (const u of v.state.units) {
