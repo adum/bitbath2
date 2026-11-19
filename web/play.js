@@ -367,16 +367,61 @@
     }
 
     /**
+     * Where the picked unit would attack an enemy from, to forecast the fight.
+     * `when` is "now" for an enemy in range, "move" for one it can attack
+     * this turn after moving, and "later" for any other. For the last two,
+     * `from` is the hex in range that leaves the unit the most hit points,
+     * taken from those it can move to this turn if there are any. It is
+     * undefined for "now", and for an enemy with no free hex in range.
+     * @param {any} unit @param {any} target @returns {{when: string, from: number[] | undefined}}
+     */
+    attackFrom(unit, target) {
+      const kit = this.kit;
+      const type = kit.unitType(unit);
+      if (this.targets.includes(target)) return { when: "now", from: undefined };
+      const inRange = (/** @type {number[]} */ h) => {
+        const d = Kit.distance(h, target.hex);
+        return type.range_min <= d && d <= type.range_max;
+      };
+      /** @type {number[][]} */
+      let spots = [];
+      if (kit.canAttack(unit) && !type.no_move_attack) {
+        for (const i of this.reach.keys()) if (inRange(this.world.hex(i))) spots.push(this.world.hex(i));
+      }
+      const when = spots.length ? "move" : "later";
+      if (!spots.length) {
+        const n = type.range_max;
+        for (let dq = -n; dq <= n; dq++) {
+          for (let dr = -n; dr <= n; dr++) {
+            const h = [target.hex[0] + dq, target.hex[1] + dr];
+            if (!inRange(h) || this.world.index(h) < 0 || !this.world.passable(h)) continue;
+            if (!kit.view.unitsAt(h).some((/** @type {any} */ u) => u.owner !== this.human)) spots.push(h);
+          }
+        }
+      }
+      let from;
+      let best = -1;
+      for (const h of spots) {
+        const mine = kit.predict(unit, target, h)[1];
+        if (mine > best) [best, from] = [mine, h];
+      }
+      return { when, from };
+    }
+
+    /**
      * Shows, beside the enemy under the pointer, what an attack by the picked
      * unit would do to each side: hit points before and after, as bars and
-     * as numbers.
+     * as numbers. An enemy the unit can't attack from where it stands gets
+     * the forecast too, as a help in deciding whether to go there.
      */
     showForecast() {
       const card = $("forecast");
       const unit = this.unit();
       const hex = v.hover;
-      const targets = unit && hex && this.myTurn() && !v.anim && $("menu").hidden ? this.targets.filter((t) => t.q === hex[0] && t.r === hex[1]) : [];
-      if (!unit || !hex || !targets.length) {
+      const can = unit && hex && this.myTurn() && v.state.player === this.human && !v.anim && $("menu").hidden;
+      const plans = can ? this.kit.view.enemyUnits().filter((/** @type {any} */ t) => t.q === hex[0] && t.r === hex[1]).map((/** @type {any} */ t) => ({ t, ...this.attackFrom(unit, t) })) : [];
+      const fights = plans.filter((p) => p.when === "now" || p.from);
+      if (!unit || !hex || !fights.length) {
         card.hidden = true;
         this.forecastKey = "";
         return;
@@ -407,14 +452,17 @@
         return out;
       };
       card.replaceChildren(
-        ...targets.map((t) => {
-          const [theirs, mine] = this.kit.predict(unit, t);
+        ...fights.map(({ t, from }) => {
+          const [theirs, mine] = this.kit.predict(unit, t, from);
           const fight = el("div", "", "fc-fight");
           fight.append(row(t, theirs), row(unit, mine));
           return fight;
         }),
       );
-      if (targets.length > 1) card.append(el("div", "Click to choose which one to attack.", "fc-hint"));
+      const when = fights[0].when;
+      if (when === "move") card.append(el("div", "If you move into range first.", "fc-hint"));
+      else if (when === "later") card.append(el("div", "Not this turn: this unit can't attack it yet.", "fc-hint"));
+      else if (fights.length > 1) card.append(el("div", "Click to choose which one to attack.", "fc-hint"));
       card.hidden = false;
 
       // Beside the target, and preferably beyond it as the attacker sees it.
