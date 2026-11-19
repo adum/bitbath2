@@ -546,20 +546,25 @@
     const type = v.info.units[code];
     const maxHp = type ? type.max_hp : 100;
     v.unitPos.set(u[0], [x, y, rad]);
-    // The units of the player whose turn it is fade as they are used up: a
-    // little with no movement left, and more once they have attacked or
-    // captured, which ends their turn.
-    const alpha = owner !== v.state.player ? 1 : flags & 1 ? 0.5 : mp === 0 ? 0.75 : 1;
+    // The units of the player whose turn it is darken as they are used up.
+    // With no movement left the disc goes dark but its outline, letter and
+    // health stay bright; once it has attacked or captured, which ends its
+    // turn, it goes darker and those dim too.
+    const mine = owner === v.state.player;
+    const done = mine && (flags & 1) !== 0;
+    const fill = done ? 0.3 : mine && mp === 0 ? 0.55 : 1;
+    const ink = done ? 0.55 : 1;
     ctx.beginPath();
     ctx.arc(x, y, rad, 0, 2 * Math.PI);
-    if (alpha < 1) {
-      // A faded unit still hides the move lines under it.
-      ctx.fillStyle = cssVar("--bg");
+    if (fill < 1) {
+      // Dark under the color, which also hides the move lines under the unit.
+      ctx.fillStyle = "#16181c";
       ctx.fill();
     }
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha = fill;
     ctx.fillStyle = playerColor(owner);
     ctx.fill();
+    ctx.globalAlpha = ink;
     ctx.lineWidth = Math.max(1, rad * 0.14);
     ctx.strokeStyle = v.dark ? "rgba(255,255,255,.7)" : "rgba(0,0,0,.55)";
     if (flags & 4) ctx.setLineDash([2, 2]);
