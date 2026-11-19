@@ -480,7 +480,7 @@
 
     /**
      * Marks each of the human's cities that can still build this turn with a
-     * gold "+" on its hex's corner, clear of the units on it. A city that has
+     * small gold "+" on its hex's corner, clear of the units on it. A city that has
      * built, is full, or has no gold for even the cheapest unit has none.
      * @param {CanvasRenderingContext2D} ctx
      */
@@ -489,8 +489,10 @@
       const types = /** @type {any[]} */ (Object.values(this.world.unitTypes));
       const cheapest = types.reduce((a, b) => (b.cost < a.cost ? b : a));
       const s = v.geo.size;
-      const r = Math.max(5, s * 0.21);
+      // Small and a little see-through: it's a reminder, not a call to act.
+      const r = Math.max(3.5, s * 0.14);
       ctx.save();
+      ctx.globalAlpha = 0.85;
       ctx.lineCap = "round";
       for (const city of this.kit.view.cities.values()) {
         if (city.owner !== this.human || this.cantBuild(city, cheapest)) continue;
@@ -500,16 +502,13 @@
         ctx.arc(x, y, r, 0, 2 * Math.PI);
         ctx.fillStyle = "#fab005";
         ctx.fill();
-        ctx.strokeStyle = "rgba(0,0,0,.75)";
-        ctx.lineWidth = Math.max(1, s * 0.05);
-        ctx.stroke();
         ctx.beginPath();
         ctx.moveTo(x - r * 0.5, y);
         ctx.lineTo(x + r * 0.5, y);
         ctx.moveTo(x, y - r * 0.5);
         ctx.lineTo(x, y + r * 0.5);
-        ctx.lineWidth = Math.max(1.5, r * 0.3);
-        ctx.strokeStyle = "#1a1a1a";
+        ctx.lineWidth = Math.max(1, r * 0.25);
+        ctx.strokeStyle = "rgba(0,0,0,.7)";
         ctx.stroke();
       }
       ctx.restore();
