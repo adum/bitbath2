@@ -1063,9 +1063,11 @@
       row.append(
         name,
         el("td", String(cities[p - 1]), "num"),
-        el("td", secret ? "?" : String(units.length), "num"),
+        // Of a hidden opponent, the units in sight and what they are worth:
+        // at least that much, hence the plus.
+        el("td", !secret ? String(units.length) : units.length ? units.length + "+" : "?", "num"),
         el("td", secret ? "?" : String(st.gold[p - 1]), "num"),
-        el("td", secret ? "?" : String(army[p - 1]), "num"),
+        el("td", !secret ? String(army[p - 1]) : units.length ? army[p - 1] + "+" : "?", "num"),
       );
       // What the army is made of, under its numbers, in a box of fixed size
       // (as are the other parts of the panel) so the panel holds still.
