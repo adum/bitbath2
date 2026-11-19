@@ -269,8 +269,10 @@
     if (persp) drawFog(ctx, persp);
     drawDebug(ctx);
     drawTrails(ctx, persp);
+    // A move's line goes under the units, so it never covers their letters.
+    drawOrder(ctx, persp, true);
     drawUnits(ctx, persp);
-    drawOrder(ctx, persp);
+    drawOrder(ctx, persp, false);
     if (v.hover) {
       const [x, y] = center(v.hover[0], v.hover[1]);
       hexPath(ctx, x, y, v.geo.size * 0.97);
@@ -553,10 +555,15 @@
     ctx.restore();
   }
 
-  /** Highlights the order just applied. @param {CanvasRenderingContext2D} ctx @param {number} persp */
-  function drawOrder(ctx, persp) {
+  /**
+   * Highlights the order just applied. It's called twice: with `moves` for a
+   * move, before the units are drawn, and without for any other order, after.
+   * @param {CanvasRenderingContext2D} ctx @param {number} persp @param {boolean} moves
+   */
+  function drawOrder(ctx, persp, moves) {
     const m = v.marks[v.marks.length - 1];
     if (!m || m.step !== v.pos - 1 || v.anim || !shown(m, persp)) return;
+    if ((m.op === "M") !== moves) return;
     // Playing turn by turn, a turn's last order matters no more than the
     // others, so it shows as just its trail.
     if (v.playing && $("speed").value.startsWith("turn")) return;
