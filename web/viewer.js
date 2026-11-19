@@ -493,13 +493,14 @@
     [[0, 0]],
     [[-0.3, 0], [0.3, 0]],
     [[0, -0.3], [-0.3, 0.24], [0.3, 0.24]],
-    [[-0.3, -0.28], [0.3, -0.28], [-0.3, 0.28], [0.3, 0.28]],
+    [[-0.3, -0.34], [0.3, -0.34], [-0.3, 0.3], [0.3, 0.3]],
   ];
 
   /** The radius of each unit in a stack of `n`. @param {number} n */
   function stackRadius(n) {
     const s = v.geo.size;
-    return n === 1 ? s * 0.5 : n <= 4 ? s * 0.33 : s * 0.26;
+    // Four are a little smaller, so the upper two's health bars fit between the rows.
+    return n === 1 ? s * 0.5 : n <= 3 ? s * 0.33 : n === 4 ? s * 0.29 : s * 0.26;
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {number} persp */
@@ -525,13 +526,15 @@
       const n = list.length;
       const place = (/** @type {any[]} */ u, /** @type {number} */ j) => {
         const off = n <= 4 ? STACK[n][j] : [0.38 * Math.cos((2 * Math.PI * j) / n), 0.38 * Math.sin((2 * Math.PI * j) / n)];
-        drawUnit(ctx, u, x + off[0] * s, y + off[1] * s, stackRadius(n));
+        drawUnit(ctx, u, x + off[0] * s, y + off[1] * s, stackRadius(n), n === 1);
       };
       // The unit picked in a game is drawn last, in its usual place, so its
       // neighbors in the stack don't cover it or its health bar.
       const top = list.findIndex((u) => u[0] === picked);
       list.forEach((u, j) => j !== top && place(u, j));
       if (top >= 0) place(list[top], top);
+      // The health bars of a stack go over all its units, so none is covered.
+      if (n > 1) for (const u of list) drawHealth(ctx, u);
     }
     if (!a) return;
     for (const u of v.state.units) {
@@ -548,11 +551,9 @@
     }
   }
 
-  /** @param {CanvasRenderingContext2D} ctx @param {any[]} u @param {number} x @param {number} y @param {number} rad */
-  function drawUnit(ctx, u, x, y, rad) {
-    const [, owner, code, , , hp, mp, flags] = u;
-    const type = v.info.units[code];
-    const maxHp = type ? type.max_hp : 100;
+  /** @param {CanvasRenderingContext2D} ctx @param {any[]} u @param {number} x @param {number} y @param {number} rad @param {boolean} [bar] whether to draw its health bar too */
+  function drawUnit(ctx, u, x, y, rad, bar = true) {
+    const [, owner, code, , , , mp, flags] = u;
     v.unitPos.set(u[0], [x, y, rad]);
     // The units of the player whose turn it is darken as they are used up.
     // With no movement left the disc goes dark but its outline, letter and
@@ -596,9 +597,21 @@
       ctx.textBaseline = "middle";
       ctx.fillText(code, x, y + rad * 0.06);
     }
+    ctx.globalAlpha = 1;
+    if (bar) drawHealth(ctx, u);
+  }
+
+  /** The health bar under a unit, where the unit was last drawn. @param {CanvasRenderingContext2D} ctx @param {any[]} u */
+  function drawHealth(ctx, u) {
+    const at = v.unitPos.get(u[0]);
+    if (!at) return;
+    const [x, y, rad] = at;
+    const type = v.info.units[u[2]];
     const w = rad * 1.8;
     const h = Math.max(2, rad * 0.26);
-    const frac = Math.max(0, Math.min(1, hp / maxHp));
+    const frac = Math.max(0, Math.min(1, u[5] / (type ? type.max_hp : 100)));
+    // Dimmed with the rest of a unit whose turn is over.
+    ctx.globalAlpha = u[1] === v.state.player && u[7] & 1 ? 0.55 : 1;
     ctx.fillStyle = "rgba(0,0,0,.55)";
     ctx.fillRect(x - w / 2, y + rad * 0.95, w, h);
     ctx.fillStyle = frac > 0.6 ? "#3fb950" : frac > 0.3 ? "#e3b341" : "#f85149";
