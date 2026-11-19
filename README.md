@@ -46,7 +46,7 @@ You see the game through your own fog of war:
 - **Click a tinted hex** to move there, or **a ringed enemy** to attack it. Hovering shows the path, or what the attack would do.
 - **Right-click** (or Shift-click) moves onto a hex that holds your own units; a plain click selects one of them instead. A right-click anywhere else deselects.
 - **C** captures the city the unit stands on.
-- **Click one of your cities** to build there, or press a unit's letter, such as **I** for infantry.
+- **Click one of your cities** to build there, or press a unit's letter, such as **I** for infantry. A gold **+** marks each city that can still build this turn.
 - **N** or **Tab** selects the next unit with something left to do, **Esc** deselects, and **E** or **Enter** ends your turn.
 
 When the game ends, it becomes a replay: you can step through it with both sides in view, and save it as a `.bbr` file.

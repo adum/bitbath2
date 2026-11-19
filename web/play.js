@@ -464,10 +464,53 @@
       }
       const dirs = v.hover ? this.reach.get(this.world.index(v.hover)) : undefined;
       if (dirs !== undefined) {
+        // A move not yet made is dashed and in the text's color, so it can't
+        // be taken for the trail of one already made, which is solid and in
+        // the player's color.
         ctx.globalAlpha = 0.9;
-        ctx.lineWidth = Math.max(2, s * 0.14);
+        ctx.fillStyle = ctx.strokeStyle = V.cssVar("--text");
+        ctx.lineWidth = Math.max(2, s * 0.11);
         ctx.lineCap = ctx.lineJoin = "round";
+        ctx.setLineDash([s * 0.22, s * 0.24]);
         V.arrow(ctx, V.centers(Kit.walk(unit.hex, dirs)));
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+    }
+
+    /**
+     * Marks each of the human's cities that can still build this turn with a
+     * gold "+" on its hex's corner, clear of the units on it. A city that has
+     * built, is full, or has no gold for even the cheapest unit has none.
+     * @param {CanvasRenderingContext2D} ctx
+     */
+    drawBuildBadges(ctx) {
+      if (this.over || !this.kit || !this.myTurn() || v.state.player !== this.human) return;
+      const types = /** @type {any[]} */ (Object.values(this.world.unitTypes));
+      const cheapest = types.reduce((a, b) => (b.cost < a.cost ? b : a));
+      const s = v.geo.size;
+      const r = Math.max(5, s * 0.21);
+      ctx.save();
+      ctx.lineCap = "round";
+      for (const city of this.kit.view.cities.values()) {
+        if (city.owner !== this.human || this.cantBuild(city, cheapest)) continue;
+        const [cx, cy] = V.center(city.hex[0], city.hex[1]);
+        const [x, y] = [cx + s * 0.62, cy - s * 0.52];
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+        ctx.fillStyle = "#fab005";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(0,0,0,.75)";
+        ctx.lineWidth = Math.max(1, s * 0.05);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x - r * 0.5, y);
+        ctx.lineTo(x + r * 0.5, y);
+        ctx.moveTo(x, y - r * 0.5);
+        ctx.lineTo(x, y + r * 0.5);
+        ctx.lineWidth = Math.max(1.5, r * 0.3);
+        ctx.strokeStyle = "#1a1a1a";
+        ctx.stroke();
       }
       ctx.restore();
     }
@@ -475,6 +518,7 @@
     /** Over the units: a ring on the picked unit or hex, and on each enemy the unit can attack. @param {CanvasRenderingContext2D} ctx */
     drawOver(ctx) {
       this.showForecast();
+      this.drawBuildBadges(ctx);
       if (this.over || !this.sel) return;
       const s = v.geo.size;
       const unit = this.unit();
