@@ -16,6 +16,7 @@
 
   /** Map sizes a game can be played on, as config lines like those in configs/. Small is configs/small.toml. */
   const MAPS = [
+    { id: "micro", name: "Micro", about: "12 × 8 hexes, 2 neutral cities, 80 rounds: a quick skirmish.", config: "map_width = 12\nmap_height = 8\nneutral_cities = 2\nround_limit = 80" },
     { id: "small", name: "Small", about: "20 × 14 hexes, 4 neutral cities, 80 rounds.", config: "map_width = 20\nmap_height = 14\nneutral_cities = 4\nround_limit = 80" },
     { id: "medium", name: "Medium", about: "28 × 20 hexes, 6 neutral cities, 120 rounds.", config: "map_width = 28\nmap_height = 20\nneutral_cities = 6\nround_limit = 120" },
     { id: "standard", name: "Standard", about: "40 × 30 hexes, 10 neutral cities, 200 rounds: what bots play, and a lot to run by hand.", config: "" },
@@ -532,7 +533,7 @@
    */
   async function start(options) {
     const kind = Bots.list.find((/** @type {any} */ b) => b.id === options.bot) || Bots.list[0];
-    const map = MAPS.find((m) => m.id === options.map) || MAPS[0];
+    const map = MAPS.find((m) => m.id === options.map) || MAPS[1];
     const human = options.human === 2 ? 2 : 1;
     const engine = await V.engine();
     const setup = engine.setup(map.config + "\nseed = " + options.seed);
@@ -570,6 +571,7 @@
 
   const abouts = [fill("opponent", Bots.list, "opponent-about"), fill("map-size", MAPS, "map-about")];
   $("opponent").value = Bots.list[Bots.list.length - 1].id;
+  $("map-size").value = "small";
   abouts.forEach((about) => about());
 
   function openDialog() {
