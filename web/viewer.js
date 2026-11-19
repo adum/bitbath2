@@ -158,7 +158,7 @@
     /** The state when turn `ti` started, for turnMarks(). @type {{ti: number, state: any}} */ base: { ti: -1, state: null },
     /** The ids of the units built in the current turn so far. @type {Set<number>} */ built: new Set(),
     /** Units sliding along their paths during playback: see animateTo(). @type {any} */ anim: null,
-    /** Damage numbers floating over units just hit: see floatDamage(). @type {{hex: number[], text: string, t0: number}[]} */ floats: [],
+    /** Damage numbers floating over units just hit, and an arrow (with `to`) for each attack: see floatDamage(). @type {{hex: number[], text: string, t0: number, to?: number[], color?: string}[]} */ floats: [],
     /** Whether the damage numbers' frames are running. */ floating: false,
     /** Positions at the start and after each turn. */ ends: [0],
     /** The index into `ends` of the turn shown. */ turnIdx: 0,
@@ -367,7 +367,11 @@
       const before = v.floats.length;
       if (m.dealt && sees(m.hexes[1])) v.floats.push({ hex: m.hexes[1], text: "−" + m.dealt, t0 });
       if (m.taken && sees(m.hexes[0])) v.floats.push({ hex: m.hexes[0], text: "−" + m.taken, t0 });
-      if (v.floats.length > before) t0 += 140;
+      if (v.floats.length > before) {
+        // With the numbers, an arrow from the attacker to its target.
+        v.floats.push({ hex: m.hexes[0], to: m.hexes[1], color: playerColor(v.state.player), text: "", t0 });
+        t0 += 140;
+      }
     }
     if (!v.floats.length || v.floating) return;
     v.floating = true;
@@ -393,12 +397,31 @@
     ctx.lineWidth = Math.max(3, s * 0.14);
     ctx.strokeStyle = "rgba(0,0,0,.85)";
     ctx.fillStyle = "#ffd43b";
+    const fade = (/** @type {number} */ t) => (t < 0.6 ? 1 : (1 - t) / 0.4);
+    // The arrows go under the numbers, dark-edged to show on any ground.
+    ctx.lineCap = "round";
     for (const f of v.floats) {
       const t = (now - f.t0) / FLOAT_MS;
-      if (t < 0 || t >= 1) continue;
+      if (!f.to || t < 0 || t >= 1) continue;
+      const [a, b] = centers([f.hex, f.to]);
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const k = (s * 0.35) / len;
+      const pts = /** @type {[number, number][]} */ ([a, [b[0] - (b[0] - a[0]) * k, b[1] - (b[1] - a[1]) * k]]);
+      ctx.globalAlpha = fade(t);
+      for (const [color, width] of /** @type {[string, number][]} */ ([["rgba(0,0,0,.6)", s * 0.16 + 3], [f.color, s * 0.16]])) {
+        ctx.save();
+        ctx.strokeStyle = ctx.fillStyle = color;
+        ctx.lineWidth = Math.max(2, width);
+        arrow(ctx, pts);
+        ctx.restore();
+      }
+    }
+    for (const f of v.floats) {
+      const t = (now - f.t0) / FLOAT_MS;
+      if (f.to || t < 0 || t >= 1) continue;
       const [x, y] = center(f.hex[0], f.hex[1]);
       const rise = s * (0.35 + 0.9 * (1 - (1 - t) * (1 - t)));
-      ctx.globalAlpha = t < 0.6 ? 1 : (1 - t) / 0.4;
+      ctx.globalAlpha = fade(t);
       ctx.strokeText(f.text, x, y - rise);
       ctx.fillText(f.text, x, y - rise);
     }
