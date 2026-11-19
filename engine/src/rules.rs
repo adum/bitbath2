@@ -195,9 +195,9 @@ impl Default for Rules {
             ],
             units: vec![
                 unit('I', "infantry", 100, 3, 2, 1, 1, "capture,zoc"),
-                unit('P', "pikeman", 150, 2, 2, 1, 1, "capture,zoc"),
-                unit('K', "cavalry", 250, 5, 3, 1, 1, "zoc"),
-                unit('A', "archer", 200, 3, 2, 2, 2, "zoc,no_move_attack"),
+                unit('P', "pikeman", 150, 3, 2, 1, 1, "capture,zoc"),
+                unit('K', "cavalry", 225, 5, 3, 1, 1, "zoc"),
+                unit('A', "archer", 200, 3, 2, 2, 2, "zoc"),
                 unit('S', "scout", 80, 6, 4, 1, 1, "skirmish"),
             ],
             damage: vec![

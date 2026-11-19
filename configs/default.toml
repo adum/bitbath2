@@ -27,9 +27,11 @@ max_line_bytes = 1024
 # Unit types: unit.<code or name>.<cost|max_hp|move|vision|range_min|range_max|flags>
 unit.I.cost = 100
 unit.P.cost = 150
-unit.K.cost = 250
+unit.K.cost = 225
 unit.A.cost = 200
 unit.S.cost = 80
+unit.P.move = 3
+unit.A.flags = "zoc"       # add no_move_attack to stop archers moving and shooting in one turn
 
 # Base damage: damage.<attacker>.<defender>, e.g. pikemen against cavalry.
 damage.P.K = 80

@@ -29,9 +29,9 @@ TERRAIN C city 1 30 0 0
 TERRAIN ^ mountains 0 0 0 0
 TERRAIN ~ water 0 0 0 0
 UNITTYPE I infantry 100 100 3 2 1 1 capture,zoc
-UNITTYPE P pikeman 150 100 2 2 1 1 capture,zoc
-UNITTYPE K cavalry 250 100 5 3 1 1 zoc
-UNITTYPE A archer 200 100 3 2 2 2 zoc,no_move_attack
+UNITTYPE P pikeman 150 100 3 2 1 1 capture,zoc
+UNITTYPE K cavalry 225 100 5 3 1 1 zoc
+UNITTYPE A archer 200 100 3 2 2 2 zoc
 UNITTYPE S scout 80 100 6 4 1 1 skirmish
 DAMAGE I 55 45 40 65 75
 DAMAGE P 45 50 80 55 70

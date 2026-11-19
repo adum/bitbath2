@@ -85,9 +85,10 @@
    ]
   },
   {
-   "name": "attacks, retaliation, range, and the opponent log",
+   "name": "attacks, retaliation, range, no_move_attack, and the opponent log",
    "player": 1, "round": 1, "gold": [300, 300],
-   "units": ["1 1 I 4 3 100", "2 1 A 2 4 100", "3 1 A 3 4 100", "4 1 K 5 3 100", "5 2 I 4 4 100"],
+   "rules": {"unit.A.flags": "zoc,no_move_attack"},
+   "units":["1 1 I 4 3 100", "2 1 A 2 4 100", "3 1 A 3 4 100", "4 1 K 5 3 100", "5 2 I 4 4 100"],
    "steps": [
     {"order": "A 1 5", "reply": ["OK 67 64"]},
     {"order": "A 1 5", "reply": ["ERR acted"]},
@@ -107,6 +108,16 @@
     "LOG HIT 2 A 2 4 5 37 100",
     "LOG HIT 4 K 5 3 5 0 100",
     "GO"
+   ]
+  },
+  {
+   "name": "archers can move and then shoot",
+   "player": 1, "round": 1, "gold": [300, 300],
+   "units": ["1 1 A 1 4 100", "2 2 I 4 4 100"],
+   "steps": [
+    {"order": "M 1 0", "reply": ["SEE 2 2 I 4 4 100", "OK 2 4 2"]},
+    {"order": "A 1 2", "reply": ["OK 70 100"]},
+    {"order": "M 1 0", "reply": ["ERR acted"]}
    ]
   },
   {

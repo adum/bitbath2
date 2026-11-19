@@ -95,9 +95,9 @@ All units have 100 max HP.
 | code | unit | cost | move | vision | range | flags |
 |---|---|---|---|---|---|---|
 | `I` | infantry | 100 | 3 | 2 | 1 | capture, zoc |
-| `P` | pikeman | 150 | 2 | 2 | 1 | capture, zoc |
-| `K` | cavalry | 250 | 5 | 3 | 1 | zoc |
-| `A` | archer | 200 | 3 | 2 | 2 only | zoc, no_move_attack |
+| `P` | pikeman | 150 | 3 | 2 | 1 | capture, zoc |
+| `K` | cavalry | 225 | 5 | 3 | 1 | zoc |
+| `A` | archer | 200 | 3 | 2 | 2 only | zoc |
 | `S` | scout | 80 | 6 | 4 | 1 | skirmish |
 
 **Flags:**
@@ -105,7 +105,7 @@ All units have 100 max HP.
 - `capture`: can capture cities.
 - `zoc`: exerts a zone of control (§3.5).
 - `skirmish`: ignores enemy zones of control.
-- `no_move_attack`: can't attack on a turn it moved.
+- `no_move_attack`: can't attack on a turn it moved. No unit has it by default; it's there for rule variants.
 
 **Range.** Each unit type has a range of `range_min..range_max`. The archer's is `2..2`. It can't hit adjacent units, so it can't retaliate against melee attackers.
 
@@ -123,7 +123,8 @@ All units have 100 max HP.
 
 - Pikemen beat cavalry.
 - Cavalry beats archers and infantry.
-- Archers wear down slow foot units from range, but can't move and shoot in the same turn.
+- Infantry and archers beat pikemen.
+- Archers wear down foot units from range, but can't hit units next to them.
 - Scouts are for vision, not fighting.
 
 ### 3.4 Turn structure
@@ -424,7 +425,7 @@ This is player 1's first turn. Player 2's starting units are IDs 4–6, and the 
 ### 6.6 Edge cases
 
 - **Hidden units.** An order that names a hidden enemy unit gets the same error as one naming a unit that doesn't exist: `unknown` for the unit giving the order, `no_target` for an attack target. Probing ids reveals nothing. `not_yours` is only for visible enemy units and for cities you don't own.
-- **Archers.** A `no_move_attack` unit that has changed hexes this turn gets `acted` if it attacks. A unit stopped by an ambush before its first step hasn't moved.
+- **Moving, then attacking.** A `no_move_attack` unit that has changed hexes this turn gets `acted` if it attacks. A unit stopped by an ambush before its first step hasn't moved.
 - **Attacking from a zone of control.** An attack needs the unit's action, not movement points, so a unit whose move ended next to an enemy can still attack.
 - **Ambush.** The hex the mover bumped into becomes visible, so the ambusher arrives as a `SEE` event before the `PART` line.
 - **Building.** A city with an enemy unit on it gets `city_used`, and one holding `stack_limit` of your units gets `stack_full`. A city can build on the turn it is captured.
@@ -640,3 +641,4 @@ bitbath2/
 - **Language policy** (2026-11-02): LLM bots may use any language on the leaderboard, so choosing a language is part of the skill being measured. `BENCHMARK.md` will list the toolchains the benchmark environment provides.
 - **Default scale** (2026-11-02): 40 × 30 maps, with roughly 100–200 units per side at most. Small presets for manual play and large presets as rule variants come later. Revisit after the M4 balance pass if games feel cramped.
 - **Concealment** (2026-11-18): forest hides the units in it from all but nearby observers (`conceal` 1, §4), so forests are worth more than their defense, scouts have a spotting job, and archers need spotters. Line-of-sight blocking was rejected: with vision of 2–4 hexes it changes little, and its tie-breaking would be easy for kits to get subtly wrong.
+- **First unit balance pass** (2026-11-18): pikemen move 3 instead of 2, archers lost `no_move_attack` so they can move and shoot in one turn, and cavalry costs 225 instead of 250. Before, no build beat an all-infantry army. Every unit has 100 HP, so infantry gives the most HP and damage per gold; archers lost even to pikemen, and pikemen were too slow to catch cavalry. In about 2,900 test games between fixed build mixes, each counter in §3.3 now wins its matchup, and a build that adapts to the opponent beats all four fixed mixes it was tested against. Archers are still the weakest unit, and a lower archer cost made no clear difference.

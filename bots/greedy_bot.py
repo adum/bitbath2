@@ -22,7 +22,7 @@ class GreedyBot(bb.Bot):
         self.enemy_home = self.map.mirror(home)
 
     def ready(self):
-        """Units that can still act, archers first since they can't move and then shoot."""
+        """Units that can still act, with any that can't attack after moving first."""
         units = [u for u in self.state.my_units() if self.can_act(u)]
         return sorted(units, key=lambda u: (not self.unit_type(u).no_move_attack, u.id))
 
