@@ -158,6 +158,8 @@
     /** The state when turn `ti` started, for turnMarks(). @type {{ti: number, state: any}} */ base: { ti: -1, state: null },
     /** The ids of the units built in the current turn so far. @type {Set<number>} */ built: new Set(),
     /** Units sliding along their paths during playback: see animateTo(). @type {any} */ anim: null,
+    /** Damage numbers floating over units just hit: see floatDamage(). @type {{hex: number[], text: string, t0: number}[]} */ floats: [],
+    /** Whether the damage numbers' frames are running. */ floating: false,
     /** Positions at the start and after each turn. */ ends: [0],
     /** The index into `ends` of the turn shown. */ turnIdx: 0,
     /** The index into `ends` under the pointer on the army chart, or -1. */ chartHover: -1,
@@ -339,6 +341,7 @@
     drawUnits(ctx, persp);
     drawOrder(ctx, persp, false);
     if (v.play) v.play.drawOver(ctx);
+    drawFloats(ctx);
     if (v.hover) {
       const [x, y] = center(v.hover[0], v.hover[1]);
       hexPath(ctx, x, y, v.geo.size * 0.97);
@@ -346,6 +349,60 @@
       ctx.lineWidth = 2;
       ctx.stroke();
     }
+  }
+
+  /** How long a damage number floats over a unit that was hit, in ms. */
+  const FLOAT_MS = 1000;
+
+  /**
+   * Floats the damage of the attacks from step `from` on over the units they
+   * hit. A turn's attacks follow each other, so numbers on one hex don't pile up.
+   * @param {number} from @param {number} persp
+   */
+  function floatDamage(from, persp) {
+    const sees = (/** @type {number[]} */ h) => !persp || visibleTo(h[0], h[1], persp);
+    let t0 = performance.now();
+    for (const m of v.marks) {
+      if (m.step < from || m.op !== "A" || !m.ok || m.hexes.length !== 2) continue;
+      const before = v.floats.length;
+      if (m.dealt && sees(m.hexes[1])) v.floats.push({ hex: m.hexes[1], text: "−" + m.dealt, t0 });
+      if (m.taken && sees(m.hexes[0])) v.floats.push({ hex: m.hexes[0], text: "−" + m.taken, t0 });
+      if (v.floats.length > before) t0 += 140;
+    }
+    if (!v.floats.length || v.floating) return;
+    v.floating = true;
+    const frame = (/** @type {number} */ now) => {
+      v.floats = v.floats.filter((/** @type {any} */ f) => now - f.t0 < FLOAT_MS);
+      v.floating = v.floats.length > 0;
+      draw();
+      if (v.floating) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  /** Draws the damage numbers rising from the units just hit. @param {CanvasRenderingContext2D} ctx */
+  function drawFloats(ctx) {
+    if (!v.floats.length) return;
+    const s = v.geo.size;
+    const now = performance.now();
+    ctx.save();
+    ctx.font = "700 " + Math.max(13, s * 0.62) + "px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(3, s * 0.14);
+    ctx.strokeStyle = "rgba(0,0,0,.85)";
+    ctx.fillStyle = "#ffd43b";
+    for (const f of v.floats) {
+      const t = (now - f.t0) / FLOAT_MS;
+      if (t < 0 || t >= 1) continue;
+      const [x, y] = center(f.hex[0], f.hex[1]);
+      const rise = s * (0.35 + 0.9 * (1 - (1 - t) * (1 - t)));
+      ctx.globalAlpha = t < 0.6 ? 1 : (1 - t) / 0.4;
+      ctx.strokeText(f.text, x, y - rise);
+      ctx.fillText(f.text, x, y - rise);
+    }
+    ctx.restore();
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {number} persp */
@@ -570,6 +627,11 @@
     // Units built this turn can't move yet, so they are where they are now.
     for (const u of v.state.units) at.set(u[0], [u[3], u[4]]);
     for (const u of v.base.state.units) at.set(u[0], [u[3], u[4]]);
+    // Hit points as the turn's fights go, to work out the damage each did.
+    /** @type {Map<number, number>} */
+    const hp = new Map();
+    for (const u of v.state.units) hp.set(u[0], u[5]);
+    for (const u of v.base.state.units) hp.set(u[0], u[5]);
     for (let i = first + 1; i < v.pos; i++) {
       const t = v.replay.script[i].slice(2).trim().split(/\s+/);
       const result = v.info.results[i] || "";
@@ -593,7 +655,14 @@
       } else if (t[0] === "A" && from) {
         const target = Number(t[2]);
         const to = at.get(target);
-        marks.push({ step: i, op: "A", id: Number(t[1]), target, ok, hexes: to ? [from, to] : [from], kill: res[0] === "OK" && res[1] === "0" });
+        const m = { step: i, op: "A", id: Number(t[1]), target, ok, hexes: to ? [from, to] : [from], kill: res[0] === "OK" && res[1] === "0", dealt: 0, taken: 0 };
+        if (res[0] === "OK") {
+          m.dealt = Math.max(0, (hp.get(target) || 0) - Number(res[1]));
+          m.taken = Math.max(0, (hp.get(m.id) || 0) - Number(res[2]));
+          hp.set(target, Number(res[1]));
+          hp.set(m.id, Number(res[2]));
+        }
+        marks.push(m);
       } else if (t[0] === "C" && from) {
         marks.push({ step: i, op: "C", ok, hexes: [from] });
       } else if (t[0] === "B") {
@@ -1332,10 +1401,11 @@
 
   // Navigation.
 
-  /** @param {number} k */
-  function setPos(k) {
+  /** @param {number} k @param {boolean} [playing] whether this is a step of playback, which keeps the damage numbers floating */
+  function setPos(k, playing) {
     if (!v.engine || !v.replay) return;
     v.anim = null;
+    if (!playing) v.floats = [];
     v.pos = Math.max(0, Math.min(v.steps, k));
     v.state = v.engine.seek(v.pos);
     v.marks = turnMarks();
@@ -1378,7 +1448,7 @@
   function animateTo(k, ms, movesOnly) {
     const from = v.pos;
     const old = v.state;
-    setPos(k);
+    setPos(k, true);
     /** @type {Map<number, number[][]>} */
     const paths = new Map();
     for (const m of v.marks) {
@@ -1395,6 +1465,7 @@
       for (const [id, path] of paths) if (owner.get(id) !== persp && !path.some(sees)) paths.delete(id);
       ghosts = ghosts.filter((/** @type {any[]} */ u) => u[1] === persp || sees([u[3], u[4]]));
     }
+    if (ms >= 40 && k > from) floatDamage(from, persp);
     if (ms < 40 || (!paths.size && (movesOnly || !ghosts.length))) return 0;
     // Every unit moves at the same speed, so the longest path sets the time.
     let len = 1;
