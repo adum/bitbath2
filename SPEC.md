@@ -34,7 +34,7 @@ Putting the benchmark first means:
 - **Start:** each player has one home city, three units, and some gold. Neutral cities are scattered across the map.
 - **Economy:** each player has one shared gold pool. All of their cities pay into it, and it pays for units built at any city they own. Foot units capture enemy and neutral cities.
 - **Winning:** **you lose when you own no cities.** If the round limit is reached first, a tiebreak decides.
-- **Combat** is deterministic: a damage table between unit types, terrain defense, and defender retaliation.
+- **Combat** is deterministic: a damage table between unit types, terrain defense, fortification, and defender retaliation.
 - **Fog of war:** enemy units are visible only within your vision, and forest hides them from all but nearby observers. Terrain and city locations are known from the start.
 
 ## 3. Rules (v1 defaults)
@@ -95,7 +95,7 @@ All units have 100 max HP.
 | code | unit | cost | move | vision | range | flags |
 |---|---|---|---|---|---|---|
 | `I` | infantry | 100 | 3 | 2 | 1 | capture, zoc |
-| `P` | pikeman | 150 | 3 | 2 | 1 | capture, zoc |
+| `P` | pikeman | 125 | 3 | 2 | 1 | capture, zoc, fortify |
 | `K` | cavalry | 225 | 5 | 3 | 1 | zoc |
 | `A` | archer | 200 | 3 | 2 | 2 only | zoc |
 | `S` | scout | 80 | 6 | 4 | 1 | skirmish |
@@ -106,7 +106,7 @@ All units have 100 max HP.
 - `zoc`: exerts a zone of control (§3.5).
 - `skirmish`: ignores enemy zones of control.
 - `no_move_attack`: can't attack on a turn it moved. No unit has it by default; it's there for rule variants.
-- `fortify`: digs in while it holds still, which raises its defense (§3.7). No unit has it by default; it's there for rule variants.
+- `fortify`: digs in while it holds still, which raises its defense (§3.7).
 
 **Range.** Each unit type has a range of `range_min..range_max`. The archer's is `2..2`. It can't hit adjacent units, so it can't retaliate against melee attackers.
 
@@ -122,7 +122,7 @@ All units have 100 max HP.
 
 **Intended counters:**
 
-- Pikemen beat cavalry.
+- Pikemen beat cavalry, and dig in to hold ground.
 - Cavalry beats archers and infantry.
 - Infantry and archers beat pikemen.
 - Archers wear down foot units from range, but can't hit units next to them.
@@ -659,7 +659,6 @@ bitbath2/
 ## 14. Open questions
 
 1. **Benchmark time controls:** at 1 s per turn, a 200-round game can take about 7 minutes. Should benchmark runs use less? *Deferred to M4, to be decided from measured bot think times.*
-2. **Defensive pikemen:** should pikemen become a holding unit, digging in while they hold still (`fortify`) but unable to move and attack in one turn (`no_move_attack`)? Both are rule options since 2026-11-19, and the defaults stay as they are until test games show it helps. A first test played 240 games per rule set between fixed build mixes, with pikemen holding the cities nearest the enemy. With both flags, an army one-third pikemen went from beating one one-third cavalry 24–6 to losing 8–22, because pikemen could no longer chase cavalry. With `fortify` alone it still won 20–10, and almost every game still ended by elimination.
 
 ### Resolved
 
@@ -676,3 +675,4 @@ bitbath2/
 - **Concealment** (2026-11-18): forest hides the units in it from all but nearby observers (`conceal` 1, §4), so forests are worth more than their defense, scouts have a spotting job, and archers need spotters. Line-of-sight blocking was rejected: with vision of 2–4 hexes it changes little, and its tie-breaking would be easy for kits to get subtly wrong.
 - **First unit balance pass** (2026-11-18): pikemen move 3 instead of 2, archers lost `no_move_attack` so they can move and shoot in one turn, and cavalry costs 225 instead of 250. Before, no build beat an all-infantry army. Every unit has 100 HP, so infantry gives the most HP and damage per gold; archers lost even to pikemen, and pikemen were too slow to catch cavalry. In about 2,900 test games between fixed build mixes, each counter in §3.3 now wins its matchup, and a build that adapts to the opponent beats all four fixed mixes it was tested against. Archers are still the weakest unit, and a lower archer cost made no clear difference.
 - **Building after capture** (2026-11-18): a captured city can't build until its new owner's next turn, so the old owner gets a turn to strike back before the city can produce a defender.
+- **Defensive pikemen** (2026-11-19): pikemen dig in while they hold still (`fortify`, §3.7) and cost 125 instead of 150. In 240 test games per rule set between fixed build mixes, with pikemen holding the cities nearest the enemy, an army one-third pikemen and two-thirds infantry went from 6–24 to 11–19 against all infantry and still beat a one-third cavalry army 23–7, and 97% of games still ended by elimination. The lower price did most of that: 125-gold pikemen without `fortify` did about as well, so digging in adds a choice more than strength. Also taking away move-and-attack (`no_move_attack`) was rejected: pikemen could no longer catch cavalry, and the pikeman army lost to the cavalry one 8–22.

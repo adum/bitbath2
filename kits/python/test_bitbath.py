@@ -31,7 +31,7 @@ TERRAIN C city 1 30 0 0
 TERRAIN ^ mountains 0 0 0 0
 TERRAIN ~ water 0 0 0 0
 UNITTYPE I infantry 100 100 3 2 1 1 capture,zoc
-UNITTYPE P pikeman 150 100 3 2 1 1 capture,zoc
+UNITTYPE P pikeman 125 100 3 2 1 1 capture,zoc,fortify
 UNITTYPE K cavalry 225 100 5 3 1 1 zoc
 UNITTYPE A archer 200 100 3 2 2 2 zoc
 UNITTYPE S scout 80 100 6 4 1 1 skirmish

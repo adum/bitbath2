@@ -840,13 +840,14 @@
       box.append(el("div", "(" + hex[0] + "," + hex[1] + ") " + world.terrain(hex).name + (city ? " · city " + city.id : ""), "label"));
       for (const u of view.unitsAt(hex)) {
         const type = kit.unitType(u);
+        const dug = u.fort ? " · dug in to level " + u.fort : "";
         if (u.owner !== this.human) {
-          box.append(el("div", "Enemy " + type.name + " · " + u.hp + " hp"));
+          box.append(el("div", "Enemy " + type.name + " · " + u.hp + " hp" + dug));
           continue;
         }
         const state = u.fresh ? "new, ready next turn" : u.acted ? "done" : u.mp + " mp";
         const cls = "unit" + (unit && unit.id === u.id ? " chosen" : "") + (this.ready.includes(u.id) ? "" : " spent");
-        box.append(button(V.capitalize(type.name) + " · " + u.hp + " hp · " + state, () => this.select({ hex, unit: u.id }), cls));
+        box.append(button(V.capitalize(type.name) + " · " + u.hp + " hp · " + state + dug, () => this.select({ hex, unit: u.id }), cls));
       }
       if (unit && mine) {
         if (kit.canCapture(unit)) {

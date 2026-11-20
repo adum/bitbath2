@@ -1197,7 +1197,7 @@
     for (const u of v.state.units) {
       if (u[3] === q && u[4] === r && (seen || u[1] === fog)) {
         const type = v.info.units[u[2]];
-        lines.push("unit " + u[0] + " " + playerName(u[1]) + " " + (type ? type.name : u[2]) + " " + u[5] + " hp, " + u[6] + " mp" + (u[7] & 1 ? ", acted" : "") + (u[7] & 4 ? ", new" : ""));
+        lines.push("unit " + u[0] + " " + playerName(u[1]) + " " + (type ? type.name : u[2]) + " " + u[5] + " hp, " + u[6] + " mp" + (u[7] & 1 ? ", acted" : "") + (u[7] & 4 ? ", new" : "") + (u[8] ? ", dug in to level " + u[8] : ""));
       }
     }
     if (fog) lines.push(...v.play.hoverLines(q, r));
@@ -1332,6 +1332,7 @@
     zoc: "zone of control",
     skirmish: "ignores zones of control",
     no_move_attack: "can't move and attack in one turn",
+    fortify: "digs in when it holds still",
   });
 
   function buildRules() {
@@ -1418,11 +1419,20 @@
       "Each city you own can build one unit per turn, if no enemy unit is on it and it holds fewer than " + c.stack_limit + " of your units. New units can't move or act until your next turn.",
     ]);
 
-    section("Combat", [
+    const diggers = units.filter(([, u]) => u.flags.split(",").includes("fortify")).map(([, u]) => plural(u.name));
+    const combat = [
       "A unit attacks one visible enemy unit within its range; any unit in a stack can be picked. Attacking uses the action and ends the unit's movement.",
-      "Damage = base damage × attacker's HP ÷ its max HP × (100% − the defender's terrain defense), rounded down, and at least 1.",
+      diggers.length
+        ? "Damage = base damage × attacker's HP ÷ its max HP × (100% − the defender's defense: its terrain's, plus " + c.fortify_pct + "% per fortification level), rounded down, and at least 1."
+        : "Damage = base damage × attacker's HP ÷ its max HP × (100% − the defender's terrain defense), rounded down, and at least 1.",
       "If the defender survives and the attacker is within its range, it strikes back the same way with the HP it has left.",
-    ]);
+    ];
+    if (diggers.length) {
+      combat.push(
+        "Digging in: " + join(diggers) + " that end a turn without moving, attacking, or capturing gain a fortification level, up to " + c.fortify_max + ". Moving loses them all; attacking or capturing keeps them but adds none.",
+      );
+    }
+    section("Combat", combat);
     table(
       ["Base damage: attacker ↓ defender →"].concat(units.map(([, u]) => u.name)),
       units.map(([code, u]) => [u.name].concat(damage.get(code) || [])),

@@ -205,7 +205,7 @@ impl Default for Rules {
             ],
             units: vec![
                 unit('I', "infantry", 100, 3, 2, 1, 1, "capture,zoc"),
-                unit('P', "pikeman", 150, 3, 2, 1, 1, "capture,zoc"),
+                unit('P', "pikeman", 125, 3, 2, 1, 1, "capture,zoc,fortify"),
                 unit('K', "cavalry", 225, 5, 3, 1, 1, "zoc"),
                 unit('A', "archer", 200, 3, 2, 2, 2, "zoc"),
                 unit('S', "scout", 80, 6, 4, 1, 1, "skirmish"),
