@@ -93,6 +93,13 @@ bb.run(MyBot())
 
 [bots/solid_bot.py](bots/solid_bot.py) coordinates capturers, scores attacks from reachable hexes, and recruits first at threatened cities or near the front. It caches terrain distances to each city during setup to keep turns quick.
 
+A few sample bots are there for variety. Each plays one style, none of them well enough to worry the bots above:
+
+- [bots/turtle_bot.py](bots/turtle_bot.py) holds its own half of the map: pikemen and archers garrison every city there, and a reserve chases off intruders.
+- [bots/volley_bot.py](bots/volley_bot.py) gathers archers into packs that advance together and shoot from two hexes away.
+- [bots/raider_bot.py](bots/raider_bot.py) hunts with cavalry, which avoid pikemen and go home to heal.
+- [bots/rush_bot.py](bots/rush_bot.py) sends nothing but infantry straight at the enemy and attacks whatever it reaches.
+
 ## Rules and maps
 
 - `--map seed:<n>` generates a point-symmetric map.
@@ -119,52 +126,19 @@ target/release/bitbath tournament --bot random="python bots/random_bot.py" --bot
 
 ## The benchmark
 
-The benchmark gives a model a starter kit and time to build a bot, then plays the bots that different models built against each other and against the reference bots. It needs Docker and Python 3.10 or later. [benchmark.py](benchmark.py) runs each step:
+The benchmark gives a model a starter kit and time to build a bot, then plays the bots that different models built against each other. Two parts of it exist so far: the kit, and the form a bot is submitted in. The containers that models build in, and that the tournament runs bots in, are still to come.
+
+**The starter kit** is what a model builds from:
 
 ```bash
-python benchmark.py build
-python benchmark.py run --harness claude --model <model id> --hours 4
-python benchmark.py arena
+python benchmark.py export ../bitbath-kit
 ```
-
-The isolation between bots in the arena is tested, on Linux, with a bot that tries to read what it shouldn't. The container commands themselves haven't been run yet: `build`, and `run` and `arena` from start to finish.
-
-### The image
-
-`build` exports the starter kit from `HEAD` and builds one image around it, `bitbath-bench:local`: the kit with the runner built, Python, Rust, g++, and the Codex, Claude Code, and OpenCode command lines at pinned versions. Both later steps use this image, so every bot is built against, and then plays on, the same engine. Build it again after the engine or the kit changes, and start a new season with it.
-
-### Building a bot
-
-`run` starts a container from the image and lets one model work in it, through `--harness claude`, `codex`, or `opencode`. It needs the provider's key in the environment, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
-
-- **What the model has.** The kit in `/workspace`, and the kit's README as its task. It can build, play games against the sample bots and its own earlier versions, and read the replays.
-- **What it can't reach.** The container's network goes through a proxy that connects only to the model provider's hosts. The harness's web search and fetch tools are off, and none of your own settings, memory, or history are copied in. Other entries and the stronger reference bots are not in the container at all.
-- **Time.** `--hours` is the working time. It may be split over several sessions, each starting where the files were left. The model ends early by creating a `FINISHED` file.
-- **The check.** What the model leaves in `submission/` is checked with `bitbath check` in a fresh container that has no network. If that fails, the model gets one short session with the check's output to fix it (`--fix-minutes`), and it is checked again.
-- **The entry.** A run leaves `entries/<time>-<name>/`: the submission as `submission.tar` and unpacked beside it, `entry.json` with the model, the kit, each session, and the submission's hash, and every session's prompt and output under `rounds/`. An entry that passed its check is sealed. `entries/` isn't committed, since it holds bots that shouldn't be public while a season runs.
-
-The credential has to be inside the container for the harness to work, so use a key made for this, with a spending limit. It is scrubbed from the saved output.
-
-### The arena
-
-`arena` plays every sealed entry and the reference bots in one container that has no network at all.
-
-- **Bots can't see each other.** Each bot's files belong to a user of its own, and its programs run as that user. A bot can't read another bot's code or working directory, the replay being written, or the results. It can't write to its own directory either, and gets an empty working directory each game, so it keeps nothing from one game to the next.
-- **What is played.** [bench/arena.json](bench/arena.json) names the reference bots, the rule presets with the seeds to play under each, and the rating anchor. The seeds there are the held-out ones, so change them before a season that counts if the repository is public.
-- **Results.** `arena/<season>/` gets `games.jsonl`, `ratings.json`, and every replay. Run `arena` again to continue a season that was interrupted, or to add new entries: only the missing games are played. A season refuses a bot whose name it knows with different contents, and an image with another kit.
-- **Failed checks.** Every bot is built and checked in the arena first. An entry that fails sits the tournament out, and `arena.json` in the season says why.
-
-### The starter kit
-
-`python benchmark.py export <directory>` writes the kit on its own, to read what a model is given.
 
 - **Contents.** The kit holds only what [bench/starter.txt](bench/starter.txt) lists: the engine and runner, the Python kit, the random and greedy bots, three rule presets, and SPEC.md. The stronger bots in `bots/` are left out, so that they can serve as opponents no model has seen. [bench/starter/](bench/starter) adds the kit's own README, which is the task a model reads, and a placeholder bot.
 - **Source.** The files come from a commit, `HEAD` unless `--rev` names another, and not from the files on disk. Changes that aren't committed don't reach the kit, and `export` warns about them.
-- **Identity.** `export` prints the commit and a hash over every file in the kit. The image carries both, and every entry records them.
+- **Identity.** `export` prints the commit and a hash over every file in the kit. `--manifest <file>` writes them out with each file's own hash, to record which kit a bot was built from.
 
-### Bot directories
-
-A bot directory is the form a bot is submitted in: a directory with a `bot.toml` beside the bot's files.
+**A bot directory** is the form a bot is submitted in: a directory with a `bot.toml` beside the bot's files.
 
 ```toml
 run = "python bot.py"
@@ -174,7 +148,6 @@ run = "python bot.py"
 - **Running.** A bot directory works wherever a bot command does, as in `--p1 <dir>` or `--bot <name>=<dir>`. The `run` command starts in the game's working directory, like any bot, and whatever it names in the bot directory is found there.
 - **Checking.** `bitbath check <dir>` makes sure the directory holds at most 20 MB, runs its `build` command in it, and plays the bot against itself. It fails if either side crashes, hangs, or doesn't start.
 - **Building.** Only `check` builds. `play` and `tournament` run a bot directory as it is.
-- **Users.** When the runner is root on Linux or macOS, a bot directory's programs run as the user who owns the directory, or, if root owns it, as the user numbered like its group. The runner then also keeps replays and results to itself. This is what the arena's isolation rests on.
 
 ## Repository layout
 
@@ -188,9 +161,8 @@ bots/           Reference bots: random_bot.py, greedy_bot.py, solid_bot.py.
 tests/vectors/  Golden test vectors shared by the engine and kits.
 configs/        Rule presets.
 scripts/        Viewer build and server, and the test vector generator.
-bench/          The benchmark: the starter kit, the containers, model runs, the arena.
-benchmark.py    The benchmark's command line.
-containers/     The benchmark image, and the seccomp profile for Claude Code's sandbox.
+bench/          The benchmark: the starter kit's allowlist and its own files.
+benchmark.py    Benchmark tools: exports the starter kit.
 ```
 
 ## Tests
@@ -198,5 +170,4 @@ containers/     The benchmark image, and the seccomp profile for Claude Code's s
 ```bash
 cargo test --workspace
 python kits/python/test_bitbath.py
-python -m unittest bench.test_bench
 ```

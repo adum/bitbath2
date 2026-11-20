@@ -450,6 +450,13 @@ class Bot:
             zoc = self.zoc_hexes()
         start = unit.hex
         stack_limit = self.rules.stack_limit
+        # Who stands where, counted once: asking the state per hex is slow.
+        friends, foes = {}, set()
+        for u in self.state.units.values():
+            if u.owner != self.player:
+                foes.add(u.hex)
+            elif u is not unit:
+                friends[u.hex] = friends.get(u.hex, 0) + 1
         best = {start: 0}
         paths = {start: ""}
         heap = [(0, start)]
@@ -459,14 +466,14 @@ class Bot:
             if cost > best[h]:
                 continue
             if h != start:
-                if self.state.friends_at(h, excluding=unit) < stack_limit:
+                if friends.get(h, 0) < stack_limit:
                     result[h] = paths[h]
                 if not utype.skirmish and h in zoc:
                     continue  # entering a zone of control ends the move
             for d in range(6):
                 n = step(h, d)
                 t = self.map.terrain(n)
-                if t is None or not t.passable or self.state.enemy_at(n):
+                if t is None or not t.passable or n in foes:
                     continue
                 c = cost + t.move_cost
                 if c <= unit.mp and c < best.get(n, c + 1):
