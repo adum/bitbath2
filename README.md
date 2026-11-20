@@ -117,6 +117,31 @@ target/release/bitbath tournament --bot random="python bots/random_bot.py" --bot
 
 `bitbath rate <games.jsonl>...` rates the games in one or more results files again, for example with another anchor.
 
+## The benchmark
+
+The benchmark gives a model a starter kit and time to build a bot, then plays the bots that different models built against each other. Two parts of it exist so far: the kit, and the form a bot is submitted in. The containers that models build in, and that the tournament runs bots in, are still to come.
+
+**The starter kit** is what a model builds from:
+
+```bash
+python benchmark.py export ../bitbath-kit
+```
+
+- **Contents.** The kit holds only what [bench/starter.txt](bench/starter.txt) lists: the engine and runner, the Python kit, the random and greedy bots, three rule presets, and SPEC.md. The stronger bots in `bots/` are left out, so that they can serve as opponents no model has seen. [bench/starter/](bench/starter) adds the kit's own README, which is the task a model reads, and a placeholder bot.
+- **Source.** The files come from a commit, `HEAD` unless `--rev` names another, and not from the files on disk. Changes that aren't committed don't reach the kit, and `export` warns about them.
+- **Identity.** `export` prints the commit and a hash over every file in the kit. `--manifest <file>` writes them out with each file's own hash, to record which kit a bot was built from.
+
+**A bot directory** is the form a bot is submitted in: a directory with a `bot.toml` beside the bot's files.
+
+```toml
+run = "python bot.py"
+# build = "cargo build --release --offline"
+```
+
+- **Running.** A bot directory works wherever a bot command does, as in `--p1 <dir>` or `--bot <name>=<dir>`. The `run` command starts in the game's working directory, like any bot, and whatever it names in the bot directory is found there.
+- **Checking.** `bitbath check <dir>` makes sure the directory holds at most 20 MB, runs its `build` command in it, and plays the bot against itself. It fails if either side crashes, hangs, or doesn't start.
+- **Building.** Only `check` builds. `play` and `tournament` run a bot directory as it is.
+
 ## Repository layout
 
 ```
@@ -129,6 +154,8 @@ bots/           Reference bots: random_bot.py, greedy_bot.py, solid_bot.py.
 tests/vectors/  Golden test vectors shared by the engine and kits.
 configs/        Rule presets.
 scripts/        Viewer build and server, and the test vector generator.
+bench/          The benchmark: the starter kit's allowlist and its own files.
+benchmark.py    Benchmark tools: exports the starter kit.
 ```
 
 ## Tests

@@ -10,7 +10,7 @@ use std::fmt::Write;
 /// The rating that the bots average when no bot is anchored.
 const MEAN_RATING: f64 = 1500.0;
 /// Reasons for a result that mean the loser's program failed.
-const FORFEITS: [&str; 4] = ["crash", "memory", "hang", "init"];
+pub const FORFEITS: [&str; 4] = ["crash", "memory", "hang", "init"];
 
 pub struct Options {
     /// A bot whose rating is fixed, which sets everyone else's. Without one,

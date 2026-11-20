@@ -38,11 +38,16 @@ impl Bot {
     /// Starts `command` in `dir`. Arguments that name existing files relative
     /// to the current directory are made absolute first, so a command like
     /// `python bots/greedy.py` still works from the bot's own directory.
+    /// A command that names a bot directory starts the bot its `bot.toml`
+    /// describes.
     pub fn spawn(command: &str, dir: &Path, memory_mb: u64, max_line: usize, stderr_cap: usize) -> Result<Bot, String> {
-        let args = split_command(command)?;
+        let args: Vec<String> = match crate::entry::resolve(command)? {
+            Some(args) => args,
+            None => split_command(command)?.iter().map(|a| absolutize(a)).collect(),
+        };
         let (program, rest) = args.split_first().ok_or("the bot command is empty")?;
-        let mut cmd = Command::new(absolutize(program));
-        cmd.args(rest.iter().map(|a| absolutize(a)))
+        let mut cmd = Command::new(program);
+        cmd.args(rest)
             .current_dir(dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

@@ -1,0 +1,4 @@
+map_width = 12
+map_height = 8
+neutral_cities = 2
+round_limit = 80

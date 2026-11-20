@@ -1,0 +1,7 @@
+# How to start your bot. The command runs from another directory, so
+# anything it names in this directory is found for you.
+run = "python bot.py"
+
+# If your bot needs building, give the command. It runs once, in this
+# directory, with no network.
+# build = "cargo build --release --offline"

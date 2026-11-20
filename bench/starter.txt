@@ -1,0 +1,24 @@
+# The starter kit: what a model gets to build its bot from.
+#
+# This is an allowlist. Nothing in the repository reaches the kit unless a
+# line here names it, so the stronger reference bots, old game records, and
+# anything added later stay out by default. `python benchmark.py export`
+# copies these paths as they are in the commit it exports, then adds the
+# files in bench/starter/.
+
+SPEC.md
+Cargo.lock
+rustfmt.toml
+engine
+runner
+kits/python
+tests/vectors
+bots/random_bot.py
+bots/greedy_bot.py
+configs/default.toml
+configs/micro.toml
+configs/small.toml
+
+# A line with "=" puts a second copy of a listed file elsewhere in the kit:
+# destination = source.
+submission/bitbath.py = kits/python/bitbath.py

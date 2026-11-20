@@ -2,6 +2,7 @@
 //! reads replays, shows maps, and serves the viewer's page with bots to play against (SPEC §10).
 
 mod bot;
+mod entry;
 mod play;
 mod rating;
 mod replay;
@@ -35,6 +36,12 @@ Usage:
       --jobs <n>                       games to play at once (default: 1)
       --memory-mb <n>                  memory cap per bot, 0 for none (default: 2048)
       --anchor, --bootstrap            as for rate
+  bitbath check <bot directory> [--map seed:<n> | <file>] [--config <file>] [--set <key>=<value>]
+      Checks a bot directory, which is a bot with a bot.toml that gives its
+      'run' command and, if it needs one, its 'build' command. Builds the bot,
+      then plays it against itself (default map: seed:1) and fails if either
+      side forfeits. A bot directory can stand for a bot command anywhere:
+      --p1 <dir>, or --bot <name>=<dir>.
   bitbath rate <games.jsonl>... [--anchor <name>=<rating>] [--bootstrap <n>] [--json <file>]
       Rates the bots in tournament results: a Bradley-Terry fit on the Elo scale.
       --anchor <name>=<rating>         fix one bot's rating (default: the average is 1500)
@@ -61,6 +68,7 @@ fn main() {
         Some("play") => cmd_play(&args[1..]),
         Some("tournament") => cmd_tournament(&args[1..]),
         Some("rate") => cmd_rate(&args[1..]),
+        Some("check") => cmd_check(&args[1..]),
         Some("replay") => cmd_replay(&args[1..]),
         Some("map") => cmd_map(&args[1..]),
         Some("serve") => cmd_serve(&args[1..]),
@@ -415,6 +423,69 @@ fn cmd_rate(args: &[String]) -> Result<(), String> {
     if let Some(path) = a.get("--json") {
         write_ratings(Path::new(path), &rows, games.len(), &opts)?;
     }
+    Ok(())
+}
+
+fn cmd_check(args: &[String]) -> Result<(), String> {
+    let a = Args::parse(args, &["--map", "--config", "--set", "--memory-mb"], &[])?;
+    let [dir] = a.positional.as_slice() else {
+        return Err("expected one bot directory".into());
+    };
+    let entry = entry::Entry::load(Path::new(dir))?;
+    let size = entry.size()?;
+    let limit = entry::MAX_BYTES;
+    println!("Size: {} KB of at most {} KB", size.div_ceil(1024), limit / 1024);
+    if size > limit {
+        return Err(format!(
+            "the bot directory holds {size} bytes, over the limit of {limit}"
+        ));
+    }
+    if let Some(build) = &entry.build {
+        println!("Building: {build}");
+        entry.build(std::time::Duration::from_secs(600))?;
+    }
+    let rules = load_rules(a.get("--config"), &a.all("--set"))?;
+    let (game, map_source, seed) = load_game(Some(a.get("--map").unwrap_or("seed:1")), rules)?;
+    let run_dir = new_run_dir("check")?;
+    println!("Playing the bot against itself on {map_source}: {}", entry.run);
+    let opts = play::Options {
+        players: ["first", "second"].map(|name| play::Player {
+            name: name.into(),
+            command: dir.clone(),
+        }),
+        map_source,
+        seed,
+        replay: run_dir.join("replay.bbr"),
+        run_dir,
+        memory_mb: match a.get("--memory-mb") {
+            Some(s) => s.parse().map_err(|_| format!("bad --memory-mb '{s}'"))?,
+            None => 2048,
+        },
+        quiet: true,
+    };
+    let finished = play::play(game, &opts)?;
+    let result = &finished.result;
+    for (i, stats) in result["stats"].as_array().into_iter().flatten().enumerate() {
+        println!(
+            "Player {}: {} turns, {} orders, {} rejected, {} timeouts, {} missed turns, slowest turn {} ms",
+            i + 1,
+            stats["turns"],
+            stats["orders"],
+            stats["invalid"],
+            stats["timeouts"],
+            stats["missed_turns"],
+            stats["max_think_ms"]
+        );
+    }
+    println!("Replay: {}", opts.replay.display());
+    let reason = finished.outcome.reason.as_str();
+    if rating::FORFEITS.contains(&reason) {
+        return Err(match finished.outcome.winner {
+            0 => format!("both sides forfeited ({reason})"),
+            w => format!("player {} forfeited ({reason})", 3 - w),
+        });
+    }
+    println!("OK: the game ended by {reason} in round {}.", result["round"]);
     Ok(())
 }
 
