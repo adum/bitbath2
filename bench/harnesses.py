@@ -177,6 +177,7 @@ PERMANENT_ERRORS = (
     "invalid api key", "incorrect api key", "authentication failed", "unauthorized",
     "model not found", "modelnotfounderror", "model_not_found", "unknown model",
     "does not support this model", "insufficient_quota", "permission denied",
+    "cannot be used for codex", "codex_byok_restricted",
 )
 TRANSIENT_ERRORS = (
     "rate limit", "rate_limit", "too many requests", "429", "502", "503", "504",
@@ -210,6 +211,32 @@ def failure_kind(stdout, stderr, returncode):
     if any(word in text for word in TRANSIENT_ERRORS):
         return "transient"
     return "harness"
+
+
+def error_message(stdout):
+    """The last error a harness reported in its events, or ""."""
+    message = ""
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") in {"error", "turn.failed"}:
+            found = event.get("message") or event.get("error")
+            while isinstance(found, (dict, str)):
+                if isinstance(found, str):
+                    try:
+                        inner = json.loads(found)
+                    except ValueError:
+                        break
+                    if not isinstance(inner, dict):
+                        break
+                    found = inner
+                else:
+                    found = found.get("message") or found.get("error")
+            if found:
+                message = str(found)
+    return message[:1000]
 
 
 def usage_records(stdout):

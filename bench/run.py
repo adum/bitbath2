@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .harnesses import PROVIDERS, Harness, auth_secrets, failure_kind, usage_records
+from .harnesses import PROVIDERS, Harness, auth_secrets, error_message, failure_kind, usage_records
 from .process import run_process
 from .sandbox import CLAUDE_SECCOMP, ROOT, BenchmarkError, Docker, extract_archive
 
@@ -174,6 +174,8 @@ def session(docker, agent, harness, prompt, directory, *, timeout, secrets, vers
         outcome["usage"] += usage_records(stdout)
         outcome["stop"] = done.stop
         outcome["failure"] = failure
+        if failure:
+            outcome["error"] = error_message(stdout)
         if failure != "transient" or delay is None:
             break
         print(f"  [{label}] the provider or the connection failed; trying again in {delay} seconds", flush=True)
@@ -317,7 +319,8 @@ def run(args):
                 record["rounds"].append(outcome)
                 write_json(entry / "entry.json", record)
                 if outcome["failure"] == "configuration":
-                    raise BenchmarkError(f"the harness rejected the model or the credential: see {entry / 'rounds'}")
+                    raise BenchmarkError("the harness rejected the model or the credential: "
+                                         f"{outcome.get('error') or 'see ' + str(entry / 'rounds')}")
                 return data, outcome
 
             for number in range(1, args.max_sessions + 1):
@@ -353,6 +356,11 @@ def run(args):
             record["stop"] = stop
             if archive is None:
                 raise BenchmarkError("no session ran, so there is no submission")
+            if contents_hash(archive) == before:
+                # The kit's placeholder isn't anyone's entry.
+                error = record["rounds"][-1].get("error")
+                raise BenchmarkError("the model left submission/ as the kit had it, so there is nothing to seal"
+                                     + (f": {error}" if error else ""))
 
             passed, output = check(docker, archive, entry)
             print(f"Check: {'passed' if passed else 'failed'}", flush=True)

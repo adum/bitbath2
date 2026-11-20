@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from bench import kit
-from bench.harnesses import Harness, failure_kind, usage_records
+from bench.harnesses import Harness, error_message, failure_kind, usage_records
 from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history, idle
 from bench.sandbox import BenchmarkError, archive_of, check_archive, extract_archive
 
@@ -77,6 +77,21 @@ class Harnesses(unittest.TestCase):
         self.assertEqual(stdin, "p")
         opencode, stdin = Harness("opencode", "xai/grok").command("p")
         self.assertEqual((opencode[-1], stdin), ("p", None))
+
+    def test_a_refused_account_is_a_configuration_error(self):
+        inner = json.dumps({"type": "error", "status": 400, "error": {
+            "message": "This organization cannot be used for Codex usage.", "code": "codex_byok_restricted_by_x"}})
+        events = json.dumps({"type": "error", "message": inner}) + "
+" + json.dumps(
+            {"type": "turn.failed", "error": {"message": inner}}) + "
+"
+        self.assertEqual(failure_kind(events, "", 0), "configuration")
+        self.assertEqual(error_message(events), "This organization cannot be used for Codex usage.")
+        self.assertEqual(error_message('{"type":"error","message":"plain"}
+not json
+'), "plain")
+        self.assertEqual(error_message('{"type":"result"}
+'), "")
 
     def test_failures(self):
         self.assertIsNone(failure_kind('{"type":"result","subtype":"success"}\n', "", 0))
