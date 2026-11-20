@@ -134,7 +134,7 @@ python benchmark.py run --harness claude --model <model id> --hours 4
 python benchmark.py arena
 ```
 
-The isolation between bots in the arena is tested, on Linux, with a bot that tries to read what it shouldn't. The container commands themselves haven't been run yet: `build`, and `run` and `arena` from start to finish.
+All three steps have been run under Docker, `run` with a script standing in for the model. A real model's session through each of the three harnesses is the part that hasn't been run yet.
 
 ### The image
 
