@@ -131,8 +131,15 @@ fn unix_time() -> u64 {
         .unwrap_or(0)
 }
 
+/// A finished game: its outcome, and the replay's result record, which adds
+/// the final round, each side's holdings, and each bot's diagnostics.
+pub struct Finished {
+    pub outcome: Outcome,
+    pub result: Value,
+}
+
 /// Plays a game to the end and writes its replay.
-pub fn play(mut game: Game, opts: &Options) -> Result<Outcome, String> {
+pub fn play(mut game: Game, opts: &Options) -> Result<Finished, String> {
     let c = game.rules.c.clone();
     let mut replay = ReplayWriter::create(&opts.replay)?;
     replay.write(&json!({
@@ -219,7 +226,7 @@ pub fn play(mut game: Game, opts: &Options) -> Result<Outcome, String> {
             None => String::new(),
         });
     }
-    replay.write(&json!({
+    let result = json!({
         "type": "result",
         "winner": outcome.winner,
         "reason": outcome.reason,
@@ -229,8 +236,9 @@ pub fn play(mut game: Game, opts: &Options) -> Result<Outcome, String> {
         "army": [game.army_value(1), game.army_value(2)],
         "stats": [seats[0].stats.to_json(), seats[1].stats.to_json()],
         "stderr": final_stderr,
-    }))?;
-    Ok(outcome)
+    });
+    replay.write(&result)?;
+    Ok(Finished { outcome, result })
 }
 
 /// Sends both init messages at once and waits for `READY` (SPEC §6.2).

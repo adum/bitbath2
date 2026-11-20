@@ -1,10 +1,12 @@
-//! The `bitbath` command: plays bot-vs-bot games, reads replays, shows maps,
-//! and serves the viewer's page with bots to play against (SPEC §10).
+//! The `bitbath` command: plays bot-vs-bot games and tournaments, rates bots,
+//! reads replays, shows maps, and serves the viewer's page with bots to play against (SPEC §10).
 
 mod bot;
 mod play;
+mod rating;
 mod replay;
 mod serve;
+mod tournament;
 
 use bitbath_engine::{mapgen, parse_setup, Game, Rules};
 use std::path::{Path, PathBuf};
@@ -20,6 +22,24 @@ Usage:
       --replay <file>                  where to write the replay (default: in runs/)
       --memory-mb <n>                  memory cap per bot, 0 for none (default: 2048)
       --quiet                          print only the result
+  bitbath tournament --bot <name>=<command> --bot <name>=<command> ... [options]
+      Plays every pair of bots on every map, twice with the sides swapped,
+      then rates the bots.
+      --config <file>                  rules to play under; repeatable, and every pair
+                                       plays under each (default: the default rules)
+      --seeds <list>                   map seeds, such as 1-10 or 3,7,9 (default: 1-5)
+      --set <key>=<value>              one rule override, for every game; repeatable
+      --out <dir>                      results directory (default: a new one in runs/).
+                                       Games already in its games.jsonl aren't played
+                                       again, so a tournament can be resumed or grown.
+      --jobs <n>                       games to play at once (default: 1)
+      --memory-mb <n>                  memory cap per bot, 0 for none (default: 2048)
+      --anchor, --bootstrap            as for rate
+  bitbath rate <games.jsonl>... [--anchor <name>=<rating>] [--bootstrap <n>] [--json <file>]
+      Rates the bots in tournament results: a Bradley-Terry fit on the Elo scale.
+      --anchor <name>=<rating>         fix one bot's rating (default: the average is 1500)
+      --bootstrap <n>                  resamples for the 95% intervals (default: 1000)
+      --json <file>                    also write the ratings as JSON
   bitbath replay <file> [--text] [--orders]
       Re-simulates a replay and checks its result. --text prints a turn-by-turn
       summary; --orders adds every order and its reply.
@@ -39,6 +59,8 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("play") => cmd_play(&args[1..]),
+        Some("tournament") => cmd_tournament(&args[1..]),
+        Some("rate") => cmd_rate(&args[1..]),
         Some("replay") => cmd_replay(&args[1..]),
         Some("map") => cmd_map(&args[1..]),
         Some("serve") => cmd_serve(&args[1..]),
@@ -288,7 +310,7 @@ fn cmd_play(args: &[String]) -> Result<(), String> {
             game.cities.len()
         );
     }
-    let outcome = play::play(game, &opts)?;
+    let outcome = play::play(game, &opts)?.outcome;
     if outcome.winner == 0 {
         println!("Draw ({}).", outcome.reason);
     } else {
@@ -301,6 +323,129 @@ fn cmd_play(args: &[String]) -> Result<(), String> {
     }
     println!("Replay: {}", opts.replay.display());
     Ok(())
+}
+
+fn cmd_tournament(args: &[String]) -> Result<(), String> {
+    let a = Args::parse(
+        args,
+        &[
+            "--bot",
+            "--config",
+            "--seeds",
+            "--set",
+            "--out",
+            "--jobs",
+            "--memory-mb",
+            "--anchor",
+            "--bootstrap",
+        ],
+        &[],
+    )?;
+    if let Some(extra) = a.positional.first() {
+        return Err(format!("unexpected argument '{extra}'"));
+    }
+    let mut bots: Vec<tournament::Entrant> = Vec::new();
+    for spec in a.all("--bot") {
+        let (name, command) = parse_offer(spec)?;
+        if bots.iter().any(|b| b.name == name) {
+            return Err(format!("--bot {spec}: there are two bots named '{name}'"));
+        }
+        bots.push(tournament::Entrant { name, command });
+    }
+    if bots.len() < 2 {
+        return Err("a tournament needs at least two --bot <name>=<command>".into());
+    }
+    let sets = a.all("--set");
+    let mut configs: Vec<(String, Rules)> = Vec::new();
+    for path in a.all("--config") {
+        let name = Path::new(path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if configs.iter().any(|(n, _)| *n == name) {
+            return Err(format!("--config {path}: there are two configs named '{name}'"));
+        }
+        configs.push((name, load_rules(Some(path), &sets)?));
+    }
+    if configs.is_empty() {
+        configs.push(("default".into(), load_rules(None, &sets)?));
+    }
+    let number = |flag: &str, default: u64| match a.get(flag) {
+        Some(s) => s.parse::<u64>().map_err(|_| format!("bad {flag} '{s}'")),
+        None => Ok(default),
+    };
+    let rating = rating_options(&a)?;
+    let opts = tournament::Options {
+        bots,
+        configs,
+        seeds: tournament::parse_seeds(a.get("--seeds").unwrap_or("1-5"))?,
+        out: match a.get("--out") {
+            Some(dir) => PathBuf::from(dir),
+            None => new_run_dir("tournament")?,
+        },
+        jobs: number("--jobs", 1)?.max(1) as usize,
+        memory_mb: number("--memory-mb", 2048)?,
+    };
+    let games = tournament::run(&opts)?;
+    let rows = rating::rate(&games, &rating)?;
+    let path = opts.out.join("ratings.json");
+    write_ratings(&path, &rows, games.len(), &rating)?;
+    println!(
+        "
+{}
+Ratings: {}",
+        rating::table(&rows),
+        path.display()
+    );
+    Ok(())
+}
+
+fn cmd_rate(args: &[String]) -> Result<(), String> {
+    let a = Args::parse(args, &["--anchor", "--bootstrap", "--json"], &[])?;
+    if a.positional.is_empty() {
+        return Err("missing games.jsonl file".into());
+    }
+    let mut games = Vec::new();
+    for path in &a.positional {
+        games.extend(tournament::read_games(Path::new(path))?);
+    }
+    let opts = rating_options(&a)?;
+    let rows = rating::rate(&games, &opts)?;
+    print!("{}", rating::table(&rows));
+    if let Some(path) = a.get("--json") {
+        write_ratings(Path::new(path), &rows, games.len(), &opts)?;
+    }
+    Ok(())
+}
+
+/// The rating options from `--anchor` and `--bootstrap`.
+fn rating_options(a: &Args) -> Result<rating::Options, String> {
+    let anchor = match a.get("--anchor") {
+        Some(spec) => {
+            let bad = || format!("--anchor {spec}: expected <name>=<rating>");
+            let (name, rating) = spec.split_once('=').ok_or_else(bad)?;
+            let rating: f64 = rating.trim().parse().map_err(|_| bad())?;
+            if !rating.is_finite() {
+                return Err(bad());
+            }
+            Some((name.trim().to_string(), rating))
+        }
+        None => None,
+    };
+    let bootstrap = match a.get("--bootstrap") {
+        Some(s) => s.parse().map_err(|_| format!("bad --bootstrap '{s}'"))?,
+        None => 1000,
+    };
+    Ok(rating::Options { anchor, bootstrap })
+}
+
+fn write_ratings(path: &Path, rows: &[rating::Row], games: usize, opts: &rating::Options) -> Result<(), String> {
+    let text = format!(
+        "{:#}
+",
+        rating::to_json(rows, games, opts)
+    );
+    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn cmd_replay(args: &[String]) -> Result<(), String> {

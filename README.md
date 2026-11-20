@@ -100,11 +100,28 @@ bb.run(MyBot())
 - `--config <file>` overrides rules. [configs/default.toml](configs/default.toml) lists the keys. [configs/small.toml](configs/small.toml) is a short game on a small map, and [configs/large.toml](configs/large.toml) is a map four times the default size, for testing how bots and tools cope with scale.
 - `--set key=value` overrides a single rule.
 
+## Tournaments
+
+`bitbath tournament` plays every pair of bots on every map, twice with the sides swapped, and then rates the bots:
+
+```bash
+target/release/bitbath tournament --bot random="python bots/random_bot.py" --bot greedy="python bots/greedy_bot.py" --bot solid="python bots/solid_bot.py" --config configs/micro.toml --seeds 1-10 --jobs 4
+```
+
+- **Maps.** `--seeds` lists the map seeds, as in `1-10` or `3,7,9`. Each `--config` is a set of rules to play them under, and every pair plays under each one, so `--config configs/micro.toml --config configs/small.toml` plays two map sizes.
+- **Results.** The results directory, which `--out` names, gets a line per finished game in `games.jsonl`, the ratings in `ratings.json`, and each game's replay and bot directories under `games/`.
+- **Resuming and growing.** A game that's already in `games.jsonl` isn't played again. Run the command again with the same `--out` to finish a tournament that was interrupted, or with more bots, seeds, or configs to add only their games.
+- **Speed.** `--jobs` sets how many games run at once. Bots are on the clock, so leave each running game two free cores.
+- **Ratings.** The ratings are a Bradley–Terry fit on the Elo scale, where a draw counts as half a win. They average 1500, unless `--anchor greedy=1000` pins one bot's rating to hold the scale steady between tournaments. The 95% intervals come from resampling the games, taking a pair's two games on a map together.
+- **Diagnostics.** The table also counts each bot's forfeits (crashes, hangs, memory, failed starts), the share of its orders the engine rejected, and its think time per turn.
+
+`bitbath rate <games.jsonl>...` rates the games in one or more results files again, for example with another anchor.
+
 ## Repository layout
 
 ```
 engine/         Rust: rules, map generation, vision, order processing. No I/O.
-runner/         Rust: the bitbath command (bot processes, clocks, replays).
+runner/         Rust: the bitbath command (bot processes, clocks, replays, tournaments, ratings).
 wasm/           The engine compiled to wasm for the viewer.
 web/            The replay viewer and play UI, with its built-in bots.
 kits/python/    Python starter kit and its tests.
