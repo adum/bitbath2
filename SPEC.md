@@ -659,7 +659,7 @@ bitbath2/
 ## 14. Open questions
 
 1. **Benchmark time controls:** at 1 s per turn, a 200-round game can take about 7 minutes. Should benchmark runs use less? *Deferred to M4, to be decided from measured bot think times.*
-2. **Defensive pikemen:** should pikemen become a holding unit, digging in while they hold still (`fortify`) but unable to move and attack in one turn (`no_move_attack`)? Both are rule options since 2026-11-19, and the defaults stay as they are until test games show it helps.
+2. **Defensive pikemen:** should pikemen become a holding unit, digging in while they hold still (`fortify`) but unable to move and attack in one turn (`no_move_attack`)? Both are rule options since 2026-11-19, and the defaults stay as they are until test games show it helps. A first test played 240 games per rule set between fixed build mixes, with pikemen holding the cities nearest the enemy. With both flags, an army one-third pikemen went from beating one one-third cavalry 24–6 to losing 8–22, because pikemen could no longer chase cavalry. With `fortify` alone it still won 20–10, and almost every game still ended by elimination.
 
 ### Resolved
 
