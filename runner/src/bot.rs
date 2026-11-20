@@ -41,8 +41,9 @@ impl Bot {
     /// A command that names a bot directory starts the bot its `bot.toml`
     /// describes.
     pub fn spawn(command: &str, dir: &Path, memory_mb: u64, max_line: usize, stderr_cap: usize) -> Result<Bot, String> {
-        let args: Vec<String> = match crate::entry::resolve(command)? {
-            Some(args) => args,
+        let entry = crate::entry::resolve(command)?;
+        let args: Vec<String> = match &entry {
+            Some((_, args)) => args.clone(),
             None => split_command(command)?.iter().map(|a| absolutize(a)).collect(),
         };
         let (program, rest) = args.split_first().ok_or("the bot command is empty")?;
@@ -53,6 +54,9 @@ impl Bot {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("PYTHONUNBUFFERED", "1");
+        if let Some((entry, _)) = &entry {
+            entry.run_as_owner(&mut cmd, dir)?;
+        }
         job::prepare(&mut cmd, memory_mb);
         let mut child = cmd.spawn().map_err(|e| format!("can't start '{command}': {e}"))?;
         let job = job::attach(&child, memory_mb);

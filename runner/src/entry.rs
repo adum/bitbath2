@@ -1,6 +1,14 @@
 //! Bot directories: a bot packaged with a `bot.toml` that says how to build
 //! and run it. This is the form in which benchmark bots are submitted, and a
 //! bot directory works wherever a bot command does.
+//!
+//! When the runner is root on Unix, a bot directory's programs run as the
+//! user that owns the directory. A tournament of bots that mustn't read each
+//! other's files gives each bot directory its own owner and closes it to
+//! everyone else. If root owns the directory but its group isn't root's,
+//! the programs run as the user and group with the group's number: giving
+//! that group read access and no more makes a bot that can't write to its
+//! own directory either, and so can't keep anything from game to game.
 
 use crate::bot::split_command;
 use std::path::{Path, PathBuf};
@@ -86,6 +94,42 @@ impl Entry {
         walk(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))
     }
 
+    /// The user and group the entry's programs run as, when this process is
+    /// root: the bot directory's owner, or the user numbered like its group
+    /// if root owns it. `None` if root owns it outright.
+    #[cfg(unix)]
+    pub fn owner(&self) -> Option<(u32, u32)> {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid has no preconditions and can't fail.
+        if unsafe { libc::geteuid() } != 0 {
+            return None;
+        }
+        let meta = std::fs::metadata(&self.dir).ok()?;
+        match (meta.uid(), meta.gid()) {
+            (0, 0) => None,
+            (0, gid) => Some((gid, gid)),
+            owner => Some(owner),
+        }
+    }
+
+    /// Makes `cmd` run as the bot directory's owner, if `owner` names one,
+    /// and gives that user `work_dir`, the directory the command runs in.
+    pub fn run_as_owner(&self, cmd: &mut Command, work_dir: &Path) -> Result<(), String> {
+        #[cfg(unix)]
+        if let Some((uid, gid)) = self.owner() {
+            use std::os::unix::fs::PermissionsExt;
+            use std::os::unix::process::CommandExt;
+            // The other bot in the game runs as someone else, and mustn't
+            // read what this one keeps in its working directory.
+            std::os::unix::fs::chown(work_dir, Some(uid), Some(gid))
+                .and_then(|()| std::fs::set_permissions(work_dir, std::fs::Permissions::from_mode(0o700)))
+                .map_err(|e| format!("{}: {e}", work_dir.display()))?;
+            cmd.uid(uid).gid(gid);
+        }
+        let _ = (cmd, work_dir);
+        Ok(())
+    }
+
     /// Runs the build command in the bot directory, if there is one. The
     /// command's output goes to this process's own.
     pub fn build(&self, timeout: Duration) -> Result<(), String> {
@@ -93,10 +137,10 @@ impl Entry {
             return Ok(());
         };
         let args = self.args(command)?;
-        let mut child = Command::new(&args[0])
-            .args(&args[1..])
-            .current_dir(&self.dir)
-            .stdin(Stdio::null())
+        let mut cmd = Command::new(&args[0]);
+        cmd.args(&args[1..]).current_dir(&self.dir).stdin(Stdio::null());
+        self.run_as_owner(&mut cmd, &self.dir)?;
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("can't start the build '{command}': {e}"))?;
         let deadline = Instant::now() + timeout;
@@ -116,15 +160,33 @@ impl Entry {
     }
 }
 
-/// If `command` names a bot directory, the program and arguments that start
-/// its bot.
-pub fn resolve(command: &str) -> Result<Option<Vec<String>>, String> {
+/// Closes a file the runner writes to everyone but the runner, when it is
+/// root on Unix. Bots then run as other users, and a replay being written
+/// holds the opponent's orders, which would show a bot through the fog.
+pub fn keep_from_bots(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: geteuid has no preconditions and can't fail.
+        if unsafe { libc::geteuid() } == 0 {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+    }
+    let _ = path;
+    Ok(())
+}
+
+/// If `command` names a bot directory, the entry, and the program and
+/// arguments that start its bot.
+pub fn resolve(command: &str) -> Result<Option<(Entry, Vec<String>)>, String> {
     let dir = Path::new(command.trim());
     if !dir.join(MANIFEST).is_file() {
         return Ok(None);
     }
     let entry = Entry::load(dir)?;
-    entry.args(&entry.run).map(Some)
+    let args = entry.args(&entry.run)?;
+    Ok(Some((entry, args)))
 }
 
 /// Parses a `key = "value"` line. Blank lines and comments give `None`.
@@ -190,7 +252,7 @@ mod tests {
         assert_eq!((args[0].as_str(), args[2].as_str()), ("python", "--fast"));
         assert_eq!(Path::new(&args[1]), dir.join("bot.py"));
         assert_eq!(entry.size().unwrap(), 5 + 3 + manifest.len() as u64);
-        assert_eq!(resolve(&dir.to_string_lossy()).unwrap(), Some(args));
+        assert_eq!(resolve(&dir.to_string_lossy()).unwrap().unwrap().1, args);
         entry.build(Duration::from_secs(1)).unwrap();
 
         for bad in [
@@ -207,7 +269,7 @@ mod tests {
         assert!(err.contains("can't start the build"), "{err}");
 
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(resolve(&dir.to_string_lossy()).unwrap(), None);
-        assert_eq!(resolve("python bots/greedy_bot.py").unwrap(), None);
+        assert!(resolve(&dir.to_string_lossy()).unwrap().is_none());
+        assert!(resolve("python bots/greedy_bot.py").unwrap().is_none());
     }
 }

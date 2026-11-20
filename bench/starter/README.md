@@ -10,7 +10,7 @@ Everything in `submission/`, and nothing else. It starts out holding a placehold
 
 - `submission/bot.toml` gives the `run` command that starts your bot and, if the bot needs building, the `build` command.
 - The directory has to run on its own. Your bot can't use files outside it, which is why it holds its own copy of the Python kit.
-- It may hold at most 20 MB before it's built.
+- It may hold at most 20 MB before it's built. Build output that you leave in it counts, so delete that before you finish.
 - Any language that's installed here is allowed.
 
 Check it before you finish:

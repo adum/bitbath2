@@ -189,6 +189,7 @@ pub fn run(opts: &Options) -> Result<Vec<Record>, String> {
         .append(true)
         .open(&path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::entry::keep_from_bots(&path)?;
     let queue = Mutex::new(queue);
     let stop = AtomicBool::new(false);
     let mut failure = None;

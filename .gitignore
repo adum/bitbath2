@@ -1,5 +1,7 @@
 /target/
 /runs/
+/entries/
+/arena/
 /web/bitbath_wasm.js
 __pycache__/
 *.pyc

@@ -20,6 +20,7 @@ impl ReplayWriter {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
         let file = File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        crate::entry::keep_from_bots(path)?;
         Ok(ReplayWriter {
             out: BufWriter::new(file),
         })

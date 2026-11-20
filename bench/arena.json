@@ -1,0 +1,18 @@
+{
+  "references": {
+    "random": "bots/random_bot.py",
+    "greedy": "bots/greedy_bot.py",
+    "smart": "bots/smart_bot.py",
+    "vanguard": "bots/vanguard_bot.py",
+    "solid": "bots/solid_bot.py",
+    "bastion": "bots/bastion_bot.py"
+  },
+  "kit": "kits/python/bitbath.py",
+  "maps": [
+    {"config": "configs/micro.toml", "seeds": "1001-1010"},
+    {"config": "configs/small.toml", "seeds": "1001-1003"},
+    {"config": "configs/default.toml", "seeds": "1001"}
+  ],
+  "check_config": "configs/micro.toml",
+  "anchor": "greedy=1000"
+}
