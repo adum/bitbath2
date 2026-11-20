@@ -96,7 +96,8 @@ fn damage_vectors() {
 }
 
 /// Plays each combat vector as a real attack order: the attacker on (1,1)
-/// and the defender 1 or 2 hexes east of it, on the given terrains.
+/// and the defender 1 or 2 hexes east of it, on the given terrains, with
+/// any given fortification levels.
 #[test]
 fn combat_vectors() {
     let v = load("damage.json");
@@ -136,6 +137,9 @@ fn combat_vectors() {
             int(&case["defender_hp"]) as u32,
         )
         .unwrap();
+        // Fortification levels, given only for fortified fights (units 1 and 2, in id order).
+        g.units[0].fort = case.get("attacker_fort").map_or(0, int) as u32;
+        g.units[1].fort = case.get("defender_fort").map_or(0, int) as u32;
         g.begin_turn(1);
         let want = format!(
             "OK {} {}",
@@ -210,6 +214,8 @@ fn order_vectors() {
                 t[5].parse().unwrap(),
             )
             .unwrap_or_else(|e| panic!("{name}: {e}"));
+            // The unit just placed has the highest id, so it's last.
+            g.units.last_mut().unwrap().fort = t.get(6).map_or(0, |f| f.parse().unwrap());
         }
         g.gold = [0, int(&sc["gold"][0]) as u32, int(&sc["gold"][1]) as u32];
         let player = int(&sc["player"]) as u8;

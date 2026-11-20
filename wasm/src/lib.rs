@@ -444,7 +444,7 @@ impl Viewer {
             .map(|u| {
                 let flags = u.acted as u8 | (u.moved as u8) << 1 | (u.fresh as u8) << 2;
                 format!(
-                    "[{},{},{},{},{},{},{},{}]",
+                    "[{},{},{},{},{},{},{},{},{}]",
                     u.id,
                     u.owner,
                     esc(&game.rules.units[u.ty].code.to_string()),
@@ -452,7 +452,8 @@ impl Viewer {
                     u.hex.r,
                     u.hp,
                     u.mp,
-                    flags
+                    flags,
+                    u.fort
                 )
             })
             .collect();

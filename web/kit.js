@@ -75,6 +75,7 @@ var BitbathKit = (function () {
             code: t[1], name: t[2], cost: n[3], max_hp: n[4], move: n[5], vision: n[6], range_min: n[7], range_max: n[8],
             capture: flags.includes("capture"), zoc: flags.includes("zoc"),
             skirmish: flags.includes("skirmish"), no_move_attack: flags.includes("no_move_attack"),
+            fortify: flags.includes("fortify"),
           };
         } else if (t[0] === "DAMAGE") {
           const codes = Object.keys(this.unitTypes);
@@ -115,14 +116,15 @@ var BitbathKit = (function () {
   }
 
   class Unit {
-    /** @param {number} id @param {number} owner @param {string} type @param {number} q @param {number} r @param {number} hp */
-    constructor(id, owner, type, q, r, hp) {
+    /** @param {number} id @param {number} owner @param {string} type @param {number} q @param {number} r @param {number} hp @param {number} [fort] */
+    constructor(id, owner, type, q, r, hp, fort = 0) {
       this.id = id;
       this.owner = owner;
       this.type = type;
       this.q = q;
       this.r = r;
       this.hp = hp;
+      /** Fortification level; moving resets it to 0. */ this.fort = fort;
       // Known for your own units during your turn.
       this.mp = 0;
       this.acted = false;
@@ -179,7 +181,7 @@ var BitbathKit = (function () {
         else if (t[0] === "GOLD") view.gold = n[1];
         else if (t[0] === "CITY") Object.assign(view.cities[n[1]], { owner: n[2], capturer: n[3], progress: n[4] });
         else if (t[0] === "UNIT") {
-          const u = new Unit(n[1], n[2], t[3], n[4], n[5], n[6]);
+          const u = new Unit(n[1], n[2], t[3], n[4], n[5], n[6], n[7] || 0);
           if (u.owner === player) u.mp = world.unitTypes[u.type].move;
           view.units.set(u.id, u);
         } else if (t[0] === "LOG") view.logs.push(t.slice(1));
@@ -203,9 +205,9 @@ var BitbathKit = (function () {
         if (sees(city.hex)) [city.capturer, city.progress] = [c[1], c[2]];
         city.built = !!c[3];
       });
-      for (const [id, owner, type, q, r, hp, mp, flags] of state.units) {
+      for (const [id, owner, type, q, r, hp, mp, flags, fort] of state.units) {
         if (owner !== player && !sees([q, r])) continue;
-        const u = new Unit(id, owner, type, q, r, hp);
+        const u = new Unit(id, owner, type, q, r, hp, fort || 0);
         if (owner === player) Object.assign(u, { mp, acted: !!(flags & 1), moved: !!(flags & 2), fresh: !!(flags & 4) });
         view.units.set(id, u);
       }
@@ -410,27 +412,34 @@ var BitbathKit = (function () {
       return dist;
     }
 
-    /** Damage a unit of attType with attHp HP deals to a defType unit on defHex (SPEC §3.7). @param {string} attType @param {number} attHp @param {string} defType @param {number[]} defHex */
-    damage(attType, attHp, defType, defHex) {
+    /**
+     * Damage a unit of attType with attHp HP deals to a defType unit on defHex
+     * that has dug in defFort levels (SPEC §3.7).
+     * @param {string} attType @param {number} attHp @param {string} defType @param {number[]} defHex @param {number} [defFort]
+     */
+    damage(attType, attHp, defType, defHex, defFort = 0) {
       const base = this.world.damage[attType][defType];
       if (!base) return 0;
-      const defense = Math.min(100, /** @type {any} */ (this.world.terrain(defHex)).defense);
+      const fortified = defFort * (this.world.c.fortify_pct || 0);
+      const defense = Math.min(100, /** @type {any} */ (this.world.terrain(defHex)).defense + fortified);
       return Math.max(1, Math.floor((base * attHp * (100 - defense)) / (this.world.unitTypes[attType].max_hp * 100)));
     }
 
     /**
      * [defender HP, attacker HP] after attacker attacks defender from `from`
-     * (default: where it stands), matching the engine exactly.
+     * (default: where it stands), matching the engine exactly. An attacker
+     * that moves there first loses its fortification.
      * @param {Unit} attacker @param {Unit} defender @param {number[]} [from] @returns {[number, number]}
      */
     predict(attacker, defender, from) {
       const at = from || attacker.hex;
-      const defHp = Math.max(0, defender.hp - this.damage(attacker.type, attacker.hp, defender.type, defender.hex));
+      const attFort = at[0] === attacker.q && at[1] === attacker.r ? attacker.fort : 0;
+      const defHp = Math.max(0, defender.hp - this.damage(attacker.type, attacker.hp, defender.type, defender.hex, defender.fort));
       let attHp = attacker.hp;
       const type = this.world.unitTypes[defender.type];
       const d = distance(at, defender.hex);
       if (defHp > 0 && type.range_min <= d && d <= type.range_max && this.world.damage[defender.type][attacker.type] > 0) {
-        attHp = Math.max(0, attHp - this.damage(defender.type, defHp, attacker.type, at));
+        attHp = Math.max(0, attHp - this.damage(defender.type, defHp, attacker.type, at, attFort));
       }
       return [defHp, attHp];
     }
@@ -492,7 +501,7 @@ var BitbathKit = (function () {
       if (!reply) throw GAME_OVER;
       for (const l of reply) {
         const t = l.split(/\s+/);
-        if (t[0] === "SEE") this.view.units.set(Number(t[1]), new Unit(Number(t[1]), Number(t[2]), t[3], Number(t[4]), Number(t[5]), Number(t[6])));
+        if (t[0] === "SEE") this.view.units.set(Number(t[1]), new Unit(Number(t[1]), Number(t[2]), t[3], Number(t[4]), Number(t[5]), Number(t[6]), Number(t[7]) || 0));
       }
       return new Reply(reply[reply.length - 1] || "ERR");
     }
@@ -502,7 +511,7 @@ var BitbathKit = (function () {
       const reply = this.order("M " + unit.id + " " + dirs);
       if (reply.ok) {
         const [q, r] = [Number(reply.values[0]), Number(reply.values[1])];
-        unit.moved = unit.moved || q !== unit.q || r !== unit.r;
+        if (q !== unit.q || r !== unit.r) Object.assign(unit, { moved: true, fort: 0 });
         [unit.q, unit.r] = [q, r];
         unit.mp = reply.kind === "OK" ? Number(reply.values[2]) : 0;
       }

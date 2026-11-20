@@ -1,5 +1,5 @@
 {
- "about": "Scripted order sequences with expected replies (SPEC §3.4-§3.8, §6.3-§6.4). Each scenario starts from 'map' with the default rules plus any 'rules' overrides, sets city state from 'cities' (id owner capturer progress), places 'units' (id owner type q r hp), sets gold to 'gold' [player 1, player 2], and begins 'player''s turn in 'round', so upkeep runs. 'message' is the expected turn message with TIME 0 0. For ERR replies only the code is checked; explanations may change. 'next_message' is the other player's turn message after this turn ends.",
+ "about": "Scripted order sequences with expected replies (SPEC §3.4-§3.8, §6.3-§6.4). Each scenario starts from 'map' with the default rules plus any 'rules' overrides, sets city state from 'cities' (id owner capturer progress), places 'units' (id owner type q r hp, and optionally a fortification level), sets gold to 'gold' [player 1, player 2], and begins 'player''s turn in 'round', so upkeep runs. 'message' is the expected turn message with TIME 0 0. For ERR replies only the code is checked; explanations may change. 'next_message' is the other player's turn message after this turn ends.",
  "map": [
   "MAP 10 8",
   "ROW C.........",
@@ -60,7 +60,7 @@
    "player": 1, "round": 1, "gold": [300, 300],
    "units": ["1 1 I 0 1 100", "2 2 I 3 1 100"],
    "steps": [
-    {"order": "M 1 000", "reply": ["SEE 2 2 I 3 1 100", "PART 2 1 zoc"]},
+    {"order": "M 1 000", "reply": ["SEE 2 2 I 3 1 100 0", "PART 2 1 zoc"]},
     {"order": "M 1 0", "reply": ["ERR no_mp"]}
    ]
   },
@@ -69,7 +69,7 @@
    "player": 1, "round": 1, "gold": [300, 300],
    "units": ["1 1 I 0 1 100", "2 2 S 3 1 100"],
    "steps": [
-    {"order": "M 1 000", "reply": ["SEE 2 2 S 3 1 100", "PART 2 1 ambush"]},
+    {"order": "M 1 000", "reply": ["SEE 2 2 S 3 1 100 0", "PART 2 1 ambush"]},
     {"order": "A 1 2", "reply": ["OK 25 95"]}
    ]
   },
@@ -115,9 +115,50 @@
    "player": 1, "round": 1, "gold": [300, 300],
    "units": ["1 1 A 1 4 100", "2 2 I 4 4 100"],
    "steps": [
-    {"order": "M 1 0", "reply": ["SEE 2 2 I 4 4 100", "OK 2 4 2"]},
+    {"order": "M 1 0", "reply": ["SEE 2 2 I 4 4 100 0", "OK 2 4 2"]},
     {"order": "A 1 2", "reply": ["OK 70 100"]},
     {"order": "M 1 0", "reply": ["ERR acted"]}
+   ]
+  },
+  {
+   "name": "fortification: fortified units take less damage, moving loses it, and units that hold still dig in",
+   "player": 1, "round": 1, "gold": [300, 300],
+   "rules": {"unit.P.flags": "capture,zoc,fortify"},
+   "units": ["1 1 P 1 1 100 1", "2 2 I 2 1 100", "3 1 I 5 1 100", "4 2 P 6 1 100 2", "5 1 P 0 6 100 2",
+             "6 2 I 2 6 100", "7 1 P 7 1 100", "8 1 P 8 1 100 2", "9 1 I 3 6 100"],
+   "message": [
+    "TURN 1", "TIME 0 0", "GOLD 370",
+    "CITY 0 1 0 0", "CITY 1 2 0 0", "CITY 2 0 0 0",
+    "UNIT 1 1 P 1 1 100 1", "UNIT 3 1 I 5 1 100 0", "UNIT 5 1 P 0 6 100 2", "UNIT 7 1 P 7 1 100 0",
+    "UNIT 8 1 P 8 1 100 2", "UNIT 9 1 I 3 6 100 0",
+    "UNIT 2 2 I 2 1 100 0", "UNIT 4 2 P 6 1 100 2", "UNIT 6 2 I 2 6 100 0",
+    "GO"
+   ],
+   "steps": [
+    {"order": "A 1 2", "reply": ["OK 55 78"]},
+    {"order": "A 3 4", "reply": ["OK 64 72"]},
+    {"order": "M 5 0", "reply": ["OK 1 6 0"]},
+    {"order": "A 5 6", "reply": ["OK 55 76"]}
+   ],
+   "next_message": [
+    "TURN 1", "TIME 0 0", "GOLD 385",
+    "CITY 0 1 0 0", "CITY 1 2 0 0", "CITY 2 0 0 0",
+    "UNIT 2 2 I 2 1 55 0", "UNIT 4 2 P 6 1 64 2", "UNIT 6 2 I 2 6 55 0",
+    "UNIT 1 1 P 1 1 78 1", "UNIT 3 1 I 5 1 72 0", "UNIT 5 1 P 1 6 76 0", "UNIT 7 1 P 7 1 100 1",
+    "UNIT 8 1 P 8 1 100 2", "UNIT 9 1 I 3 6 100 0",
+    "LOG HIT 1 P 1 1 2 55 78",
+    "LOG HIT 3 I 5 1 4 64 72",
+    "LOG HIT 5 P 1 6 6 55 76",
+    "GO"
+   ]
+  },
+  {
+   "name": "a unit that comes into view shows its fortification",
+   "player": 1, "round": 1, "gold": [300, 300],
+   "rules": {"unit.P.flags": "capture,zoc,fortify"},
+   "units": ["1 1 I 0 1 100", "2 2 P 3 1 100 2"],
+   "steps": [
+    {"order": "M 1 000", "reply": ["SEE 2 2 P 3 1 100 2", "PART 2 1 zoc"]}
    ]
   },
   {
@@ -193,7 +234,7 @@
    "player": 1, "round": 1, "gold": [300, 300],
    "units": ["1 2 K 2 2 100"],
    "steps": [
-    {"order": "B 0 S", "reply": ["SEE 1 2 K 2 2 100", "OK 2"]},
+    {"order": "B 0 S", "reply": ["SEE 1 2 K 2 2 100 0", "OK 2"]},
     {"order": "B 0 I", "reply": ["ERR city_used"]}
    ]
   },
@@ -215,7 +256,7 @@
    "message": [
     "TURN 5", "TIME 0 0", "GOLD 95",
     "CITY 0 1 0 0", "CITY 1 2 1 100", "CITY 2 0 0 0",
-    "UNIT 1 1 I 0 0 70", "UNIT 2 1 P 1 1 50", "UNIT 3 1 I 6 7 100", "UNIT 4 2 I 5 7 100",
+    "UNIT 1 1 I 0 0 70 0", "UNIT 2 1 P 1 1 50 0", "UNIT 3 1 I 6 7 100 0", "UNIT 4 2 I 5 7 100 0",
     "GO"
    ],
    "steps": []
@@ -228,7 +269,7 @@
    "message": [
     "TURN 1", "TIME 0 0", "GOLD 0",
     "CITY 0 1 0 0", "CITY 1 2 0 0", "CITY 2 0 0 0",
-    "UNIT 1 1 I 0 0 100",
+    "UNIT 1 1 I 0 0 100 0",
     "GO"
    ],
    "steps": []
@@ -240,12 +281,12 @@
    "message": [
     "TURN 1", "TIME 0 0", "GOLD 395",
     "CITY 0 1 0 0", "CITY 1 2 0 0", "CITY 2 0 0 0",
-    "UNIT 1 1 K 4 4 100", "UNIT 2 2 I 4 0 100",
+    "UNIT 1 1 K 4 4 100 0", "UNIT 2 2 I 4 0 100 0",
     "GO"
    ],
    "steps": [
     {"order": "M 1 3", "reply": ["OK 3 4 4"]},
-    {"order": "M 1 3", "reply": ["SEE 3 2 I -1 4 100", "OK 2 4 3"]}
+    {"order": "M 1 3", "reply": ["SEE 3 2 I -1 4 100 0", "OK 2 4 3"]}
    ]
   },
   {
@@ -255,12 +296,12 @@
    "message": [
     "TURN 1", "TIME 0 0", "GOLD 390",
     "CITY 0 1 0 0", "CITY 1 2 0 0", "CITY 2 0 0 0",
-    "UNIT 1 1 I 2 1 100", "UNIT 3 1 A 2 5 100",
+    "UNIT 1 1 I 2 1 100 0", "UNIT 3 1 A 2 5 100 0",
     "GO"
    ],
    "steps": [
     {"order": "A 3 2", "reply": ["ERR no_target"]},
-    {"order": "M 1 55", "reply": ["SEE 2 2 I 2 3 100", "PART 2 2 zoc"]},
+    {"order": "M 1 55", "reply": ["SEE 2 2 I 2 3 100 0", "PART 2 2 zoc"]},
     {"order": "A 3 2", "reply": ["OK 63 100"]}
    ]
   },
@@ -280,7 +321,7 @@
    "message": [
     "TURN 3", "TIME 0 0", "GOLD 195",
     "CITY 0 1 0 0", "CITY 1 2 0 0", "CITY 2 0 0 0",
-    "UNIT 1 2 I 6 6 100",
+    "UNIT 1 2 I 6 6 100 0",
     "GO"
    ],
    "steps": [

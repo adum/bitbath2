@@ -41,6 +41,8 @@ DAMAGE K 70 35 55 85 90
 DAMAGE A 50 55 40 45 70
 DAMAGE S 20 15 10 25 40
 RULE stack_limit 4
+RULE fortify_pct 10
+RULE fortify_max 2
 INIT
 """
 
@@ -105,8 +107,8 @@ class DamageVectors(unittest.TestCase):
             row[1] = c["attacker_terrain"]
             row[1 + c["distance"]] = c["defender_terrain"]
             bot = make_bot(["." * 6, "".join(row), "." * 6, "." * 6])
-            att = bb.Unit(1, 1, c["attacker"], 1, 1, c["attacker_hp"])
-            dfn = bb.Unit(2, 2, c["defender"], 1 + c["distance"], 1, c["defender_hp"])
+            att = bb.Unit(1, 1, c["attacker"], 1, 1, c["attacker_hp"], c.get("attacker_fort", 0))
+            dfn = bb.Unit(2, 2, c["defender"], 1 + c["distance"], 1, c["defender_hp"], c.get("defender_fort", 0))
             bot.state.units = {1: att, 2: dfn}
             self.assertEqual(bot.predict(att, dfn), (c["defender_hp_after"], c["attacker_hp_after"]), c)
 
@@ -159,6 +161,28 @@ class Orders(unittest.TestCase):
             self.assertTrue(bot.capture(unit))
         self.assertEqual(city.owner, 1)
         self.assertTrue(city.built)
+
+    def test_moving_loses_fortification(self):
+        bot = make_bot(["......", "......", "......", "......"])
+        pike = bb.Unit(1, 1, "P", 1, 1, 100, 2)
+        pike.mp = 3
+        bot.state.units = {1: pike}
+        replies = iter(["SEE 2 2 P 3 1 100 1", "SEE 3 2 I 3 2 100", "OK 2 1 2"])
+        with mock.patch.object(bb, "_read_line", lambda: next(replies)), \
+                mock.patch.object(bb, "_out", io.StringIO()), \
+                mock.patch.object(bot, "time_left", lambda: 10 ** 6):
+            self.assertTrue(bot.move(pike, "0"))
+        self.assertEqual((pike.hex, pike.fort, pike.moved), ((2, 1), 0, True))
+        # A unit that comes into view shows its level; engines from before
+        # fortification send none.
+        self.assertEqual((bot.state.units[2].fort, bot.state.units[3].fort), (1, 0))
+
+    def test_turn_message_carries_fortification(self):
+        bot = make_bot(["......", "......", "......", "......"])
+        lines = iter(["TIME 1000 1000", "GOLD 5", "UNIT 1 1 P 0 0 100 2", "UNIT 2 2 I 1 0 100", "GO"])
+        with mock.patch.object(bb, "_read_line", lambda: next(lines)):
+            state = bb._parse_turn(bot, "TURN 3")
+        self.assertEqual((state.units[1].fort, state.units[2].fort), (2, 0))
 
 
 if __name__ == "__main__":

@@ -187,6 +187,7 @@ where
                         zoc: false,
                         skirmish: false,
                         no_move_attack: false,
+                        fortify: false,
                     };
                     u.set_flags(t.get(9).copied().unwrap_or("-"))?;
                     units.push(u);

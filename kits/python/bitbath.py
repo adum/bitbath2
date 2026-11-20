@@ -146,6 +146,7 @@ class UnitType:
     zoc = property(lambda self: "zoc" in self.flags)
     skirmish = property(lambda self: "skirmish" in self.flags)
     no_move_attack = property(lambda self: "no_move_attack" in self.flags)
+    fortify = property(lambda self: "fortify" in self.flags)
 
     def in_range(self, dist):
         return self.range_min <= dist <= self.range_max
@@ -217,9 +218,10 @@ class Map:
 # Game state.
 
 class Unit:
-    def __init__(self, id, owner, type, q, r, hp):
+    def __init__(self, id, owner, type, q, r, hp, fort=0):
         self.id, self.owner, self.type = id, owner, type
         self.q, self.r, self.hp = q, r, hp
+        self.fort = fort        # fortification level; moving resets it to 0
         # Tracked for your own units during your turn.
         self.mp = 0
         self.acted = False
@@ -334,7 +336,8 @@ class Bot:
         reply = self._order("M %d %s" % (unit.id, dirs))
         if reply.ok:
             q, r = int(reply.values[0]), int(reply.values[1])
-            unit.moved = unit.moved or (q, r) != unit.hex
+            if (q, r) != unit.hex:
+                unit.moved, unit.fort = True, 0
             unit.q, unit.r = q, r
             unit.mp = int(reply.values[2]) if reply.kind == "OK" else 0
         return reply
@@ -517,25 +520,28 @@ class Bot:
 
     # Combat prediction, matching the engine exactly (SPEC §3.7).
 
-    def damage(self, att_type, att_hp, def_type, def_hex):
-        """Damage a unit of att_type with att_hp HP deals to a def_type unit on def_hex."""
+    def damage(self, att_type, att_hp, def_type, def_hex, def_fort=0):
+        """Damage a unit of att_type with att_hp HP deals to a def_type unit on
+        def_hex that has dug in def_fort levels."""
         base = self.rules.damage[att_type][def_type]
         if base == 0:
             return 0
-        defense = self.map.terrain(def_hex).defense
+        defense = self.map.terrain(def_hex).defense + def_fort * self.rules.constants.get("fortify_pct", 0)
         max_hp = self.rules.unit_types[att_type].max_hp
         return max(1, base * att_hp * (100 - min(defense, 100)) // (max_hp * 100))
 
     def predict(self, attacker, defender, from_hex=None):
         """(defender HP, attacker HP) after attacker attacks defender from
-        from_hex (default: where it stands)."""
+        from_hex (default: where it stands). An attacker that moves there
+        first loses its fortification."""
         attacker, defender = self._unit(attacker), self._unit(defender)
         at = from_hex or attacker.hex
-        def_hp = max(0, defender.hp - self.damage(attacker.type, attacker.hp, defender.type, defender.hex))
+        att_fort = attacker.fort if at == attacker.hex else 0
+        def_hp = max(0, defender.hp - self.damage(attacker.type, attacker.hp, defender.type, defender.hex, defender.fort))
         att_hp = attacker.hp
         dtype = self.rules.unit_types[defender.type]
         if def_hp > 0 and dtype.in_range(distance(at, defender.hex)) and self.rules.damage[defender.type][attacker.type] > 0:
-            att_hp = max(0, att_hp - self.damage(defender.type, def_hp, attacker.type, at))
+            att_hp = max(0, att_hp - self.damage(defender.type, def_hp, attacker.type, at, att_fort))
         return def_hp, att_hp
 
     # Protocol plumbing.
@@ -557,13 +563,19 @@ class Bot:
             kind = reply.split(None, 1)[0] if reply.strip() else ""
             if kind == "SEE":
                 t = reply.split()
-                u = Unit(int(t[1]), int(t[2]), t[3], int(t[4]), int(t[5]), int(t[6]))
+                u = Unit(int(t[1]), int(t[2]), t[3], int(t[4]), int(t[5]), int(t[6]), _fort(t))
                 self.state.units[u.id] = u
             elif kind in ("OK", "PART", "ERR"):
                 return Reply(reply)
             elif kind == "GAMEOVER":
                 self._game_over = reply.split()
                 raise GameOver()
+
+
+def _fort(t):
+    """The fortification level on a split UNIT or SEE line. Engines from
+    before fortification don't send it."""
+    return int(t[7]) if len(t) > 7 else 0
 
 
 def _read_line():
@@ -625,7 +637,7 @@ def _parse_turn(bot, first):
             c = cities[int(t[1])]
             c.owner, c.capturer, c.progress = int(t[2]), int(t[3]), int(t[4])
         elif kw == "UNIT":
-            u = Unit(int(t[1]), int(t[2]), t[3], int(t[4]), int(t[5]), int(t[6]))
+            u = Unit(int(t[1]), int(t[2]), t[3], int(t[4]), int(t[5]), int(t[6]), _fort(t))
             if u.owner == bot.player:
                 u.mp = bot.rules.unit_types[u.type].move
             state.units[u.id] = u

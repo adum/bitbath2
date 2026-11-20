@@ -36,6 +36,8 @@ pub struct UnitType {
     pub zoc: bool,
     pub skirmish: bool,
     pub no_move_attack: bool,
+    /// Digs in while it holds still (SPEC §3.7).
+    pub fortify: bool,
 }
 
 impl UnitType {
@@ -58,6 +60,9 @@ impl UnitType {
         if self.no_move_attack {
             f.push("no_move_attack");
         }
+        if self.fortify {
+            f.push("fortify");
+        }
         if f.is_empty() {
             "-".into()
         } else {
@@ -70,12 +75,14 @@ impl UnitType {
         self.zoc = false;
         self.skirmish = false;
         self.no_move_attack = false;
+        self.fortify = false;
         for f in flags.split(',').map(str::trim).filter(|f| !f.is_empty() && *f != "-") {
             match f {
                 "capture" => self.capture = true,
                 "zoc" => self.zoc = true,
                 "skirmish" => self.skirmish = true,
                 "no_move_attack" => self.no_move_attack = true,
+                "fortify" => self.fortify = true,
                 _ => return Err(format!("unknown unit flag '{f}'")),
             }
         }
@@ -132,6 +139,8 @@ constants! {
     city_heal = 20,
     city_vision = 2,
     capture_points = 200,
+    fortify_pct = 10,
+    fortify_max = 2,
     time_bank_ms = 5000,
     time_increment_ms = 1000,
     time_keep_pct = 50,
@@ -180,6 +189,7 @@ impl Default for Rules {
                 zoc: false,
                 skirmish: false,
                 no_move_attack: false,
+                fortify: false,
             };
             u.set_flags(flags).expect("default flags are valid");
             u
@@ -415,7 +425,12 @@ mod tests {
         r.set("terrain.hills.defense", "50").unwrap();
         r.set("terrain.plains.conceal", "2").unwrap();
         r.set("start_units", "I, K").unwrap();
+        r.set("unit.P.flags", "capture,zoc,no_move_attack,fortify").unwrap();
+        r.set("fortify_pct", "15").unwrap();
         assert_eq!(r.c.round_limit, 50);
+        assert!(r.units[1].fortify && r.units[1].no_move_attack);
+        assert_eq!(r.units[1].flags(), "capture,zoc,no_move_attack,fortify");
+        assert_eq!(r.c.fortify_pct, 15);
         assert_eq!(r.units[2].cost, 300);
         assert_eq!(r.units[3].range_max, 3);
         assert_eq!(r.damage[2][1], 30);

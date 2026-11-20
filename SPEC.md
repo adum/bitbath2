@@ -106,6 +106,7 @@ All units have 100 max HP.
 - `zoc`: exerts a zone of control (§3.5).
 - `skirmish`: ignores enemy zones of control.
 - `no_move_attack`: can't attack on a turn it moved. No unit has it by default; it's there for rule variants.
+- `fortify`: digs in while it holds still, which raises its defense (§3.7). No unit has it by default; it's there for rule variants.
 
 **Range.** Each unit type has a range of `range_min..range_max`. The archer's is `2..2`. It can't hit adjacent units, so it can't retaliate against melee attackers.
 
@@ -139,7 +140,7 @@ At the start of each player's turn, upkeep runs in this order:
 4. **Refresh.** The player's units regain full movement points (MP) and their action.
 5. **Vision** is computed, and the state message is sent (§6.3).
 
-The player then sends orders. Each order runs the moment it arrives, in arrival order. The turn ends at `END` or at the deadline (§7).
+The player then sends orders. Each order runs the moment it arrives, in arrival order. The turn ends at `END` or at the deadline (§7). Then the player's `fortify` units that held still dig in (§3.7).
 
 ### 3.5 Actions
 
@@ -199,15 +200,17 @@ A unit attacks one enemy unit of its choosing.
 ### 3.7 Combat
 
 ```
-damage(att, def) = base[att.type][def.type] * att.hp * (100 - defense(def.hex))
+damage(att, def) = base[att.type][def.type] * att.hp * (100 - defense(def))
                    / (att.max_hp * 100)
                    -- integer division; every operand is non-negative
                    -- at least 1 if base > 0
+defense(u)       = min(100, terrain_defense(u.hex) + fortify_pct * u.fort)
+                   -- u.fort is the unit's fortification level, 0 unless it has dug in
 ```
 
 1. **Target.** The attacker picks which enemy unit to attack, and that unit is the defender. Stacking gives no protection beyond terrain: any unit in a stack can be targeted directly.
 2. **Damage.** The defender takes the damage. At 0 HP or below, it is removed.
-3. **Retaliation.** If the defender survives, it strikes back using its new HP and the attacker's terrain defense. This happens only when both of these hold:
+3. **Retaliation.** If the defender survives, it strikes back using its new HP and the attacker's defense. This happens only when both of these hold:
    - The attacker's distance is within the defender's range.
    - The defender's base damage against the attacker's type is above 0.
 4. **Other rules:**
@@ -218,6 +221,15 @@ damage(att, def) = base[att.type][def.type] * att.hp * (100 - defense(def.hex))
 
 - The defender takes 55 × 100 × 60 / 10000 = **33** damage and has 67 HP left.
 - It retaliates for 55 × 67 × 100 / 10000 = **36**, leaving the attacker with 64 HP.
+
+**Fortification.** A unit with the `fortify` flag digs in while it holds still:
+
+- **Gaining levels:** when its owner's turn ends, it gains a level if it neither moved, attacked, nor captured that turn, up to `fortify_max`. A unit built that turn gains none.
+- **Effect:** each level adds `fortify_pct` to its defense, both when it's attacked and when it strikes back.
+- **Losing levels:** moving resets its level to 0. Attacking or capturing keeps its level but adds none.
+- **Visibility:** levels are public. `UNIT` and `SEE` lines show them (§6.3, §6.4).
+
+For example, a level-2 pikeman on a city blocks 30 + 2 × 10 = 50% of the damage it takes.
 
 ### 3.8 Winning
 
@@ -252,6 +264,8 @@ damage(att, def) = base[att.type][def.type] * att.hp * (100 - defense(def.hex))
 | `city_heal` | 20 | HP healed per turn on your own city |
 | `city_vision` | 2 | |
 | `capture_points` | 200 | capture progress needed to take a city |
+| `fortify_pct` | 10 | defense added per fortification level (§3.7) |
+| `fortify_max` | 2 | most fortification levels a unit can have |
 
 Time constants are in §7.
 
@@ -348,12 +362,14 @@ Both bots initialize at the same time.
 > TIME 5500 4500                         ms available this turn, ms left in your bank
 > GOLD 450
 > CITY 0 1 0 0                           id owner capturer progress (every city; capturer and progress are 0 unless visible)
-> UNIT 17 1 I -2 5 30                    id owner type q r hp (your units, then visible enemy units)
+> UNIT 17 1 I -2 5 30 0                  id owner type q r hp fort (your units, then visible enemy units)
 > TILE 5 7 f                             q r terrain: each tile that differs from the initial map (none in v1)
 > LOG HIT 91 K -1 5 17 30 88             attacker id type q r, your unit id, hp after for your unit and the attacker
 > LOG CITY 3 1 2                         city id, old owner, new owner
 > GO
 ```
+
+**Units.** `fort` is the unit's fortification level (§3.7), always 0 for a unit type without `fortify`. Engines from before fortification sent `UNIT` and `SEE` lines without it, so kits read a missing level as 0.
 
 **Opponent log.** `LOG` lines report what happened during the opponent's most recent turn, in the order it happened:
 
@@ -380,7 +396,7 @@ Enemy movement isn't logged, because the state already shows where visible enemi
 - Bots may send many orders before reading any replies. Replies always come back in order.
 
 ```
-> SEE <id> <owner> <type> <q> <r> <hp>          event: an enemy unit became visible
+> SEE <id> <owner> <type> <q> <r> <hp> <fort>   event: an enemy unit became visible
 > OK <q> <r> <mp_left>                          move completed
 > PART <q> <r> ambush|zoc                       move cut short by a hidden enemy
 > OK <target_hp> <attacker_hp>                  attack resolved (hp 0 = dead)
@@ -421,9 +437,9 @@ This is player 1's first turn. Player 2's starting units are IDs 4–6, and the 
 > CITY 1 2 0 0
 > CITY 2 0 0 0
 > ...
-> UNIT 1 1 I 3 2 100
-> UNIT 2 1 I 3 2 100
-> UNIT 3 1 S 3 2 100
+> UNIT 1 1 I 3 2 100 0
+> UNIT 2 1 I 3 2 100 0
+> UNIT 3 1 S 3 2 100 0
 > GO
 < M 3 000
 > OK 6 2 3
@@ -439,6 +455,7 @@ This is player 1's first turn. Player 2's starting units are IDs 4–6, and the 
 
 - **Hidden units.** An order that names a hidden enemy unit gets the same error as one naming a unit that doesn't exist: `unknown` for the unit giving the order, `no_target` for an attack target. Probing ids reveals nothing. `not_yours` is only for visible enemy units and for cities you don't own.
 - **Moving, then attacking.** A `no_move_attack` unit that has changed hexes this turn gets `acted` if it attacks. A unit stopped by an ambush before its first step hasn't moved.
+- **Digging in.** Only changing hexes, attacking, or capturing stops a `fortify` unit from gaining a level. A unit stopped by an ambush before its first step still gains one.
 - **Attacking from a zone of control.** An attack needs the unit's action, not movement points, so a unit whose move ended next to an enemy can still attack.
 - **Ambush.** The hex the mover bumped into becomes visible, so the ambusher arrives as a `SEE` event before the `PART` line.
 - **Building.** A city that already built this turn, was captured this turn, or has an enemy unit on it gets `city_used`, and one holding `stack_limit` of your units gets `stack_full`. A captured city can build from its new owner's next turn.
@@ -615,7 +632,7 @@ bitbath2/
 **Hooks for later mechanics:**
 
 - **Terrain modification:** the turn state already carries `TILE` changes.
-- **Transport:** a unit's location can be a hex *or* a carrier unit. Reserve an optional trailing field on `UNIT` for this.
+- **Transport:** a unit's location can be a hex *or* a carrier unit. Reserve an optional trailing field on `UNIT`, after the fortification level, for this.
 - **Logistics:** food, supply, and starvation become new steps in the upkeep list (§3.4).
 - **Structures:** model them as immobile unit types (move 0), adding new flags as needed.
 
@@ -642,6 +659,7 @@ bitbath2/
 ## 14. Open questions
 
 1. **Benchmark time controls:** at 1 s per turn, a 200-round game can take about 7 minutes. Should benchmark runs use less? *Deferred to M4, to be decided from measured bot think times.*
+2. **Defensive pikemen:** should pikemen become a holding unit, digging in while they hold still (`fortify`) but unable to move and attack in one turn (`no_move_attack`)? Both are rule options since 2026-11-19, and the defaults stay as they are until test games show it helps.
 
 ### Resolved
 

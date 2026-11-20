@@ -13,6 +13,7 @@ import random
 DIRS = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)]
 
 TERRAIN_DEFENSE = {".": 0, "f": 25, "h": 40, "C": 30}
+FORTIFY_PCT = 10     # defense added per fortification level
 VISION_BONUS = {".": 0, "f": 0, "h": 1}
 CONCEAL = {".": 0, "f": 1, "h": 0}
 UNITS = "IPKAS"
@@ -46,18 +47,19 @@ def mirror(h, w, hgt):
     return [c - r // 2, r]
 
 
-def damage(att, att_hp, dfn, terrain):
+def damage(att, att_hp, dfn, terrain, fort=0):
     base = BASE[att][UNITS.index(dfn)]
     if base == 0:
         return 0
-    return max(1, base * att_hp * (100 - TERRAIN_DEFENSE[terrain]) // (MAX_HP * 100))
+    defense = min(100, TERRAIN_DEFENSE[terrain] + fort * FORTIFY_PCT)
+    return max(1, base * att_hp * (100 - defense) // (MAX_HP * 100))
 
 
-def combat(att, att_hp, att_terrain, dfn, dfn_hp, dfn_terrain, dist):
-    dfn_hp = max(0, dfn_hp - damage(att, att_hp, dfn, dfn_terrain))
+def combat(att, att_hp, att_terrain, dfn, dfn_hp, dfn_terrain, dist, att_fort=0, dfn_fort=0):
+    dfn_hp = max(0, dfn_hp - damage(att, att_hp, dfn, dfn_terrain, dfn_fort))
     lo, hi = RANGE[dfn]
     if dfn_hp > 0 and lo <= dist <= hi and BASE[dfn][UNITS.index(att)] > 0:
-        att_hp = max(0, att_hp - damage(dfn, dfn_hp, att, att_terrain))
+        att_hp = max(0, att_hp - damage(dfn, dfn_hp, att, att_terrain, att_fort))
     return dfn_hp, att_hp
 
 
@@ -108,6 +110,21 @@ def damage_vectors(rng):
         combats.append({"attacker": att, "attacker_hp": ahp, "attacker_terrain": aterr,
                         "defender": dfn, "defender_hp": dhp, "defender_terrain": dterr, "distance": dist,
                         "defender_hp_after": d_after, "attacker_hp_after": a_after})
+    # Fortified fights: either side may have dug in, up to the default
+    # fortify_max of 2. Only these cases carry the fortification fields.
+    for _ in range(30):
+        att, dfn = rng.choice(UNITS), rng.choice(UNITS)
+        dist = rng.choice([1, 1, 2]) if "A" in (att, dfn) else 1
+        if not RANGE[att][0] <= dist <= RANGE[att][1]:
+            continue
+        ahp, aterr, afort = rng.randint(1, 100), rng.choice(list(TERRAIN_DEFENSE)), rng.randint(0, 2)
+        dhp, dterr, dfort = rng.randint(1, 100), rng.choice(list(TERRAIN_DEFENSE)), rng.randint(0, 2)
+        if dist > 1 and dist + CONCEAL.get(dterr, 0) > VISION[att] + VISION_BONUS.get(aterr, 0):
+            continue    # the attacker couldn't see the defender to attack it (SPEC §4)
+        d_after, a_after = combat(att, ahp, aterr, dfn, dhp, dterr, dist, afort, dfort)
+        combats.append({"attacker": att, "attacker_hp": ahp, "attacker_terrain": aterr, "attacker_fort": afort,
+                        "defender": dfn, "defender_hp": dhp, "defender_terrain": dterr, "defender_fort": dfort,
+                        "distance": dist, "defender_hp_after": d_after, "attacker_hp_after": a_after})
     return {"rules": "default", "damage": cases, "combat": combats}
 
 

@@ -20,6 +20,10 @@ pub struct Unit {
     pub moved: bool,
     /// Built this turn, so it can't move or act until its owner's next turn.
     pub fresh: bool,
+    /// Fortification level: a `fortify` unit gains one for each of its
+    /// owner's turns it spends without moving or acting, up to
+    /// `fortify_max`, and loses them all when it moves (SPEC §3.7).
+    pub fort: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,8 +63,9 @@ fn number(tok: &str, what: &str) -> Result<u32, Reject> {
 }
 
 /// Damage dealt by a unit of type `att` with `att_hp` HP to a unit of type
-/// `def` standing on terrain with `defense` percent (SPEC §3.7). Every
-/// operand is non-negative, so kits get the same result with floor division.
+/// `def` with `defense` percent: its terrain's, plus any fortification
+/// (SPEC §3.7). Every operand is non-negative, so kits get the same result
+/// with floor division.
 pub fn damage(rules: &Rules, att: usize, att_hp: u32, def: usize, defense: u32) -> u32 {
     let base = rules.damage[att][def];
     if base == 0 {
@@ -93,6 +98,9 @@ pub struct Game {
     city_at: Vec<Option<u32>>,
     /// `LOG` lines waiting for each player's next turn message.
     logs: [Vec<String>; 3],
+    /// Whether `end_turn` has already run for the current turn. Callers may
+    /// end a turn twice, and units must dig in only once.
+    turn_over: bool,
 }
 
 impl Game {
@@ -153,6 +161,7 @@ impl Game {
             occupants: vec![Vec::new(); n],
             city_at,
             logs: Default::default(),
+            turn_over: false,
         }
     }
 
@@ -171,6 +180,7 @@ impl Game {
             acted: false,
             moved: false,
             fresh,
+            fort: 0,
         });
         let i = self.map.index(hex);
         self.occupants[i].push(id);
@@ -266,6 +276,7 @@ impl Game {
             self.round += 1;
         }
         self.player = player;
+        self.turn_over = false;
         let p = player as usize;
 
         let cities = self.cities_of(player) as i64;
@@ -308,8 +319,19 @@ impl Game {
         self.visible = self.vision(player);
     }
 
-    /// Ends the current turn. After the last round, the tiebreak decides.
+    /// Ends the current turn: the player's `fortify` units that neither moved
+    /// nor acted dig in one level deeper. After the last round, the tiebreak
+    /// decides. Ending the same turn again changes nothing.
     pub fn end_turn(&mut self) {
+        if !self.turn_over {
+            self.turn_over = true;
+            let max = self.rules.c.fortify_max;
+            for u in self.units.iter_mut() {
+                if u.owner == self.player && self.rules.units[u.ty].fortify && !(u.moved || u.acted || u.fresh) {
+                    u.fort = (u.fort + 1).min(max);
+                }
+            }
+        }
         self.logs[self.player as usize].clear();
         if self.outcome.is_none() && self.player == 2 && self.round >= self.rules.c.round_limit {
             self.outcome = Some(self.tiebreak());
@@ -391,8 +413,8 @@ impl Game {
         for u in mine.chain(seen) {
             let code = self.rules.units[u.ty].code;
             out.push(format!(
-                "UNIT {} {} {} {} {} {}",
-                u.id, u.owner, code, u.hex.q, u.hex.r, u.hp
+                "UNIT {} {} {} {} {} {} {}",
+                u.id, u.owner, code, u.hex.q, u.hex.r, u.hp, u.fort
             ));
         }
         out.extend(self.logs[p as usize].iter().cloned());
@@ -499,6 +521,7 @@ impl Game {
             self.units[ui].mp -= self.rules.terrains[self.map.tiles[i] as usize].move_cost;
             self.relocate(ui, next);
             self.units[ui].moved = true;
+            self.units[ui].fort = 0;
             let radius = self.unit_vision(ui);
             self.reveal(next, radius, out);
             if !skirmish && self.in_zoc(next, false) {
@@ -547,11 +570,10 @@ impl Game {
         }
         let code = at.code;
 
-        let defense = |h: Hex| self.rules.terrains[self.map.terrain_at(h)].defense;
-        let d_hp = d_hp.saturating_sub(damage(&self.rules, aty, a_hp, dty, defense(d_hex)));
+        let d_hp = d_hp.saturating_sub(damage(&self.rules, aty, a_hp, dty, self.defense(di)));
         let mut a_hp = a_hp;
         if d_hp > 0 && self.rules.units[dty].in_range(dist) && self.rules.damage[dty][aty] > 0 {
-            a_hp = a_hp.saturating_sub(damage(&self.rules, dty, d_hp, aty, defense(a_hex)));
+            a_hp = a_hp.saturating_sub(damage(&self.rules, dty, d_hp, aty, self.defense(ai)));
         }
 
         let attacker = &mut self.units[ai];
@@ -745,6 +767,17 @@ impl Game {
         })
     }
 
+    /// The percent of damage the unit at index `i` blocks: its hex's terrain
+    /// defense plus `fortify_pct` for each fortification level (SPEC §3.7).
+    /// `damage` caps it at 100.
+    fn defense(&self, i: usize) -> u32 {
+        let u = &self.units[i];
+        let fort = u.fort.saturating_mul(self.rules.c.fortify_pct);
+        self.rules.terrains[self.map.terrain_at(u.hex)]
+            .defense
+            .saturating_add(fort)
+    }
+
     fn unit_vision(&self, i: usize) -> u32 {
         let u = &self.units[i];
         self.rules.units[u.ty].vision + self.rules.terrains[self.map.terrain_at(u.hex)].vision_bonus
@@ -779,8 +812,8 @@ impl Game {
             if u.owner != self.player {
                 let code = self.rules.units[u.ty].code;
                 out.push(format!(
-                    "SEE {} {} {} {} {} {}",
-                    u.id, u.owner, code, u.hex.q, u.hex.r, u.hp
+                    "SEE {} {} {} {} {} {} {}",
+                    u.id, u.owner, code, u.hex.q, u.hex.r, u.hp, u.fort
                 ));
             }
         }
@@ -881,5 +914,49 @@ mod tests {
         g.begin_turn(1);
         let reply = g.apply(&format!("B {ci} I"));
         assert!(reply.last().unwrap().starts_with("OK "), "{reply:?}");
+    }
+
+    #[test]
+    fn fortify_units_dig_in_while_they_hold_still() {
+        let mut rules = Rules::default();
+        rules.set("unit.P.flags", "capture,zoc,fortify").unwrap();
+        rules.set("fortify_max", "3").unwrap();
+        let map = crate::mapgen::generate(&rules, 7).unwrap();
+        let mut g = Game::empty(rules, map);
+        let (pike, infantry) = (g.rules.unit_index('P').unwrap(), g.rules.unit_index('I').unwrap());
+        let h1 = g.cities.iter().find(|c| c.owner == 1).unwrap().hex;
+        let h2 = g.cities.iter().find(|c| c.owner == 2).unwrap().hex;
+        let idle = g.spawn(1, pike, h1, false);
+        let busy = g.spawn(1, pike, h1, false);
+        let foot = g.spawn(1, infantry, h1, false);
+        let theirs = g.spawn(2, pike, h2, false);
+        let levels = |g: &Game| [idle, busy, foot, theirs].map(|id| g.unit(id).unwrap().fort);
+
+        g.begin_turn(1);
+        g.end_turn();
+        g.end_turn(); // ending a turn twice digs in only once
+        assert_eq!(levels(&g), [1, 1, 0, 0]);
+        g.begin_turn(2);
+        g.end_turn();
+        assert_eq!(levels(&g), [1, 1, 0, 1]);
+
+        g.begin_turn(1);
+        let i = g.unit_idx(busy).unwrap();
+        g.units[i].acted = true; // as if it attacked: it keeps its level but gains none
+        let new = g.spawn(1, pike, h1, true);
+        g.end_turn();
+        assert_eq!(levels(&g), [2, 1, 0, 1]);
+        assert_eq!(g.unit(new).unwrap().fort, 0);
+        g.begin_turn(2);
+        g.end_turn();
+
+        for _ in 0..2 {
+            g.begin_turn(1);
+            g.end_turn();
+            g.begin_turn(2);
+            g.end_turn();
+        }
+        assert_eq!(levels(&g), [3, 3, 0, 3]);
+        assert_eq!(g.unit(new).unwrap().fort, 2);
     }
 }
