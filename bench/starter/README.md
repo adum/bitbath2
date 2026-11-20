@@ -23,7 +23,7 @@ This builds your bot, plays it against itself, and fails if either side crashes,
 
 ## The tournament
 
-- **Opponents.** Every bot plays every other bot. You can't see the other bots, and they can't see yours.
+- **Opponents.** Every bot plays every other bot: the bots others built, the sample bots in `bots/`, and reference bots that aren't in the kit. Apart from the sample bots, you can't see the other bots, and none of them can see yours.
 - **Games.** Each pair of bots plays each map twice, with the sides swapped.
 - **Maps.** Most games are on maps like those of `configs/micro.toml`. Some are on larger maps, like those of `configs/small.toml` and `configs/default.toml`. The map seeds are ones you haven't seen.
 - **Rules.** Unit costs, damage, and other numbers may differ from the defaults, and unit types may be missing. The engine sends the rules at the start of each game, so read them from that message instead of writing them into your bot.
@@ -51,7 +51,7 @@ Each game gets a directory under `runs/`, with its replay and a working director
 Run a tournament of your own, to compare versions of your bot against each other and the sample bots:
 
 ```bash
-target/release/bitbath tournament --bot mine=submission --bot greedy="python bots/greedy_bot.py" --bot random="python bots/random_bot.py" --config configs/micro.toml --seeds 1-10 --jobs 4
+target/release/bitbath tournament --bot mine=submission --bot greedy="python bots/greedy_bot.py" --bot rush="python bots/rush_bot.py" --bot turtle="python bots/turtle_bot.py" --config configs/micro.toml --seeds 1-10 --jobs 4
 ```
 
 `target/release/bitbath help` lists every command and option.
@@ -65,11 +65,14 @@ engine/         The game engine, in Rust. It is the final word on the rules.
 runner/         The bitbath command: games, tournaments, ratings, replays.
 kits/python/    The Python kit: protocol, game state, hex math, pathfinding,
                 and a combat predictor that matches the engine.
-bots/           Two sample bots: random_bot.py, and greedy_bot.py, which is
-                a fuller example of the Python kit.
+bots/           Six sample bots. random_bot.py plays legal moves, and
+                greedy_bot.py is a fuller example of the Python kit. The
+                other four each play one style: turtle_bot.py defends its
+                half, volley_bot.py masses archers, raider_bot.py hunts
+                with cavalry, and rush_bot.py attacks at once.
 configs/        Rule presets.
 tests/vectors/  Test vectors for hex math, damage, vision, and orders, for
                 checking a bot written without the kit.
 ```
 
-The sample bots are weak. Beating them is where the work starts.
+The sample bots are for practice: each one tests your bot against a different way of playing. They also play in the tournament, but its other reference bots, which aren't in the kit, are stronger. Beating the sample bots is where the work starts.

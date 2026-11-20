@@ -2,6 +2,10 @@
   "references": {
     "random": "bots/random_bot.py",
     "greedy": "bots/greedy_bot.py",
+    "turtle": "bots/turtle_bot.py",
+    "volley": "bots/volley_bot.py",
+    "raider": "bots/raider_bot.py",
+    "rush": "bots/rush_bot.py",
     "smart": "bots/smart_bot.py",
     "vanguard": "bots/vanguard_bot.py",
     "solid": "bots/solid_bot.py",

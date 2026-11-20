@@ -32,10 +32,15 @@ class Kit(unittest.TestCase):
         with self.assertRaises(SystemExit):
             kit.read_allowlist("engine\nsub/b.py = bots/strong_bot.py\n")
 
-    def test_the_kit_leaves_the_strong_bots_out(self):
+    def test_the_kit_holds_the_sample_bots_only(self):
         include, _ = kit.read_allowlist((kit.ROOT / kit.ALLOWLIST).read_text())
-        bots = [path for path in include if path.startswith("bots")]
-        self.assertEqual(sorted(bots), ["bots/greedy_bot.py", "bots/random_bot.py"])
+        bots = sorted(Path(path).name for path in include if path.startswith("bots"))
+        samples = ["greedy", "raider", "random", "rush", "turtle", "volley"]
+        self.assertEqual(bots, [f"{name}_bot.py" for name in samples])
+        # Every held-back bot is still a tournament opponent.
+        references = json.loads((kit.ROOT / "bench" / "arena.json").read_text())["references"]
+        held_back = sorted(set(references) - set(samples))
+        self.assertEqual(held_back, ["bastion", "smart", "solid", "vanguard"])
 
 
 class Archives(unittest.TestCase):
