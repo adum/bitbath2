@@ -79,8 +79,8 @@ def main():
     p.add_argument("--effort", help="the model's reasoning effort, if the harness takes one")
     p.add_argument("--name", help="the bot's name in the tournament (default: from the model id)")
     p.add_argument("--hours", type=float, default=4, help="working time for the model (default: 4)")
-    p.add_argument("--max-sessions", type=int, default=8,
-                   help="most sessions the time may be split over (default: 8)")
+    p.add_argument("--max-sessions", type=int, default=50,
+                   help="most sessions the time may be split over, as a backstop (default: 50)")
     p.add_argument("--fix-minutes", type=float, default=15,
                    help="length of the one extra session a failed check gets, or 0 for none (default: 15)")
     p.add_argument("--cpus", type=float, default=4, help="CPUs for the container (default: 4)")

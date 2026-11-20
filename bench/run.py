@@ -4,8 +4,10 @@ sealed as an entry for the tournament."""
 
 import datetime as dt
 import hashlib
+import io
 import json
 import re
+import tarfile
 import time
 import uuid
 from pathlib import Path
@@ -29,19 +31,41 @@ How the work is run:
 
 - You have {hours} of working time in all. {remaining} of it is left, and this \
 session is cut off at {deadline} UTC (`date -u` shows the time now).
-- The work may be split over several sessions. This is session {session}. A new \
-session starts with the files as you left them, but remembers nothing of the \
-sessions before it. Keep notes for yourself in /workspace/NOTES.md, and read them \
-first if they exist.
-- Use the time. A first working bot is the start: play it against the sample bots \
+- The time is there to be used, and ending a session early saves none of it. If \
+you stop while time is left, a new session simply starts and has to find its \
+bearings again. Keep working in this one for as long as you can.
+- The work may still be split over several sessions. This is session {session}. A \
+new session starts with the files as you left them, but remembers nothing of the \
+sessions before it. Keep notes for yourself in /workspace/NOTES.md as you go, on \
+what you tried, what the results were, and what to do next. Read them first if \
+they exist.
+- A first working bot is the start, not the end. Play it against the sample bots \
 and against earlier versions of itself, read the replays to see why games were won \
 or lost, and improve it. Many small tested improvements beat one big untested idea.
+- A copy of a sample bot scores what that sample bot scores. The tournament's \
+other bots beat every sample bot, so a bot has to beat all six clearly to do well.
 - Nobody is there to answer questions, so don't ask any. Decide for yourself.
 - There is no internet access. Work only inside /workspace.
 - Keep submission/ working as you go, since the session can end at any moment. \
-Before you stop, make sure this passes: `{check}`
-- If you are sure that more time wouldn't make the bot stronger, create an empty \
-file at /workspace/FINISHED and stop. Otherwise the next session continues the work.
+Whenever you change it, make sure this still passes: `{check}`
+- Creating an empty file at /workspace/FINISHED ends the work for good and gives \
+up the time that is left. Only do that once several attempts in a row, each \
+measured in a tournament, have failed to make the bot stronger.
+
+{history}"""
+
+FIRST = "Where things stand: this is the first session, and submission/ holds the kit's placeholder bot.\n"
+
+STANDING = """How submission/ stands now. After the last session the benchmark played it, as \
+"mine", against the six sample bots on micro maps, with greedy's rating fixed at 1000:
+
+{table}
+"""
+
+NO_STANDING = """The benchmark tried to play submission/ against the sample bots after the last \
+session, and couldn't:
+
+{error}
 """
 
 FIX = """You are in /workspace, which holds the Bitbath starter kit and the bot you \
@@ -145,6 +169,58 @@ def check(docker, archive, directory):
         docker.remove(container)
 
 
+SAMPLES = ("random", "greedy", "turtle", "volley", "raider", "rush")
+
+
+def standing(docker, archive, jobs):
+    """Plays a submission against the kit's sample bots, in a fresh container
+    with no network, and returns the ratings table. The model could run the
+    same tournament itself: it learns nothing here that the kit doesn't hold."""
+    container = docker.offline("standing-" + uuid.uuid4().hex[:6])
+    try:
+        docker.put(container, archive, "/workspace/submission")
+        command = ["target/release/bitbath", "tournament", "--bot", "mine=submission"]
+        for name in SAMPLES:
+            command += ["--bot", f"{name}=python bots/{name}_bot.py"]
+        command += ["--config", "configs/micro.toml", "--seeds", "1-4", "--jobs", str(jobs),
+                    "--anchor", "greedy=1000", "--bootstrap", "0", "--out", "/tmp/standing"]
+        output = docker.run(container, *command, workdir="/workspace", timeout=900)
+        table = output[output.rindex("  #  bot"):].split("\n\n")[0]
+        return STANDING.format(table=table.rstrip())
+    except (BenchmarkError, ValueError) as e:
+        return NO_STANDING.format(error=str(e)[-1500:])
+    finally:
+        docker.remove(container)
+
+
+def contents_hash(archive):
+    """A hash of the files in a tar archive, whatever their dates and order."""
+    files = []
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        for member in tar:
+            if member.isfile():
+                files.append(f"{hashlib.sha256(tar.extractfile(member).read()).hexdigest()}  {member.name}\n")
+    return hashlib.sha256("".join(sorted(files)).encode()).hexdigest()
+
+
+def history(rounds, before, standing_text):
+    """What a new session is told about the sessions before it."""
+    if not rounds:
+        return FIRST
+    used = sum(r["seconds"] for r in rounds)
+    last = rounds[-1]
+    if len(rounds) > 1:
+        text = f"Where things stand: {len(rounds)} sessions so far, which used {duration(used)} between them."
+    else:
+        text = f"Where things stand: one session so far, which used {duration(used)}."
+    if not last["stop"]:
+        text += f" The last one ended itself after {duration(last['seconds'])}, with time left."
+    previous = rounds[-2]["contents_sha256"] if len(rounds) > 1 else before
+    if last["contents_sha256"] == previous:
+        text += " It left submission/ exactly as it found it."
+    return f"{text}\n\n{standing_text}"
+
+
 def run(args):
     """Runs the build phase for one model. Returns the entry's directory."""
     harness = Harness(args.harness, args.model, args.effort)
@@ -185,8 +261,9 @@ def run(args):
             harness.authenticate(docker, agent, auth_file)
             version = docker.run(agent, harness.name, "--version")
             record["harness_version"] = version
-            deadline = time.monotonic() + budget
             stop = "max_sessions"
+            before = contents_hash(docker.get(agent, "/workspace/submission"))
+            standing_text = ""
 
             def work(number, prompt, timeout, label):
                 """One session, then a copy of submission/ as it left it."""
@@ -195,7 +272,8 @@ def run(args):
                 # This also stops whatever the session left running.
                 data = docker.get(agent, "/workspace/submission")
                 (entry / "rounds" / f"{number:02d}" / "submission.tar").write_bytes(data)
-                outcome.update(number=number, submission_sha256=hashlib.sha256(data).hexdigest())
+                outcome.update(number=number, submission_sha256=hashlib.sha256(data).hexdigest(),
+                               contents_sha256=contents_hash(data))
                 record["rounds"].append(outcome)
                 write_json(entry / "entry.json", record)
                 if outcome["failure"] == "configuration":
@@ -203,12 +281,15 @@ def run(args):
                 return data, outcome
 
             for number in range(1, args.max_sessions + 1):
-                left = deadline - time.monotonic()
+                # Only the sessions' own time counts: not the benchmark's
+                # games between them.
+                left = budget - sum(r["seconds"] for r in record["rounds"])
                 if left < MIN_SESSION_SECONDS:
                     stop = "time"
                     break
                 prompt = TASK.format(hours=duration(budget), remaining=duration(left), deadline=clock_after(left),
-                                     session=number, check=" ".join(CHECK))
+                                     session=number, check=" ".join(CHECK),
+                                     history=history(record["rounds"], before, standing_text))
                 print(f"Session {number}: {duration(left)} left", flush=True)
                 archive, outcome = work(number, prompt, left, f"session {number}")
                 if finished(docker, agent):
@@ -217,6 +298,11 @@ def run(args):
                 if outcome["failure"] == "harness" and outcome["seconds"] < 60:
                     stop = "harness_error"
                     break
+                if left - outcome["seconds"] >= MIN_SESSION_SECONDS:
+                    standing_text = standing(docker, archive, max(1, int(args.cpus) // 2))
+                    record["rounds"][-1]["standing"] = standing_text
+                    write_json(entry / "entry.json", record)
+                    print(standing_text, flush=True)
             record["stop"] = stop
             if archive is None:
                 raise BenchmarkError("no session ran, so there is no submission")

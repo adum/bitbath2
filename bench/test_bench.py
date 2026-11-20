@@ -12,7 +12,7 @@ from pathlib import Path
 
 from bench import kit
 from bench.harnesses import Harness, failure_kind, usage_records
-from bench.run import FIX, TASK, bot_name, duration
+from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history
 from bench.sandbox import BenchmarkError, archive_of, check_archive, extract_archive
 
 
@@ -97,9 +97,31 @@ class Run(unittest.TestCase):
         self.assertEqual(duration(20), "0 minutes")
 
     def test_prompts_fill_in(self):
-        task = TASK.format(hours="4 hours", remaining="1 hour", deadline="12:00", session=2, check="bitbath check")
+        task = TASK.format(hours="4 hours", remaining="1 hour", deadline="12:00", session=2, check="bitbath check",
+                           history=FIRST)
         fix = FIX.format(deadline="12:00", check="bitbath check", output="error: x")
         self.assertNotIn("{", task + fix)
+
+
+class History(unittest.TestCase):
+    def test_contents_hash_ignores_order(self):
+        one = archive_of({"a.py": b"1", "b.py": b"2"})
+        self.assertEqual(contents_hash(one), contents_hash(archive_of({"b.py": b"2", "a.py": b"1"})))
+        self.assertNotEqual(contents_hash(one), contents_hash(archive_of({"a.py": b"1", "b.py": b"3"})))
+
+    def test_a_new_session_hears_what_the_last_one_did(self):
+        self.assertEqual(history([], "h0", ""), FIRST)
+        idle = {"seconds": 95, "stop": None, "contents_sha256": "h0"}
+        text = history([idle], "h0", "TABLE")
+        self.assertIn("one session so far, which used 2 minutes.", text)
+        self.assertIn("ended itself after 2 minutes", text)
+        self.assertIn("exactly as it found it", text)
+        self.assertTrue(text.endswith("TABLE"))
+        busy = {"seconds": 3600, "stop": "timeout", "contents_sha256": "h1"}
+        text = history([idle, busy], "h0", "TABLE")
+        self.assertIn("2 sessions so far, which used 1 hour 2 minutes", text)
+        self.assertNotIn("ended itself", text)
+        self.assertNotIn("as it found it", text)
 
 
 if __name__ == "__main__":
