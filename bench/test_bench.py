@@ -81,17 +81,12 @@ class Harnesses(unittest.TestCase):
     def test_a_refused_account_is_a_configuration_error(self):
         inner = json.dumps({"type": "error", "status": 400, "error": {
             "message": "This organization cannot be used for Codex usage.", "code": "codex_byok_restricted_by_x"}})
-        events = json.dumps({"type": "error", "message": inner}) + "
-" + json.dumps(
-            {"type": "turn.failed", "error": {"message": inner}}) + "
-"
+        events = "".join(json.dumps(event) + "\n" for event in (
+            {"type": "error", "message": inner}, {"type": "turn.failed", "error": {"message": inner}}))
         self.assertEqual(failure_kind(events, "", 0), "configuration")
         self.assertEqual(error_message(events), "This organization cannot be used for Codex usage.")
-        self.assertEqual(error_message('{"type":"error","message":"plain"}
-not json
-'), "plain")
-        self.assertEqual(error_message('{"type":"result"}
-'), "")
+        self.assertEqual(error_message('{"type":"error","message":"plain"}\nnot json\n'), "plain")
+        self.assertEqual(error_message('{"type":"result"}\n'), "")
 
     def test_failures(self):
         self.assertIsNone(failure_kind('{"type":"result","subtype":"success"}\n', "", 0))
