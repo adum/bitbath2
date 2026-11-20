@@ -19,6 +19,7 @@ bots/turtle_bot.py
 bots/volley_bot.py
 bots/raider_bot.py
 bots/rush_bot.py
+bots/solid_bot.py
 configs/default.toml
 configs/micro.toml
 configs/small.toml

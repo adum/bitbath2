@@ -23,9 +23,27 @@ MIN_SESSION_SECONDS = 300
 RETRY_DELAYS = (15, 30, 60, 120)
 CHECK = ["target/release/bitbath", "check", "submission", "--config", "configs/micro.toml"]
 
-TASK = """You are in /workspace, which holds the Bitbath starter kit. Start by reading \
-README.md: it describes your task, which is to build the strongest bot you can and \
-leave it in submission/.
+TASK = """This is a competition. You are in /workspace, which holds the Bitbath starter \
+kit, and your task is to build the strongest bot you can and leave it in submission/. \
+Start by reading README.md, which describes the game and the task.
+
+What you are up against:
+
+- When your time is over, your bot plays a tournament against bots that other AI \
+models built from this same kit, and against reference bots. Your bot's rating in \
+that tournament is the only result of this work.
+- The kit's bots/ directory holds seven of the reference bots. Six are simple \
+samples. The seventh, solid_bot.py, is a real opponent: on the scale where greedy \
+is rated 1000 it is rated about 1290, and it wins about five games in six against \
+greedy.
+- Three more reference bots are held back, so you can't see them. They are rated \
+from about 1400 to 1600, and the best of them beats solid about as often as solid \
+beats greedy. None of them is close to perfect play: they are hand-written \
+heuristics, and a better bot can beat them all.
+- So a bot that only edges out greedy finishes in the bottom half. Beating solid \
+clearly is the first real milestone, and doing well means going well beyond that. \
+You can read solid_bot.py and play against it as much as you like. A copy of any \
+bot in the kit scores what that bot scores.
 
 How the work is run:
 
@@ -39,11 +57,12 @@ new session starts with the files as you left them, but remembers nothing of the
 sessions before it. Keep notes for yourself in /workspace/NOTES.md as you go, on \
 what you tried, what the results were, and what to do next. Read them first if \
 they exist.
-- A first working bot is the start, not the end. Play it against the sample bots \
+- A first working bot is the start, not the end. Play it against the kit's bots \
 and against earlier versions of itself, read the replays to see why games were won \
 or lost, and improve it. Many small tested improvements beat one big untested idea.
-- A copy of a sample bot scores what that sample bot scores. The tournament's \
-other bots beat every sample bot, so a bot has to beat all six clearly to do well.
+- Measure with enough games to tell a real gain from luck. Most tournament games \
+are on micro maps, but some are on the larger ones, and all are on seeds you \
+haven't seen, so test on many seeds and on every map size.
 - Nobody is there to answer questions, so don't ask any. Decide for yourself.
 - There is no internet access. Work only inside /workspace.
 - Keep submission/ working as you go, since the session can end at any moment. \
@@ -57,12 +76,18 @@ measured in a tournament, have failed to make the bot stronger.
 FIRST = "Where things stand: this is the first session, and submission/ holds the kit's placeholder bot.\n"
 
 STANDING = """How submission/ stands now. After the last session the benchmark played it, as \
-"mine", against the six sample bots on micro maps, with greedy's rating fixed at 1000:
+"mine", against the kit's seven bots on micro maps, with greedy's rating fixed at 1000:
 
 {table}
+
+Read this table for what it is. These seven are the weakest bots in the real \
+tournament, and the three reference bots you can't see are rated about 1400 to \
+1600 on this scale. Coming first here is not a good result yet: a strong bot wins \
+nearly every game in this table, solid's included. It is also only four seeds on \
+one map size, so it is a rough guide and not a measurement.
 """
 
-NO_STANDING = """The benchmark tried to play submission/ against the sample bots after the last \
+NO_STANDING = """The benchmark tried to play submission/ against the kit's bots after the last \
 session, and couldn't:
 
 {error}
@@ -169,11 +194,11 @@ def check(docker, archive, directory):
         docker.remove(container)
 
 
-SAMPLES = ("random", "greedy", "turtle", "volley", "raider", "rush")
+SAMPLES = ("random", "greedy", "turtle", "volley", "raider", "rush", "solid")
 
 
 def standing(docker, archive, jobs):
-    """Plays a submission against the kit's sample bots, in a fresh container
+    """Plays a submission against the kit's bots, in a fresh container
     with no network, and returns the ratings table. The model could run the
     same tournament itself: it learns nothing here that the kit doesn't hold."""
     container = docker.offline("standing-" + uuid.uuid4().hex[:6])
