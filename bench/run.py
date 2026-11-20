@@ -19,6 +19,11 @@ from .sandbox import CLAUDE_SECCOMP, ROOT, BenchmarkError, Docker, extract_archi
 ENTRIES = ROOT / "entries"
 # A session isn't started with less time than this left.
 MIN_SESSION_SECONDS = 300
+# A run ends once this many sessions in a row have each ended themselves
+# within IDLE_SECONDS and left submission/ as it was: the model has stopped
+# working, and more sessions would only repeat that.
+IDLE_SESSIONS = 3
+IDLE_SECONDS = 120
 # Waits before retrying a session that failed for a passing reason.
 RETRY_DELAYS = (15, 30, 60, 120)
 CHECK = ["target/release/bitbath", "check", "submission", "--config", "configs/micro.toml"]
@@ -218,6 +223,16 @@ def standing(docker, archive, jobs):
         docker.remove(container)
 
 
+def idle(rounds, before):
+    """Whether the last sessions did nothing: each ended itself quickly and
+    left submission/ as it found it. `before` is its hash before session 1."""
+    if len(rounds) < IDLE_SESSIONS:
+        return False
+    hashes = [before] + [r["contents_sha256"] for r in rounds]
+    return all(not r["stop"] and r["seconds"] < IDLE_SECONDS and hashes[i] == hashes[i + 1]
+               for i, r in list(enumerate(rounds))[-IDLE_SESSIONS:])
+
+
 def contents_hash(archive):
     """A hash of the files in a tar archive, whatever their dates and order."""
     files = []
@@ -323,8 +338,15 @@ def run(args):
                 if outcome["failure"] == "harness" and outcome["seconds"] < 60:
                     stop = "harness_error"
                     break
+                if idle(record["rounds"], before):
+                    stop = "idle"
+                    break
                 if left - outcome["seconds"] >= MIN_SESSION_SECONDS:
-                    standing_text = standing(docker, archive, max(1, int(args.cpus) // 2))
+                    # An unchanged bot isn't played again: the table would be the same.
+                    rounds = record["rounds"]
+                    same = len(rounds) > 1 and rounds[-2]["contents_sha256"] == outcome["contents_sha256"]
+                    if not (same and "standing" in rounds[-2]):
+                        standing_text = standing(docker, archive, max(1, int(args.cpus) // 2))
                     record["rounds"][-1]["standing"] = standing_text
                     write_json(entry / "entry.json", record)
                     print(standing_text, flush=True)

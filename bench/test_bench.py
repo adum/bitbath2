@@ -12,7 +12,7 @@ from pathlib import Path
 
 from bench import kit
 from bench.harnesses import Harness, failure_kind, usage_records
-from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history
+from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history, idle
 from bench.sandbox import BenchmarkError, archive_of, check_archive, extract_archive
 
 
@@ -122,6 +122,17 @@ class History(unittest.TestCase):
         self.assertIn("2 sessions so far, which used 1 hour 2 minutes", text)
         self.assertNotIn("ended itself", text)
         self.assertNotIn("as it found it", text)
+
+    def test_a_run_ends_when_sessions_stop_working(self):
+        quick = {"seconds": 9, "stop": None, "contents_sha256": "h1"}
+        work = {"seconds": 2876, "stop": None, "contents_sha256": "h1"}
+        self.assertFalse(idle([work, quick, quick], "h0"))
+        self.assertTrue(idle([work, quick, quick, quick], "h0"))
+        self.assertTrue(idle([dict(quick, contents_sha256="h0")] * 3, "h0"))
+        # A session that changed the bot, ran long, or was cut off isn't idle.
+        self.assertFalse(idle([work, quick, quick, dict(quick, contents_sha256="h2")], "h0"))
+        self.assertFalse(idle([work, quick, quick, dict(quick, seconds=600)], "h0"))
+        self.assertFalse(idle([work, quick, quick, dict(quick, stop="timeout")], "h0"))
 
 
 if __name__ == "__main__":
