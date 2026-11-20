@@ -377,7 +377,7 @@ class Bastion(bb.Bot):
                 hp = remaining if e.id == target.id else e.hp
                 if hp <= 0 or (confidence == 1 and e.id not in self.state.units):
                     continue
-                damage = self.damage(e.type, hp, u.type, position)
+                damage = self.damage(e.type, hp, u.type, position, u.fort if position == u.hex else 0)
                 options[e.id].append((len(defenders) - 1, damage, e, hp, at, confidence))
         loss = 0
         # Single-target attackers first; flexible ones can finish survivors.
@@ -392,7 +392,7 @@ class Bastion(bb.Bot):
                 after = max(0, defenders[i] - damage)
                 gain = (defenders[i] - after + 20 * (after == 0)) * t.cost / t.max_hp
                 if after and t.in_range(bb.distance(h, at)):
-                    back = min(hp, self.damage(u.type, after, e.type, at))
+                    back = min(hp, self.damage(u.type, after, e.type, at, e.fort if at == e.hex else 0))
                     gain -= 0.8 * back * self.types[e.type].cost / self.types[e.type].max_hp
                 if gain * confidence > best:
                     best, chosen = gain * confidence, (i, after)
@@ -433,7 +433,7 @@ class Bastion(bb.Bot):
                     return self.tiles[h].defense - 26 * self.risk(h) - 0.1 * len(reach[h])
 
                 h = max(options, key=safety)
-                hit = self.damage(u.type, u.hp, e.type, e.hex)
+                hit = self.damage(u.type, u.hp, e.type, e.hex, e.fort)
                 plans[e.id].append((u, h, reach[h], hit))
         for group in plans.values():
             group.sort(key=lambda a: (-a[3], self.risk(a[1]), a[0].id))
@@ -464,7 +464,7 @@ class Bastion(bb.Bot):
                     value += min(hit, hp) * target.cost / target.max_hp
                     hp -= hit
                     if hp > 0 and target.in_range(bb.distance(h, e.hex)):
-                        back = self.damage(e.type, hp, u.type, h)
+                        back = self.damage(e.type, hp, u.type, h, u.fort if h == u.hex else 0)   # moving loses it
                         value -= (min(u.hp, back) + 30 * (back >= u.hp)) * t.cost / t.max_hp
                     if hp <= 0:
                         value += 65 + 25 * (e.hex in self.city)

@@ -265,7 +265,7 @@ class SolidBot(bb.Bot):
     def trade(self, u, e, h, killable):
         """The value of u attacking e from h: what e loses minus what u loses."""
         ut, et = self.types[u.type], self.types[e.type]
-        hit = self.damage(u.type, u.hp, e.type, e.hex)
+        hit = self.damage(u.type, u.hp, e.type, e.hex, e.fort)
         left = e.hp - hit
         gain = et.cost * min(hit, e.hp) / et.max_hp
         if left <= 0:
@@ -279,7 +279,7 @@ class SolidBot(bb.Bot):
             gain += 100     # it was stopping the city from building
         loss = 0
         if left > 0 and et.in_range(bb.distance(h, e.hex)):
-            back = self.damage(e.type, left, u.type, h)
+            back = self.damage(e.type, left, u.type, h, u.fort if h == u.hex else 0)   # moving loses it
             loss = ut.cost * min(back, u.hp) / ut.max_hp
             if back >= u.hp:
                 loss += ut.cost * 0.5
@@ -304,7 +304,7 @@ class SolidBot(bb.Bot):
                 for tid, _, _ in found:
                     e = self.enemies.get(tid)
                     if e:
-                        potential[tid] = potential.get(tid, 0) + self.damage(u.type, u.hp, e.type, e.hex)
+                        potential[tid] = potential.get(tid, 0) + self.damage(u.type, u.hp, e.type, e.hex, e.fort)
             best = None
             for uid, found in opts.items():
                 u = units[uid]

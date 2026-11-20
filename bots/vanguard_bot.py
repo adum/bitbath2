@@ -94,6 +94,7 @@ class VanguardBot(bb.Bot):
         self.types = self.rules.unit_types
         self.limit = self.rules.stack_limit
         self.defense = {h: min(m.terrain(h).defense, 100) for h in m.hexes() if m.passable(h)}
+        self.fort_pct = self.rules.constants.get("fortify_pct", 0)   # defense per fortification level
         # Passable neighbors of each hex, as (direction, hex, cost to enter).
         self.nbrs = {
             h: [(d, n, m.terrain(n).move_cost) for d in range(6) for n in [bb.step(h, d)] if n in self.defense]
@@ -346,16 +347,18 @@ class VanguardBot(bb.Bot):
 
     # Phase 3: combat.
 
-    def dmg(self, att_type, att_hp, def_type, def_hex):
+    def dmg(self, att_type, att_hp, def_type, def_hex, def_fort=0):
+        """Damage to a defender on def_hex that has dug in def_fort levels."""
         base = self.rules.damage[att_type][def_type]
         if base == 0:
             return 0
-        return max(1, base * att_hp * (100 - self.defense[def_hex]) // (self.types[att_type].max_hp * 100))
+        defense = min(100, self.defense[def_hex] + def_fort * self.fort_pct)
+        return max(1, base * att_hp * (100 - defense) // (self.types[att_type].max_hp * 100))
 
     def trade(self, u, e, h, killable):
         """The value of u attacking e from h: what e loses minus what u loses."""
         ut, et = self.types[u.type], self.types[e.type]
-        hit = self.dmg(u.type, u.hp, e.type, e.hex)
+        hit = self.dmg(u.type, u.hp, e.type, e.hex, e.fort)
         left = e.hp - hit
         gain = et.cost * min(hit, e.hp) / et.max_hp
         if left <= 0:
@@ -369,7 +372,7 @@ class VanguardBot(bb.Bot):
             gain += 100     # it was stopping the city from building
         loss = 0
         if left > 0 and et.in_range(bb.distance(h, e.hex)):
-            back = self.dmg(e.type, left, u.type, h)
+            back = self.dmg(e.type, left, u.type, h, u.fort if h == u.hex else 0)   # moving loses it
             loss = ut.cost * min(back, u.hp) / ut.max_hp
             if back >= u.hp:
                 loss += ut.cost * 0.5
@@ -422,7 +425,7 @@ class VanguardBot(bb.Bot):
             for tid, h, dirs in found:
                 e = self.enemies.get(tid)
                 if e:
-                    by_target.setdefault(tid, []).append((self.dmg(u.type, u.hp, e.type, e.hex), uid, h, dirs))
+                    by_target.setdefault(tid, []).append((self.dmg(u.type, u.hp, e.type, e.hex, e.fort), uid, h, dirs))
         best = None
         for tid, hits in by_target.items():
             e = self.enemies[tid]
@@ -514,7 +517,7 @@ class VanguardBot(bb.Bot):
                 for tid, _, _ in found:
                     e = self.enemies.get(tid)
                     if e:
-                        potential[tid] = potential.get(tid, 0) + self.dmg(u.type, u.hp, e.type, e.hex)
+                        potential[tid] = potential.get(tid, 0) + self.dmg(u.type, u.hp, e.type, e.hex, e.fort)
             best = None
             for uid, found in opts.items():
                 u = units[uid]
@@ -526,7 +529,7 @@ class VanguardBot(bb.Bot):
                     if (u.type, h) in self.risk_at and h != u.hex:
                         # Standing where the enemy can strike back costs something.
                         after = self.risk_at[u.type, h]
-                        if self.dmg(u.type, u.hp, e.type, e.hex) >= e.hp:
+                        if self.dmg(u.type, u.hp, e.type, e.hex, e.fort) >= e.hp:
                             after = max(0, after - self.menace_of(e, u.type) * (1 - self.defense[h] / 100))
                         score -= self.expose * (min(3, after) - min(3, self.risk_at.get((u.type, u.hex), 0)))
                     if best is None or score > best[0]:
