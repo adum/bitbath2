@@ -15,7 +15,7 @@ ALLOWED = {
     # Reading.
     "read_file", "view_file", "sed_file", "list_dir", "find_by_name", "grep_search",
     # Writing.
-    "write_file", "write_to_file", "replace_file_content", "multi_replace_file_content",
+    "write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content",
     # Commands.
     "run_command", "command_status", "send_command_input", "wait", "wait_5_seconds", "finish",
 }

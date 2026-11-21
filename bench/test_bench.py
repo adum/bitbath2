@@ -132,7 +132,8 @@ class Harnesses(unittest.TestCase):
 
     def test_antigravity_tool_policy(self):
         from bench.agy_policy import decision
-        self.assertEqual(decision({"toolCall": {"name": "run_command", "args": {}}})["decision"], "allow")
+        for tool in ("run_command", "read_file", "write_file", "edit_file"):
+            self.assertEqual(decision({"toolCall": {"name": tool, "args": {}}})["decision"], "allow", tool)
         for tool in ("search_web", "read_url_content", "browser_subagent", "invoke_subagent", "call_mcp_tool", None):
             self.assertEqual(decision({"toolCall": {"name": tool, "args": {}}})["decision"], "deny", tool)
         self.assertEqual(decision({})["decision"], "deny")

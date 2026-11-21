@@ -334,7 +334,7 @@ def activity(stdout):
                     seen["commands"] += 1
                     given = (step.get("tool_info") or {}).get("parameters") or {}
                     seen["command"] = one_line(given.get("CommandLine", ""))
-                elif tool in {"write_file", "write_to_file", "replace_file_content", "multi_replace_file_content"}:
+                elif tool in {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}:
                     seen["edits"] += 1
         elif event.get("type") == "item.started" or event.get("type") == "item.completed":  # Codex
             item = event.get("item") or {}
