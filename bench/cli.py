@@ -83,7 +83,7 @@ def main():
                    help="most sessions the time may be split over, as a backstop (default: 50)")
     p.add_argument("--fix-minutes", type=float, default=15,
                    help="length of the one extra session a failed check gets, or 0 for none (default: 15)")
-    p.add_argument("--cpus", type=float, default=4, help="CPUs for the container (default: 4)")
+    p.add_argument("--cpus", type=float, default=16, help="CPUs for the container (default: 16)")
     p.add_argument("--memory", default="8g", help="memory for the container (default: 8g)")
     p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the benchmark image (default: {DEFAULT_IMAGE})")
     p.add_argument("--auth-file", help="a Codex auth.json, when there is no OPENAI_API_KEY")
@@ -99,7 +99,7 @@ def main():
                    help="also play entries that were built from another kit than the image's")
     p.add_argument("--jobs", type=int, help="games to play at once (default: half the CPUs)")
     p.add_argument("--hours", type=float, default=12, help="longest one map size may take (default: 12)")
-    p.add_argument("--cpus", type=float, default=4, help="CPUs for the container (default: 4)")
+    p.add_argument("--cpus", type=float, default=16, help="CPUs for the container (default: 16)")
     p.add_argument("--memory", default="8g", help="memory for the container (default: 8g)")
     p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the benchmark image (default: {DEFAULT_IMAGE})")
     p.set_defaults(run=cmd_arena)

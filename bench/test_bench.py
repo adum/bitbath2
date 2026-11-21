@@ -107,7 +107,7 @@ class Run(unittest.TestCase):
         self.assertEqual(duration(20), "0 minutes")
 
     def test_prompts_fill_in(self):
-        task = TASK.format(hours="4 hours", remaining="1 hour", deadline="12:00", session=2, check="bitbath check",
+        task = TASK.format(hours="4 hours", remaining="1 hour", deadline="12:00", session=2, check="bitbath check", cpus=16,
                            history=FIRST)
         fix = FIX.format(deadline="12:00", check="bitbath check", output="error: x")
         self.assertNotIn("{", task + fix)

@@ -64,6 +64,10 @@ they exist.
 - A first working bot is the start, not the end. Play it against the kit's bots \
 and against earlier versions of itself, read the replays to see why games were won \
 or lost, and improve it. Many small tested improvements beat one big untested idea.
+- This container has {cpus} CPUs, whatever `nproc` says: it reports the host's. \
+Run tournaments with `--jobs {cpus}`, since more jobs than CPUs makes them slower \
+and can push a bot past its turn clock. A micro game between Python bots takes \
+about a second of one CPU, so hundreds of games fit in a minute.
 - Measure with enough games to tell a real gain from luck. Every tournament game \
 is on a map like those of configs/micro.toml, on a seed you haven't seen, so test \
 on many seeds of that config.
@@ -330,7 +334,7 @@ def run(args):
                     stop = "time"
                     break
                 prompt = TASK.format(hours=duration(budget), remaining=duration(left), deadline=clock_after(left),
-                                     session=number, check=" ".join(CHECK),
+                                     session=number, check=" ".join(CHECK), cpus=max(1, int(args.cpus)),
                                      history=history(record["rounds"], before, standing_text))
                 print(f"Session {number}: {duration(left)} left", flush=True)
                 archive, outcome = work(number, prompt, left, f"session {number}")
@@ -348,7 +352,7 @@ def run(args):
                     rounds = record["rounds"]
                     same = len(rounds) > 1 and rounds[-2]["contents_sha256"] == outcome["contents_sha256"]
                     if not (same and "standing" in rounds[-2]):
-                        standing_text = standing(docker, archive, max(1, int(args.cpus) // 2))
+                        standing_text = standing(docker, archive, max(1, int(args.cpus)))
                     record["rounds"][-1]["standing"] = standing_text
                     write_json(entry / "entry.json", record)
                     print(standing_text, flush=True)
