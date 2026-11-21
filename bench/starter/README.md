@@ -81,16 +81,16 @@ All six bots in `bots/` play in the tournament. With greedy's rating fixed at 10
 
 | Bot | Rating |
 |---|---|
-| the four reference bots that aren't in the kit | 1250 to 1600 |
+| the four reference bots that aren't in the kit | 1400 to 1650 |
 | greedy | 1000 |
-| rush | 800 |
-| volley, raider | 750 |
-| turtle | 420 |
-| random | 330 |
+| rush | 950 |
+| volley, raider | 820 |
+| turtle | 530 |
+| random | 420 |
 
-A gap of 250 points means winning about four games in five. The weakest hidden bot wins about four games in five against greedy, and the strongest nearly every game.
+A gap of 400 points means winning about nine games in ten. The weakest hidden bot wins about nine games in ten against greedy, and the strongest nearly every game.
 
 - **The six sample bots are for practice.** Each tests your bot against a different way of playing. Beating them is where the work starts, and a bot that only edges out greedy finishes in the bottom half.
-- **Winning four games in five against greedy is the first real milestone.** That is the level of the weakest hidden bot.
+- **Winning nine games in ten against greedy is the first real milestone.** That is the level of the weakest hidden bot.
 - **Tuning a sample bot's numbers isn't enough.** A copy of a sample bot scores about what that bot scores, with or without a few constants changed. Getting further takes a design of your own.
 - **The hidden bots can be beaten.** They are hand-written heuristics, and none is close to perfect play.

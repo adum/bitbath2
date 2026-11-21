@@ -40,12 +40,12 @@ that tournament is the only result of this work.
 - The kit's bots/ directory holds six of the reference bots. They are simple \
 samples, and greedy is the best of them.
 - Four more reference bots are held back, so you can't see them. On the scale \
-where greedy is rated 1000 they are rated from about 1250 to 1600. The weakest of \
-them wins about four games in five against greedy, and the strongest nearly every \
+where greedy is rated 1000 they are rated from about 1400 to 1650. The weakest of \
+them wins about nine games in ten against greedy, and the strongest nearly every \
 game. None of them is close to perfect play: they are hand-written heuristics, \
 and a better bot can beat them all.
-- So a bot that only edges out greedy finishes in the bottom half. Winning four \
-games in five against greedy is the first real milestone, and doing well means \
+- So a bot that only edges out greedy finishes in the bottom half. Winning nine \
+games in ten against greedy is the first real milestone, and doing well means \
 going well beyond that. A copy of a sample bot, or a sample bot with its numbers \
 tuned, scores about what that bot scores: getting further takes a design of your own.
 
@@ -85,8 +85,8 @@ STANDING = """How submission/ stands now. After the last session the benchmark p
 {table}
 
 Read this table for what it is. These six are the weakest bots in the real \
-tournament, and the four reference bots you can't see are rated about 1250 to \
-1600 on this scale. Coming first here is not a good result yet: a strong bot wins \
+tournament, and the four reference bots you can't see are rated about 1400 to \
+1650 on this scale. Coming first here is not a good result yet: a strong bot wins \
 nearly every game in this table. It is also only four seeds, so \
 it is a rough guide and not a measurement.
 """
