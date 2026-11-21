@@ -1,6 +1,6 @@
 # Bitbath: build a bot
 
-Bitbath is a turn-based, two-player strategy game on a hex map, played by programs. This is a competition, and your task is to write the strongest bot you can. When you're done, your bot plays a tournament against bots that others built from this same kit and against reference bots, three of which aren't in the kit. Its rating in that tournament is the result.
+Bitbath is a turn-based, two-player strategy game on a hex map, played by programs. This is a competition, and your task is to write the strongest bot you can. When you're done, your bot plays a tournament against bots that others built from this same kit and against reference bots, four of which aren't in the kit. Its rating in that tournament is the result.
 
 [SPEC.md](SPEC.md) is the game's full design. Sections 3 to 8 are what a bot author needs: the rules, fog of war, the protocol, time control, and replays.
 
@@ -23,7 +23,7 @@ This builds your bot, plays it against itself, and fails if either side crashes,
 
 ## The tournament
 
-- **Opponents.** Every bot plays every other bot: the bots others built, the seven bots in `bots/`, and three stronger reference bots that aren't in the kit. Apart from the bots in `bots/`, you can't see the other bots, and none of them can see yours.
+- **Opponents.** Every bot plays every other bot: the bots others built, the six sample bots in `bots/`, and four stronger reference bots that aren't in the kit. Apart from the bots in `bots/`, you can't see the other bots, and none of them can see yours.
 - **Games.** Each pair of bots plays each map twice, with the sides swapped.
 - **Maps.** Most games are on maps like those of `configs/micro.toml`. Some are on larger maps, like those of `configs/small.toml` and `configs/default.toml`. The map seeds are ones you haven't seen.
 - **Rules.** Unit costs, damage, and other numbers may differ from the defaults, and unit types may be missing. The engine sends the rules at the start of each game, so read them from that message instead of writing them into your bot.
@@ -51,7 +51,7 @@ Each game gets a directory under `runs/`, with its replay and a working director
 Run a tournament of your own, to compare versions of your bot against each other and the kit's bots:
 
 ```bash
-target/release/bitbath tournament --bot mine=submission --bot solid="python bots/solid_bot.py" --bot greedy="python bots/greedy_bot.py" --bot rush="python bots/rush_bot.py" --bot turtle="python bots/turtle_bot.py" --config configs/micro.toml --seeds 1-10 --jobs 4
+target/release/bitbath tournament --bot mine=submission --bot greedy="python bots/greedy_bot.py" --bot rush="python bots/rush_bot.py" --bot turtle="python bots/turtle_bot.py" --config configs/micro.toml --seeds 1-10 --jobs 4
 ```
 
 `target/release/bitbath help` lists every command and option.
@@ -65,12 +65,11 @@ engine/         The game engine, in Rust. It is the final word on the rules.
 runner/         The bitbath command: games, tournaments, ratings, replays.
 kits/python/    The Python kit: protocol, game state, hex math, pathfinding,
                 and a combat predictor that matches the engine.
-bots/           Seven bots to play against. random_bot.py plays legal
-                moves, and greedy_bot.py is a fuller example of the Python
-                kit. Four each play one style: turtle_bot.py defends its
+bots/           Six sample bots. random_bot.py plays legal moves, and
+                greedy_bot.py is a fuller example of the Python kit. The
+                other four each play one style: turtle_bot.py defends its
                 half, volley_bot.py masses archers, raider_bot.py hunts
                 with cavalry, and rush_bot.py attacks at once.
-                solid_bot.py is much stronger than those six.
 configs/        Rule presets.
 tests/vectors/  Test vectors for hex math, damage, vision, and orders, for
                 checking a bot written without the kit.
@@ -78,20 +77,20 @@ tests/vectors/  Test vectors for hex math, damage, vision, and orders, for
 
 ## How strong the opposition is
 
-All seven bots in `bots/` play in the tournament. With greedy's rating fixed at 1000, they are rated about:
+All six bots in `bots/` play in the tournament. With greedy's rating fixed at 1000, the reference bots are rated about:
 
 | Bot | Rating |
 |---|---|
-| the three reference bots that aren't in the kit | 1400 to 1600 |
-| solid | 1290 |
+| the four reference bots that aren't in the kit | 1250 to 1600 |
 | greedy | 1000 |
-| rush | 840 |
-| volley, raider | 710 |
-| turtle | 440 |
-| random | 230 |
+| rush | 800 |
+| volley, raider | 750 |
+| turtle | 420 |
+| random | 330 |
 
-A gap of 290 points means winning about five games in six, which is how solid does against greedy. The best hidden bot beats solid about that often.
+A gap of 250 points means winning about four games in five. The weakest hidden bot wins about four games in five against greedy, and the strongest nearly every game.
 
-- **The six simple bots are for practice.** Each tests your bot against a different way of playing. Beating them is where the work starts, and a bot that only edges out greedy finishes in the bottom half.
-- **Solid is the opponent to measure against.** You can read it and play it as often as you like. Beating it clearly is the first real milestone.
-- **The hidden bots can be beaten too.** They are hand-written heuristics like solid, and none is close to perfect play.
+- **The six sample bots are for practice.** Each tests your bot against a different way of playing. Beating them is where the work starts, and a bot that only edges out greedy finishes in the bottom half.
+- **Winning four games in five against greedy is the first real milestone.** That is the level of the weakest hidden bot.
+- **Tuning a sample bot's numbers isn't enough.** A copy of a sample bot scores about what that bot scores, with or without a few constants changed. Getting further takes a design of your own.
+- **The hidden bots can be beaten.** They are hand-written heuristics, and none is close to perfect play.

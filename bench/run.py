@@ -37,18 +37,17 @@ What you are up against:
 - When your time is over, your bot plays a tournament against bots that other AI \
 models built from this same kit, and against reference bots. Your bot's rating in \
 that tournament is the only result of this work.
-- The kit's bots/ directory holds seven of the reference bots. Six are simple \
-samples. The seventh, solid_bot.py, is a real opponent: on the scale where greedy \
-is rated 1000 it is rated about 1290, and it wins about five games in six against \
-greedy.
-- Three more reference bots are held back, so you can't see them. They are rated \
-from about 1400 to 1600, and the best of them beats solid about as often as solid \
-beats greedy. None of them is close to perfect play: they are hand-written \
-heuristics, and a better bot can beat them all.
-- So a bot that only edges out greedy finishes in the bottom half. Beating solid \
-clearly is the first real milestone, and doing well means going well beyond that. \
-You can read solid_bot.py and play against it as much as you like. A copy of any \
-bot in the kit scores what that bot scores.
+- The kit's bots/ directory holds six of the reference bots. They are simple \
+samples, and greedy is the best of them.
+- Four more reference bots are held back, so you can't see them. On the scale \
+where greedy is rated 1000 they are rated from about 1250 to 1600. The weakest of \
+them wins about four games in five against greedy, and the strongest nearly every \
+game. None of them is close to perfect play: they are hand-written heuristics, \
+and a better bot can beat them all.
+- So a bot that only edges out greedy finishes in the bottom half. Winning four \
+games in five against greedy is the first real milestone, and doing well means \
+going well beyond that. A copy of a sample bot, or a sample bot with its numbers \
+tuned, scores about what that bot scores: getting further takes a design of your own.
 
 How the work is run:
 
@@ -81,15 +80,15 @@ measured in a tournament, have failed to make the bot stronger.
 FIRST = "Where things stand: this is the first session, and submission/ holds the kit's placeholder bot.\n"
 
 STANDING = """How submission/ stands now. After the last session the benchmark played it, as \
-"mine", against the kit's seven bots on micro maps, with greedy's rating fixed at 1000:
+"mine", against the kit's six bots on micro maps, with greedy's rating fixed at 1000:
 
 {table}
 
-Read this table for what it is. These seven are the weakest bots in the real \
-tournament, and the three reference bots you can't see are rated about 1400 to \
+Read this table for what it is. These six are the weakest bots in the real \
+tournament, and the four reference bots you can't see are rated about 1250 to \
 1600 on this scale. Coming first here is not a good result yet: a strong bot wins \
-nearly every game in this table, solid's included. It is also only four seeds on \
-one map size, so it is a rough guide and not a measurement.
+nearly every game in this table. It is also only four seeds on one map size, so \
+it is a rough guide and not a measurement.
 """
 
 NO_STANDING = """The benchmark tried to play submission/ against the kit's bots after the last \
@@ -201,7 +200,7 @@ def check(docker, archive, directory):
         docker.remove(container)
 
 
-SAMPLES = ("random", "greedy", "turtle", "volley", "raider", "rush", "solid")
+SAMPLES = ("random", "greedy", "turtle", "volley", "raider", "rush")
 
 
 def standing(docker, archive, jobs):
