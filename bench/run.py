@@ -287,7 +287,7 @@ def run(args):
     if harness.name == "codex" and not credentials and not auth_file.is_file():
         raise BenchmarkError("Codex needs OPENAI_API_KEY, or --auth-file naming a Codex auth.json")
     if harness.name != "codex" and not credentials:
-        raise BenchmarkError(f"set one of these first: {', '.join(PROVIDERS[harness.provider][1])}")
+        raise BenchmarkError(f"set one of these first: {', '.join(harness.credential_names())}")
     secrets = tuple(credentials.values())
     if harness.name == "codex" and not credentials:
         secrets += auth_secrets(auth_file)

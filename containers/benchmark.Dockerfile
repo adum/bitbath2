@@ -24,10 +24,21 @@ ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --profile minimal --default-toolchain ${RUST_VERSION} --no-modify-path
 
+# The Antigravity CLI has no npm package: its release is one binary in an
+# archive, pinned here by its address and checksum.
+ARG AGY_URL=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.13-5999302598852608/linux-x64/cli_linux_x64.tar.gz
+ARG AGY_SHA512=014b37387703acab1f47cd532c8bb60167a6a3537b0f9891de03f1b1ffa9614307bc83c4b2f7551273b0877d722716b0cd9e26782f6b2a50705db4f05e18c68f
+RUN curl -fsSL -o /tmp/agy.tar.gz "${AGY_URL}" \
+    && echo "${AGY_SHA512}  /tmp/agy.tar.gz" | sha512sum -c - \
+    && mkdir /tmp/agy && tar -xzf /tmp/agy.tar.gz -C /tmp/agy \
+    && install -m 0755 "$(find /tmp/agy -type f -name antigravity | head -1)" /usr/local/bin/agy \
+    && rm -rf /tmp/agy /tmp/agy.tar.gz
+
 COPY bench/proxy.py /opt/bench/proxy.py
 COPY bench/bwrap.py /opt/bench/claude-bwrap
+COPY bench/agy_policy.py /opt/bench/agy-policy
 COPY kit.json /opt/bench/kit.json
-RUN chmod 0555 /opt/bench/claude-bwrap \
+RUN chmod 0555 /opt/bench/claude-bwrap /opt/bench/agy-policy \
     && mkdir -p /home/bench /etc/claude-code \
     && printf '%s\n' '{"sandbox":{"bwrapPath":"/opt/bench/claude-bwrap"}}' \
        > /etc/claude-code/managed-settings.json

@@ -103,6 +103,40 @@ class Harnesses(unittest.TestCase):
         self.assertEqual(activity(lines(codex)), {"commands": 1, "edits": 1, "command": "ls", "said": "Done."})
         self.assertEqual(activity(""), {"commands": 0, "edits": 0, "command": "", "said": ""})
 
+    def test_antigravity(self):
+        harness = Harness("agy", "gemini-4-carbon-high", "high")
+        self.assertEqual((harness.provider, harness.credential_names()), ("google", ["GEMINI_API_KEY"]))
+        command, stdin = harness.command("build a bot")
+        self.assertEqual(json.loads(stdin), {"event": "user", "message": {"content": "build a bot"}})
+        settings = json.loads(command[command.index("--settings") + 1])
+        self.assertEqual(settings["modelProvider"], "gemini")
+        self.assertEqual(command[-2:], ["--effort", "high"])
+        step = lambda **fields: {"event": "step_update", "step_update": fields}
+        events = [
+            step(step_index=1, state="ACTIVE", step_type="agent_response", text_delta="Reading "),
+            step(step_index=1, state="DONE", step_type="agent_response", text_delta="the kit."),
+            step(step_index=2, state="ACTIVE", step_type="tool", tool_name="run_command",
+                 tool_info={"parameters": {"CommandLine": "ls bots"}}),
+            step(step_index=2, state="DONE", step_type="tool", tool_name="run_command",
+                 tool_info={"parameters": {"CommandLine": "ls bots"}}),
+            step(step_index=3, state="DONE", step_type="tool", tool_name="write_to_file"),
+            {"event": "result", "result": {"status": "SUCCESS", "usage": {"total_tokens": 7}}},
+        ]
+        text = "".join(json.dumps(event) + chr(10) for event in events)
+        self.assertEqual(activity(text), {"commands": 1, "edits": 1, "command": "ls bots", "said": "Reading the kit."})
+        self.assertIsNone(failure_kind(text, "", 0))
+        self.assertEqual(usage_records(text), [{"total_tokens": 7}])
+        failed = json.dumps({"event": "result", "result": {"status": "ERROR", "error": "API key not valid."}})
+        self.assertEqual(failure_kind(failed, "", 0), "configuration")
+        self.assertEqual(error_message(failed), "API key not valid.")
+
+    def test_antigravity_tool_policy(self):
+        from bench.agy_policy import decision
+        self.assertEqual(decision({"toolCall": {"name": "run_command", "args": {}}})["decision"], "allow")
+        for tool in ("search_web", "read_url_content", "browser_subagent", "invoke_subagent", "call_mcp_tool", None):
+            self.assertEqual(decision({"toolCall": {"name": tool, "args": {}}})["decision"], "deny", tool)
+        self.assertEqual(decision({})["decision"], "deny")
+
     def test_failures(self):
         self.assertIsNone(failure_kind('{"type":"result","subtype":"success"}\n', "", 0))
         self.assertEqual(failure_kind("", "Error: 503 overloaded", 1), "transient")

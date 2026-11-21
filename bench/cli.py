@@ -32,8 +32,8 @@ def cmd_build(args):
         manifest = kit.export(context / "kit", args.rev)
         (context / "kit.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
         (context / "bench").mkdir()
-        for name in ("proxy.py", "bwrap.py"):
-            # Written with Unix line endings: bwrap.py is run by its first line.
+        for name in ("proxy.py", "bwrap.py", "agy_policy.py"):
+            # Written with Unix line endings: two of them are run by their first line.
             text = (ROOT / "bench" / name).read_text(encoding="utf-8")
             (context / "bench" / name).write_text(text, encoding="utf-8", newline="\n")
         command = ["docker", "build", "--file", str(ROOT / "containers" / "benchmark.Dockerfile"),
@@ -75,7 +75,7 @@ def main():
 
     p = commands.add_parser("run", help="have a model build a bot, and seal it as an entry")
     p.add_argument("--harness", required=True, choices=HARNESSES, help="the coding agent the model works through")
-    p.add_argument("--model", required=True, help="the model's exact id; for opencode, provider/model")
+    p.add_argument("--model", required=True, help="the model's exact id; for opencode, provider/model; for agy, a slug such as gemini-4-carbon-high")
     p.add_argument("--effort", help="the model's reasoning effort, if the harness takes one")
     p.add_argument("--name", help="the bot's name in the tournament (default: from the model id)")
     p.add_argument("--hours", type=float, default=4, help="working time for the model (default: 4)")

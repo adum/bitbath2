@@ -142,7 +142,9 @@ All three steps have been run under Docker, `run` with a script standing in for 
 
 ### Building a bot
 
-`run` starts a container from the image and lets one model work in it, through `--harness claude`, `codex`, or `opencode`. It needs the provider's key in the environment, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+`run` starts a container from the image and lets one model work in it, through `--harness claude`, `codex`, `opencode`, or `agy`. It needs the provider's key in the environment, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+
+`agy` is Google's Antigravity CLI. It takes a model slug such as `gemini-4-carbon-high`, where the last word is the reasoning effort, and it needs `GEMINI_API_KEY`: Antigravity's own sign-in is held by the desktop's credential store and can't be copied into a container. A hook that the model can't change limits it to reading and writing files and running commands, which keeps out its web search and browser tools.
 
 - **What the model has.** The kit in `/workspace`, and the kit's README as its task. It can build, play games against the sample bots and its own earlier versions, and read the replays.
 - **What it can't reach.** The container's network goes through a proxy that connects only to the model provider's hosts. The harness's web search and fetch tools are off, and none of your own settings, memory, or history are copied in. Other entries and the held-back reference bots are not in the container at all.

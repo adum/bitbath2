@@ -21,7 +21,7 @@ PROVIDERS = {
     "deepseek": (["api.deepseek.com"], ["DEEPSEEK_API_KEY"]),
     "mistral": (["api.mistral.ai"], ["MISTRAL_API_KEY"]),
 }
-HARNESSES = ("claude", "codex", "opencode")
+HARNESSES = ("claude", "codex", "opencode", "agy")
 
 
 def claude_settings():
@@ -39,6 +39,17 @@ def claude_settings():
             "network": {"allowedDomains": [], "deniedDomains": ["*"], "strictAllowlist": True,
                         "allowUnixSockets": [], "allowAllUnixSockets": False, "allowLocalBinding": False},
         },
+    }
+
+
+def agy_settings():
+    """Antigravity's settings for a build container: the Gemini API with a
+    key instead of a sign-in, and no web or MCP tools."""
+    return {
+        "modelProvider": "gemini",
+        "permissions": {"allow": [], "ask": [], "deny": ["read_url(*)", "execute_url(*)", "mcp(*)"]},
+        "statusLine": {"enabled": False},
+        "title": {"enabled": False},
     }
 
 
@@ -76,6 +87,8 @@ class Harness:
             return "openai"
         if self.name == "claude":
             return "anthropic"
+        if self.name == "agy":
+            return "google"
         if "/" not in self.model:
             raise BenchmarkError("OpenCode needs the model as provider/model")
         provider = self.model.split("/", 1)[0]
@@ -87,11 +100,19 @@ class Harness:
     def hosts(self):
         return PROVIDERS[self.provider][0]
 
+    def credential_names(self):
+        """The environment variables, any one of which is the harness's credential."""
+        # Antigravity reads only this one. Its own sign-in is kept by the
+        # desktop's credential store, which can't be copied into a container.
+        return ["GEMINI_API_KEY"] if self.name == "agy" else PROVIDERS[self.provider][1]
+
     def credentials(self):
-        return {name: os.environ[name] for name in PROVIDERS[self.provider][1] if os.environ.get(name)}
+        return {name: os.environ[name] for name in self.credential_names() if os.environ.get(name)}
 
     def environment(self):
         env = self.credentials()
+        if self.name == "agy":
+            env.update(AGY_CLI_DISABLE_AUTO_UPDATE="true")
         if self.name == "claude":
             env.update(CLAUDE_CODE_SUBPROCESS_ENV_SCRUB="1", CLAUDE_CODE_MAX_OUTPUT_TOKENS="128000",
                        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1")
@@ -121,6 +142,17 @@ class Harness:
 
     def authenticate(self, docker, container, auth_file):
         """Codex keeps its login in a file; the others read the environment."""
+        if self.name == "agy":
+            # Root makes Antigravity's hook file, which names the tool policy,
+            # so the model, which is another user, can't change or remove it.
+            # The directories are sticky: Antigravity keeps its own files in
+            # them, but nobody else can rename or delete root's.
+            hooks = {"bitbath": {"PreToolUse": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": "python3 /opt/bench/agy-policy", "timeout": 10}]}]}}
+            docker.run(container, "sh", "-c",
+                       "umask 022; cd /home/bench && mkdir -p .gemini/config && cat > .gemini/config/hooks.json"
+                       " && chmod 1777 .gemini .gemini/config",
+                       user="0:0", input_bytes=json.dumps(hooks).encode())
         if self.name != "codex":
             return
         if self.credentials().get("OPENAI_API_KEY"):
@@ -159,6 +191,16 @@ class Harness:
             if self.effort:
                 args += ["--effort", self.effort]
             return args, prompt
+        if self.name == "agy":
+            # Antigravity's own terminal sandbox needs user namespaces, which
+            # the container doesn't give it, and without it every command
+            # would wait for an approval nobody can give.
+            args = ["agy", "--input-format", "stream-json", "--output-format", "stream-json",
+                    "--model", self.model, "--dangerously-skip-permissions", "--disable-slash-commands",
+                    "--settings", json.dumps(agy_settings())]
+            if self.effort:
+                args += ["--effort", self.effort]
+            return args, json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
         match = re.search(r"(?:^|\s)v?(\d+)\.", version or "")
         v2 = bool(match and int(match.group(1)) >= 2)
         model = self.model
@@ -178,12 +220,19 @@ PERMANENT_ERRORS = (
     "model not found", "modelnotfounderror", "model_not_found", "unknown model",
     "does not support this model", "insufficient_quota", "permission denied",
     "cannot be used for codex", "codex_byok_restricted",
+    "api key not valid", "api_key_invalid", "authentication required",
 )
 TRANSIENT_ERRORS = (
     "rate limit", "rate_limit", "too many requests", "429", "502", "503", "504",
     "overloaded", "connection reset", "connection refused", "temporarily unavailable",
     "failed to fetch", "transport error", "connection error", "request timeout",
 )
+
+
+def agy_failed(event):
+    """Whether this is Antigravity's closing event for a turn that failed."""
+    result = event.get("result")
+    return event.get("event") == "result" and isinstance(result, dict) and result.get("status") != "SUCCESS"
 
 
 def failure_kind(stdout, stderr, returncode):
@@ -199,7 +248,8 @@ def failure_kind(stdout, stderr, returncode):
         if not isinstance(event, dict):
             continue
         if (event.get("type") in {"error", "turn.failed"} or event.get("is_error")
-                or (event.get("type") == "result" and str(event.get("subtype", "")).startswith("error"))):
+                or (event.get("type") == "result" and str(event.get("subtype", "")).startswith("error"))
+                or agy_failed(event)):
             errors.append(json.dumps(event))
     if not returncode and not errors:
         return None
@@ -236,14 +286,18 @@ def error_message(stdout):
                     found = found.get("message") or found.get("error")
             if found:
                 message = str(found)
+        elif isinstance(event, dict) and agy_failed(event):
+            message = str(event["result"].get("error") or f"Antigravity ended with status {event['result'].get('status')}")
     return message[:1000]
 
 
 def activity(stdout):
     """What a session has done so far, from its events: how many commands it
     ran and files it changed, its latest command, and the latest thing the
-    model said. Reads Claude Code's and Codex's events; others count nothing."""
+    model said. Reads the events of Claude Code, Codex, and Antigravity;
+    others count nothing."""
     seen = {"commands": 0, "edits": 0, "command": "", "said": ""}
+    steps, speech = set(), {}
 
     def one_line(text):
         return " ".join(str(text).split())
@@ -267,6 +321,21 @@ def activity(stdout):
                     elif part.get("name") == "Bash":
                         seen["commands"] += 1
                         seen["command"] = one_line(given.get("command", ""))
+        elif event.get("event") == "step_update":  # Antigravity
+            step = event.get("step_update") or {}
+            index, tool = step.get("step_index"), step.get("tool_name")
+            if step.get("step_type") == "agent_response":
+                speech[index] = speech.get(index, "") + str(step.get("text_delta") or "")
+                if speech[index].strip():
+                    seen["said"] = one_line(speech[index])
+            elif tool and index not in steps:
+                steps.add(index)
+                if tool == "run_command":
+                    seen["commands"] += 1
+                    given = (step.get("tool_info") or {}).get("parameters") or {}
+                    seen["command"] = one_line(given.get("CommandLine", ""))
+                elif tool in {"write_file", "write_to_file", "replace_file_content", "multi_replace_file_content"}:
+                    seen["edits"] += 1
         elif event.get("type") == "item.started" or event.get("type") == "item.completed":  # Codex
             item = event.get("item") or {}
             if item.get("type") == "command_execution" and event["type"] == "item.started":
@@ -293,6 +362,10 @@ def usage_records(stdout):
             continue
         if isinstance(event.get("usage"), dict):
             records.append(event["usage"])
+        # Antigravity: a turn's closing usage already counts its steps'.
+        result = event.get("result")
+        if event.get("event") == "result" and isinstance(result, dict) and isinstance(result.get("usage"), dict):
+            records.append(result["usage"])
         message = event.get("message")
         if isinstance(message, dict) and isinstance(message.get("usage"), dict):
             records.append(message["usage"])
