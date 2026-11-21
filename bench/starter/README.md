@@ -25,8 +25,8 @@ This builds your bot, plays it against itself, and fails if either side crashes,
 
 - **Opponents.** Every bot plays every other bot: the bots others built, the six sample bots in `bots/`, and four stronger reference bots that aren't in the kit. Apart from the bots in `bots/`, you can't see the other bots, and none of them can see yours.
 - **Games.** Each pair of bots plays each map twice, with the sides swapped.
-- **Maps.** Most games are on maps like those of `configs/micro.toml`. Some are on larger maps, like those of `configs/small.toml` and `configs/default.toml`. The map seeds are ones you haven't seen.
-- **Rules.** Unit costs, damage, and other numbers may differ from the defaults, and unit types may be missing. The engine sends the rules at the start of each game, so read them from that message instead of writing them into your bot.
+- **Maps.** Every game is on a map like those of `configs/micro.toml`: 12 by 8 hexes, with two neutral cities and an 80-round limit. The map seeds are ones you haven't seen.
+- **Rules.** The rules are those of `configs/micro.toml`, which changes only the map from the defaults in `configs/default.toml`. The engine sends the rules at the start of each game, so read them from that message instead of writing them into your bot.
 - **Time.** The clock in SPEC §7 is enforced. A bot that crashes, hangs, or runs out of memory forfeits the game.
 - **Isolation.** Your bot has no network. It starts each game in an empty working directory, so nothing it writes carries over from one game to the next.
 - **Scoring.** Bots are rated from all the games together. A draw counts as half a win.

@@ -13,9 +13,7 @@
   },
   "kit": "kits/python/bitbath.py",
   "maps": [
-    {"config": "configs/micro.toml", "seeds": "1001-1010"},
-    {"config": "configs/small.toml", "seeds": "1001-1003"},
-    {"config": "configs/default.toml", "seeds": "1001"}
+    {"config": "configs/micro.toml", "seeds": "1001-1020"}
   ],
   "check_config": "configs/micro.toml",
   "anchor": "greedy=1000"

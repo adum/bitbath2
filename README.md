@@ -158,7 +158,7 @@ The credential has to be inside the container for the harness to work, so use a 
 `arena` plays every sealed entry and the reference bots in one container that has no network at all.
 
 - **Bots can't see each other.** Each bot's files belong to a user of its own, and its programs run as that user. A bot can't read another bot's code or working directory, the replay being written, or the results. It can't write to its own directory either, and gets an empty working directory each game, so it keeps nothing from one game to the next.
-- **What is played.** [bench/arena.json](bench/arena.json) names the reference bots, which are the kit's six sample bots and four that are held back, the rule presets with the seeds to play under each, and the rating anchor. The seeds there are the held-out ones, so change them before a season that counts if the repository is public.
+- **What is played.** [bench/arena.json](bench/arena.json) names the reference bots, which are the kit's six sample bots and four that are held back, the rule presets with the seeds to play under each, and the rating anchor. For now every game is on a micro map, as are the practice games between a model's sessions. The seeds there are the held-out ones, so change them before a season that counts if the repository is public.
 - **Results.** `arena/<season>/` gets `games.jsonl`, `ratings.json`, and every replay. Run `arena` again to continue a season that was interrupted, or to add new entries: only the missing games are played. A season refuses a bot whose name it knows with different contents, and an image with another kit.
 - **Failed checks.** Every bot is built and checked in the arena first. An entry that fails sits the tournament out, and `arena.json` in the season says why.
 

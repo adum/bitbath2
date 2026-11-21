@@ -64,9 +64,9 @@ they exist.
 - A first working bot is the start, not the end. Play it against the kit's bots \
 and against earlier versions of itself, read the replays to see why games were won \
 or lost, and improve it. Many small tested improvements beat one big untested idea.
-- Measure with enough games to tell a real gain from luck. Most tournament games \
-are on micro maps, but some are on the larger ones, and all are on seeds you \
-haven't seen, so test on many seeds and on every map size.
+- Measure with enough games to tell a real gain from luck. Every tournament game \
+is on a map like those of configs/micro.toml, on a seed you haven't seen, so test \
+on many seeds of that config.
 - Nobody is there to answer questions, so don't ask any. Decide for yourself.
 - There is no internet access. Work only inside /workspace.
 - Keep submission/ working as you go, since the session can end at any moment. \
@@ -87,7 +87,7 @@ STANDING = """How submission/ stands now. After the last session the benchmark p
 Read this table for what it is. These six are the weakest bots in the real \
 tournament, and the four reference bots you can't see are rated about 1250 to \
 1600 on this scale. Coming first here is not a good result yet: a strong bot wins \
-nearly every game in this table. It is also only four seeds on one map size, so \
+nearly every game in this table. It is also only four seeds, so \
 it is a rough guide and not a measurement.
 """
 
