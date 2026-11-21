@@ -61,23 +61,15 @@ new session starts with the files as you left them, but remembers nothing of the
 sessions before it. Keep notes for yourself in /workspace/NOTES.md as you go, on \
 what you tried, what the results were, and what to do next. Read them first if \
 they exist.
-- A first working bot is the start, not the end. Play it against the kit's bots \
-and against earlier versions of itself, read the replays to see why games were won \
-or lost, and improve it. Many small tested improvements beat one big untested idea.
-- This container has {cpus} CPUs, whatever `nproc` says: it reports the host's. \
-Run tournaments with `--jobs {cpus}`, since more jobs than CPUs makes them slower \
-and can push a bot past its turn clock. A micro game between Python bots takes \
-about a second of one CPU, so hundreds of games fit in a minute.
-- Measure with enough games to tell a real gain from luck. Every tournament game \
-is on a map like those of configs/micro.toml, on a seed you haven't seen, so test \
-on many seeds of that config.
+- This container has {cpus} CPUs, whatever `nproc` says: it reports the host's.
+- Every tournament game is on a map like those of configs/micro.toml, on a seed \
+you haven't seen.
 - Nobody is there to answer questions, so don't ask any. Decide for yourself.
 - There is no internet access. Work only inside /workspace.
 - Keep submission/ working as you go, since the session can end at any moment. \
 Whenever you change it, make sure this still passes: `{check}`
 - Creating an empty file at /workspace/FINISHED ends the work for good and gives \
-up the time that is left. Only do that once several attempts in a row, each \
-measured in a tournament, have failed to make the bot stronger.
+up the time that is left.
 
 {history}"""
 
