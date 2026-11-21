@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from bench import kit
-from bench.harnesses import Harness, error_message, failure_kind, usage_records
+from bench.harnesses import Harness, activity, error_message, failure_kind, usage_records
 from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history, idle
 from bench.sandbox import BenchmarkError, archive_of, check_archive, extract_archive
 
@@ -87,6 +87,21 @@ class Harnesses(unittest.TestCase):
         self.assertEqual(error_message(events), "This organization cannot be used for Codex usage.")
         self.assertEqual(error_message('{"type":"error","message":"plain"}\nnot json\n'), "plain")
         self.assertEqual(error_message('{"type":"result"}\n'), "")
+
+    def test_activity_is_read_from_both_harnesses(self):
+        claude = [{"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Trying  a\nnew build order."},
+            {"type": "tool_use", "name": "Bash", "input": {"command": "bitbath play"}},
+            {"type": "tool_use", "name": "Edit", "input": {"file_path": "bot.py"}}]}}]
+        codex = [{"type": "item.started", "item": {"type": "command_execution", "command": "ls"}},
+                 {"type": "item.completed", "item": {"type": "command_execution", "command": "ls"}},
+                 {"type": "item.completed", "item": {"type": "file_change"}},
+                 {"type": "item.completed", "item": {"type": "agent_message", "text": "Done."}}]
+        lines = lambda events: "".join(json.dumps(event) + chr(10) for event in events) + "not json" + chr(10)
+        self.assertEqual(activity(lines(claude)), {"commands": 1, "edits": 1, "command": "bitbath play",
+                                                   "said": "Trying a new build order."})
+        self.assertEqual(activity(lines(codex)), {"commands": 1, "edits": 1, "command": "ls", "said": "Done."})
+        self.assertEqual(activity(""), {"commands": 0, "edits": 0, "command": "", "said": ""})
 
     def test_failures(self):
         self.assertIsNone(failure_kind('{"type":"result","subtype":"success"}\n', "", 0))

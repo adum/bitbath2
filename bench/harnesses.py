@@ -239,6 +239,46 @@ def error_message(stdout):
     return message[:1000]
 
 
+def activity(stdout):
+    """What a session has done so far, from its events: how many commands it
+    ran and files it changed, its latest command, and the latest thing the
+    model said. Reads Claude Code's and Codex's events; others count nothing."""
+    seen = {"commands": 0, "edits": 0, "command": "", "said": ""}
+
+    def one_line(text):
+        return " ".join(str(text).split())
+
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "assistant":  # Claude Code
+            content = (event.get("message") or {}).get("content")
+            for part in content if isinstance(content, list) else []:
+                if part.get("type") == "text" and part.get("text", "").strip():
+                    seen["said"] = one_line(part["text"])
+                elif part.get("type") == "tool_use":
+                    given = part.get("input") or {}
+                    if part.get("name") in {"Write", "Edit"}:
+                        seen["edits"] += 1
+                    elif part.get("name") == "Bash":
+                        seen["commands"] += 1
+                        seen["command"] = one_line(given.get("command", ""))
+        elif event.get("type") == "item.started" or event.get("type") == "item.completed":  # Codex
+            item = event.get("item") or {}
+            if item.get("type") == "command_execution" and event["type"] == "item.started":
+                seen["commands"] += 1
+                seen["command"] = one_line(item.get("command", ""))
+            elif item.get("type") == "file_change" and event["type"] == "item.completed":
+                seen["edits"] += 1
+            elif item.get("type") == "agent_message" and event["type"] == "item.completed":
+                seen["said"] = one_line(item.get("text", ""))
+    return seen
+
+
 def usage_records(stdout):
     """Every usage record the harness reported, as it reported them. Some
     harnesses report running totals and some per-turn counts, so these

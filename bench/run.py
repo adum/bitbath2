@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .harnesses import PROVIDERS, Harness, auth_secrets, error_message, failure_kind, usage_records
+from .harnesses import PROVIDERS, Harness, activity, auth_secrets, error_message, failure_kind, usage_records
 from .process import run_process
 from .sandbox import CLAUDE_SECCOMP, ROOT, BenchmarkError, Docker, extract_archive
 
@@ -139,6 +139,27 @@ def bot_name(model):
     return name[:32] or "bot"
 
 
+def progress_report(label, elapsed, left, events):
+    """The lines shown every few minutes while a session runs: the time, what
+    the model has done so far, and what it is doing and last said."""
+    try:
+        seen = activity(events.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        seen = activity("")
+
+    def cut(text, width=150):
+        return text if len(text) <= width else text[:width - 3] + "..."
+
+    lines = [f"  [{label}] {duration(elapsed)} in, {duration(left)} left: "
+             f"{seen['commands']} command{'s' * (seen['commands'] != 1)}, "
+             f"{seen['edits']} file edit{'s' * (seen['edits'] != 1)}"]
+    if seen["command"]:
+        lines.append(f"      running: {cut(seen['command'])}")
+    if seen["said"]:
+        lines.append(f"      said: {cut(seen['said'], 300)}")
+    return "\n".join(lines)
+
+
 def session(docker, agent, harness, prompt, directory, *, timeout, secrets, version, label):
     """Runs one harness session in the build container. Returns what happened."""
     directory.mkdir(parents=True)
@@ -151,11 +172,11 @@ def session(docker, agent, harness, prompt, directory, *, timeout, secrets, vers
         if left <= 0:
             break
 
-        def heartbeat(elapsed, size, left=left):
-            print(f"  [{label}] {duration(elapsed)} in, {size / 1e6:.1f} MB of output, "
-                  f"{duration(left - elapsed)} left", flush=True)
-
         events, errors = directory / f"attempt-{attempt}.events.jsonl", directory / f"attempt-{attempt}.stderr.txt"
+
+        def heartbeat(elapsed, size, left=left, events=events):
+            print(progress_report(label, elapsed, left - elapsed, events), flush=True)
+
         done = run_process(
             ["docker", "exec", "-i", "--workdir", "/workspace", agent, *command],
             stdout=events, stderr=errors, input_text=stdin, timeout=left, secrets=secrets,
