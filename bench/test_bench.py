@@ -12,7 +12,7 @@ from pathlib import Path
 
 from bench import kit
 from bench.harnesses import Harness, activity, error_message, failure_kind, usage_records
-from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history, idle
+from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history, idle, sitting_note, sitting_seconds
 from bench.sandbox import BenchmarkError, archive_of, check_archive, extract_archive
 
 
@@ -157,10 +157,24 @@ class Run(unittest.TestCase):
         self.assertEqual(duration(20), "0 minutes")
 
     def test_prompts_fill_in(self):
-        task = TASK.format(hours="4 hours", remaining="1 hour", deadline="12:00", session=2, check="bitbath check", cpus=16,
-                           history=FIRST)
+        fields = dict(hours="4 hours", remaining="1 hour", deadline="12:00", session=2, check="bitbath check", cpus=16,
+                      history=FIRST)
+        task = TASK.format(sitting="", **fields)
         fix = FIX.format(deadline="12:00", check="bitbath check", output="error: x")
         self.assertNotIn("{", task + fix)
+        self.assertNotIn("sitting", task)
+        # Work that is spread over sittings is told so, as one more line of the list.
+        split = TASK.format(sitting=sitting_note(3, 7200), **fields)
+        self.assertIn("they exist.\n- The working time is spread over sittings", split)
+        self.assertIn("This is sitting 3, and 2 hours of it is left.", split)
+        self.assertIn("lost between sittings, and so is anything still running.\n- This container has", split)
+        self.assertIn("lasts until the working time is used up", sitting_note(2, None))
+
+    def test_a_sitting_is_long_enough_for_a_session(self):
+        self.assertIsNone(sitting_seconds(None))
+        self.assertEqual(sitting_seconds(2), 7200)
+        with self.assertRaises(BenchmarkError):
+            sitting_seconds(0.01)
 
 
 class History(unittest.TestCase):

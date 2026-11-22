@@ -51,6 +51,11 @@ def cmd_run(args):
     run(args)
 
 
+def cmd_resume(args):
+    from .run import resume
+    resume(args)
+
+
 def cmd_arena(args):
     from .arena import arena
     arena(args)
@@ -79,6 +84,9 @@ def main():
     p.add_argument("--effort", help="the model's reasoning effort, if the harness takes one")
     p.add_argument("--name", help="the bot's name in the tournament (default: from the model id)")
     p.add_argument("--hours", type=float, default=4, help="working time for the model (default: 4)")
+    p.add_argument("--at-a-time", type=float, metavar="HOURS",
+                   help="pause the entry after this much of the working time; `resume` goes on with it "
+                        "(default: use all of it now)")
     p.add_argument("--max-sessions", type=int, default=50,
                    help="most sessions the time may be split over, as a backstop (default: 50)")
     p.add_argument("--fix-minutes", type=float, default=15,
@@ -88,6 +96,16 @@ def main():
     p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the benchmark image (default: {DEFAULT_IMAGE})")
     p.add_argument("--auth-file", help="a Codex auth.json, when there is no OPENAI_API_KEY")
     p.set_defaults(run=cmd_run)
+
+    p = commands.add_parser("resume", help="go on with a paused entry")
+    p.add_argument("entry", metavar="ID", help="the entry's id: its directory name under entries/")
+    p.add_argument("--at-a-time", type=float, metavar="HOURS",
+                   help="pause again after this much of the working time (default: use all that is left)")
+    p.add_argument("--seal", action="store_true",
+                   help="give up the time that is left: check the bot as it stands and seal it")
+    p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the benchmark image (default: {DEFAULT_IMAGE})")
+    p.add_argument("--auth-file", help="a Codex auth.json, when there is no OPENAI_API_KEY")
+    p.set_defaults(run=cmd_resume)
 
     p = commands.add_parser("arena", help="play the sealed entries and the reference bots against each other")
     p.add_argument("--season", default="default",

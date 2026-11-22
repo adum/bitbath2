@@ -1,6 +1,8 @@
 """The build phase: one model gets the starter kit in a container, time to
 work, and nothing else. What it leaves in submission/ is checked, and then
-sealed as an entry for the tournament."""
+sealed as an entry for the tournament. The time can be used in several
+sittings: between them the entry is paused, and its workspace waits in a
+Docker volume."""
 
 import datetime as dt
 import hashlib
@@ -61,7 +63,7 @@ new session starts with the files as you left them, but remembers nothing of the
 sessions before it. Keep notes for yourself in /workspace/NOTES.md as you go, on \
 what you tried, what the results were, and what to do next. Read them first if \
 they exist.
-- This container has {cpus} CPUs, whatever `nproc` says: it reports the host's.
+{sitting}- This container has {cpus} CPUs, whatever `nproc` says: it reports the host's.
 - Every tournament game is on a map like those of configs/micro.toml, on a seed \
 you haven't seen.
 - Nobody is there to answer questions, so don't ask any. Decide for yourself.
@@ -279,11 +281,21 @@ def history(rounds, before, standing_text):
     return f"{text}\n\n{standing_text}"
 
 
-def run(args):
-    """Runs the build phase for one model. Returns the entry's directory."""
-    harness = Harness(args.harness, args.model, args.effort)
+def sitting_note(number, left):
+    """The prompt's line about sittings, for work that is done in more than
+    one. `left` is the time left in this one, if it ends before the work does."""
+    lasts = f"{duration(left)} of it is left" if left else "it lasts until the working time is used up"
+    return (f"- The working time is spread over sittings, which can be days apart. This is sitting {number}, "
+            f"and {lasts}. When a sitting ends the work is paused, and it goes on later in a new container "
+            "that has /workspace as you left it. Everything outside /workspace is lost between sittings, and "
+            "so is anything still running.\n")
+
+
+def credentials_for(harness, auth_file):
+    """The harness's credentials from the environment, the Codex login file,
+    and every secret value to keep out of the logs."""
     credentials = harness.credentials()
-    auth_file = Path(args.auth_file).expanduser() if args.auth_file else Path.home() / ".codex" / "auth.json"
+    auth_file = Path(auth_file).expanduser() if auth_file else Path.home() / ".codex" / "auth.json"
     if harness.name == "codex" and not credentials and not auth_file.is_file():
         raise BenchmarkError("Codex needs OPENAI_API_KEY, or --auth-file naming a Codex auth.json")
     if harness.name != "codex" and not credentials:
@@ -291,118 +303,239 @@ def run(args):
     secrets = tuple(credentials.values())
     if harness.name == "codex" and not credentials:
         secrets += auth_secrets(auth_file)
+    return credentials, auth_file, secrets
 
+
+def sitting_seconds(at_a_time):
+    if at_a_time is None:
+        return None
+    if at_a_time * 3600 < MIN_SESSION_SECONDS:
+        raise BenchmarkError(f"--at-a-time must be at least {duration(MIN_SESSION_SECONDS)}")
+    return at_a_time * 3600
+
+
+def run(args):
+    """Starts the build phase for one model. Returns the entry's directory."""
+    harness = Harness(args.harness, args.model, args.effort)
+    limit = sitting_seconds(args.at_a_time)
+    access = credentials_for(harness, args.auth_file)
     docker = Docker(args.image, cpus=args.cpus, memory=args.memory)
     image = docker.preflight()
     name = bot_name(args.name or args.model)
     entry_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S-") + name
     entry = ENTRIES / entry_id
     entry.mkdir(parents=True)
-    budget = args.hours * 3600
     record = {
         "id": entry_id, "name": name, "harness": harness.name, "model": harness.model, "effort": harness.effort,
-        "image": image, "started": now(), "sealed": False, "rounds": [],
+        "image": image, "started": now(), "sealed": False, "state": "working", "volume": "bitbath-" + entry_id,
+        "rounds": [], "sittings": [],
         "conditions": {"hours": args.hours, "max_sessions": args.max_sessions, "fix_minutes": args.fix_minutes,
                        "cpus": args.cpus, "memory": args.memory, "network": "provider hosts only",
                        "hosts": harness.hosts},
-        "credential_names": sorted(credentials),
     }
     write_json(entry / "entry.json", record)
-    print(f"Entry {entry_id}: {harness.name} / {harness.model}, {duration(budget)}, kit {image['kit_commit'][:12]}")
+    print(f"Entry {entry_id}: {harness.name} / {harness.model}, {duration(args.hours * 3600)}, "
+          f"kit {image['kit_commit'][:12]}")
+    return sit(entry, record, harness, docker, image, access, limit=limit)
 
-    archive = None
+
+def resume(args):
+    """Goes on with a paused entry, in a new container on its workspace."""
+    entry = ENTRIES / args.entry
+    try:
+        record = json.loads((entry / "entry.json").read_text(encoding="utf-8"))
+    except OSError:
+        raise BenchmarkError(f"no entry {args.entry} in {ENTRIES}") from None
+    if record.get("state") not in ("paused", "working"):
+        raise BenchmarkError(f"{args.entry} isn't a paused entry")
+    harness = Harness(record["harness"], record["model"], record["effort"])
+    limit = sitting_seconds(args.at_a_time)
+    access = credentials_for(harness, args.auth_file)
+    conditions = record["conditions"]
+    docker = Docker(args.image, cpus=conditions["cpus"], memory=conditions["memory"])
+    image = docker.preflight()
+    if image["kit_sha256"] != record["image"]["kit_sha256"]:
+        raise BenchmarkError(f"{args.image} holds another kit than the one this entry started from "
+                             f"(commit {record['image']['kit_commit'][:12]})")
+    if not docker.volume_exists(record["volume"]):
+        raise BenchmarkError(f"the entry's workspace, the Docker volume {record['volume']}, is gone")
+    users = docker.volume_users(record["volume"])
+    if users:
+        raise BenchmarkError("the entry's workspace is in use, by another resume or by one that was killed: "
+                             f"container {', '.join(users)}")
+    if image["id"] != record["image"]["id"]:
+        print("Note: the image was rebuilt since this entry started. The kit is the same, "
+              "but the harness may be another version.")
+    used = sum(r["seconds"] for r in record["rounds"] if not r.get("fix"))
+    print(f"Entry {record['id']}: sitting {len(record['sittings']) + 1}, "
+          f"{duration(conditions['hours'] * 3600 - used)} of {duration(conditions['hours'] * 3600)} left")
+    return sit(entry, record, harness, docker, image, access, limit=limit, seal=args.seal)
+
+
+def sit(entry, record, harness, docker, image, access, *, limit=None, seal=False):
+    """One sitting of an entry's build phase: sessions until the working time
+    or the sitting's own time is used up. The entry is then either paused,
+    with its workspace kept in a Docker volume, or checked and sealed.
+    Returns the entry's directory."""
+    credentials, auth_file, secrets = access
+    conditions, rounds, volume = record["conditions"], record["rounds"], record["volume"]
+    budget = conditions["hours"] * 3600
+    cpus = max(1, int(conditions["cpus"]))
+    first = len(rounds)
+    sitting = {"started": now(), "image_id": image["id"], "first_session": first + 1,
+               "credential_names": sorted(credentials)}
+    if limit:
+        sitting["hours"] = limit / 3600
+    record["sittings"].append(sitting)
+    record["state"] = "working"
+    record.pop("error", None)
+
+    def save():
+        write_json(entry / "entry.json", record)
+
+    save()
     try:
         with docker:
-            agent = docker.agent(hosts=harness.hosts, environment=harness.environment(),
+            agent = docker.agent(hosts=harness.hosts, environment=harness.environment(), workspace=volume,
                                  seccomp=CLAUDE_SECCOMP if harness.name == "claude" else None)
             harness.preflight(docker, agent)
             harness.authenticate(docker, agent, auth_file)
             version = docker.run(agent, harness.name, "--version")
-            record["harness_version"] = version
-            stop = "max_sessions"
-            before = contents_hash(docker.get(agent, "/workspace/submission"))
-            standing_text = ""
+            sitting["harness_version"] = record["harness_version"] = version
+            archive = docker.get(agent, "/workspace/submission")
+            before = record.setdefault("placeholder_sha256", contents_hash(archive))
+            start = contents_hash(archive)
 
-            def work(number, prompt, timeout, label):
+            def keep(outcome, data):
+                """Records submission/ as a session left it."""
+                directory = entry / "rounds" / f"{outcome['number']:02d}"
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / "submission.tar").write_bytes(data)
+                outcome.update(submission_sha256=hashlib.sha256(data).hexdigest(), contents_sha256=contents_hash(data))
+                save()
+
+            if rounds and rounds[-1]["contents_sha256"] is None:
+                # The last sitting was interrupted in the middle of a session.
+                keep(rounds[-1], archive)
+
+            def work(number, prompt, timeout, label, **marks):
                 """One session, then a copy of submission/ as it left it."""
-                outcome = session(docker, agent, harness, prompt, entry / "rounds" / f"{number:02d}",
-                                  timeout=timeout, secrets=secrets, version=version, label=label)
+                began = time.monotonic()
+                try:
+                    outcome = session(docker, agent, harness, prompt, entry / "rounds" / f"{number:02d}",
+                                      timeout=timeout, secrets=secrets, version=version, label=label)
+                except BaseException:
+                    # Its time still counts, and the next sitting records what it left.
+                    rounds.append({"number": number, "seconds": round(time.monotonic() - began), "stop": "interrupted",
+                                   "failure": None, "attempts": 1, "usage": [], "contents_sha256": None, **marks})
+                    save()
+                    raise
+                outcome.update(number=number, **marks)
+                rounds.append(outcome)
                 # This also stops whatever the session left running.
                 data = docker.get(agent, "/workspace/submission")
-                (entry / "rounds" / f"{number:02d}" / "submission.tar").write_bytes(data)
-                outcome.update(number=number, submission_sha256=hashlib.sha256(data).hexdigest(),
-                               contents_sha256=contents_hash(data))
-                record["rounds"].append(outcome)
-                write_json(entry / "entry.json", record)
+                keep(outcome, data)
                 if outcome["failure"] == "configuration":
                     raise BenchmarkError("the harness rejected the model or the credential: "
                                          f"{outcome.get('error') or 'see ' + str(entry / 'rounds')}")
                 return data, outcome
 
-            for number in range(1, args.max_sessions + 1):
+            def end(reason):
+                """Ends the sitting where a run in one piece would end for good."""
+                if limit:
+                    sitting["stop"] = reason
+                else:
+                    record["stop"] = reason
+
+            if seal and "stop" not in record:
+                record["stop"] = "sealed_early"
+            while "stop" not in record and "stop" not in sitting:
+                number = len(rounds) + 1
                 # Only the sessions' own time counts: not the benchmark's
                 # games between them.
-                left = budget - sum(r["seconds"] for r in record["rounds"])
+                left = budget - sum(r["seconds"] for r in rounds if not r.get("fix"))
+                here = left if not limit else min(left, limit - sum(r["seconds"] for r in rounds[first:]))
                 if left < MIN_SESSION_SECONDS:
-                    stop = "time"
+                    record["stop"] = "time"
+                elif number > conditions["max_sessions"]:
+                    record["stop"] = "max_sessions"
+                elif finished(docker, agent):
+                    record["stop"] = "finished"
+                elif here < MIN_SESSION_SECONDS:
+                    sitting["stop"] = "time"
+                if "stop" in record or "stop" in sitting:
                     break
-                prompt = TASK.format(hours=duration(budget), remaining=duration(left), deadline=clock_after(left),
-                                     session=number, check=" ".join(CHECK), cpus=max(1, int(args.cpus)),
-                                     history=history(record["rounds"], before, standing_text))
-                print(f"Session {number}: {duration(left)} left", flush=True)
-                archive, outcome = work(number, prompt, left, f"session {number}")
-                if finished(docker, agent):
-                    stop = "finished"
-                    break
-                if outcome["failure"] == "harness" and outcome["seconds"] < 60:
-                    stop = "harness_error"
-                    break
-                if idle(record["rounds"], before):
-                    stop = "idle"
-                    break
-                if left - outcome["seconds"] >= MIN_SESSION_SECONDS:
+                if rounds and "standing" not in rounds[-1]:
                     # An unchanged bot isn't played again: the table would be the same.
-                    rounds = record["rounds"]
-                    same = len(rounds) > 1 and rounds[-2]["contents_sha256"] == outcome["contents_sha256"]
-                    if not (same and "standing" in rounds[-2]):
-                        standing_text = standing(docker, archive, max(1, int(args.cpus)))
-                    record["rounds"][-1]["standing"] = standing_text
-                    write_json(entry / "entry.json", record)
-                    print(standing_text, flush=True)
-            record["stop"] = stop
-            if archive is None:
-                raise BenchmarkError("no session ran, so there is no submission")
-            if contents_hash(archive) == before:
-                # The kit's placeholder isn't anyone's entry.
-                error = record["rounds"][-1].get("error")
-                raise BenchmarkError("the model left submission/ as the kit had it, so there is nothing to seal"
-                                     + (f": {error}" if error else ""))
+                    same = len(rounds) > 1 and rounds[-2]["contents_sha256"] == rounds[-1]["contents_sha256"]
+                    if same and "standing" in rounds[-2]:
+                        rounds[-1]["standing"] = rounds[-2]["standing"]
+                    else:
+                        rounds[-1]["standing"] = standing(docker, archive, cpus)
+                    save()
+                    print(rounds[-1]["standing"], flush=True)
+                several = limit or len(record["sittings"]) > 1
+                prompt = TASK.format(hours=duration(budget), remaining=duration(left), deadline=clock_after(here),
+                                     session=number, check=" ".join(CHECK), cpus=cpus,
+                                     sitting=sitting_note(len(record["sittings"]), limit and here) if several else "",
+                                     history=history(rounds, before, rounds[-1]["standing"] if rounds else ""))
+                print(f"Session {number}: {duration(left)} left" + (f", {duration(here)} of it now" if limit else ""),
+                      flush=True)
+                archive, outcome = work(number, prompt, here, f"session {number}")
+                if finished(docker, agent):
+                    record["stop"] = "finished"
+                elif outcome["failure"] == "harness" and outcome["seconds"] < 60:
+                    end("harness_error")
+                elif idle(rounds[first:], start):
+                    end("idle")
 
-            passed, output = check(docker, archive, entry)
-            print(f"Check: {'passed' if passed else 'failed'}", flush=True)
-            if not passed and args.fix_minutes > 0:
-                # One more session, with the check's output and nothing else new.
-                record["fix_session"] = True
-                seconds = args.fix_minutes * 60
-                prompt = FIX.format(deadline=clock_after(seconds), check=" ".join(CHECK), output=output)
-                archive, _ = work(len(record["rounds"]) + 1, prompt, seconds, "fix session")
+            if "stop" in record:
+                if not rounds:
+                    raise BenchmarkError("no session ran, so there is no submission")
+                if contents_hash(archive) == before:
+                    # The kit's placeholder isn't anyone's entry.
+                    record["state"] = "done"
+                    error = rounds[-1].get("error")
+                    raise BenchmarkError("the model left submission/ as the kit had it, so there is nothing to seal"
+                                         + (f": {error}" if error else ""))
+
                 passed, output = check(docker, archive, entry)
-                print(f"Check after the fix session: {'passed' if passed else 'failed'}", flush=True)
-            record["check"] = {"passed": passed, "output": output}
-
-        (entry / "submission.tar").write_bytes(archive)
-        extract_archive(archive, entry / "submission")
-        record.update(sealed=passed, submission_sha256=hashlib.sha256(archive).hexdigest())
+                print(f"Check: {'passed' if passed else 'failed'}", flush=True)
+                fixed = any(r.get("fix") and r["stop"] != "interrupted" for r in rounds)
+                if not passed and conditions["fix_minutes"] > 0 and not fixed:
+                    # One more session, with the check's output and nothing else new.
+                    record["fix_session"] = True
+                    seconds = conditions["fix_minutes"] * 60
+                    prompt = FIX.format(deadline=clock_after(seconds), check=" ".join(CHECK), output=output)
+                    archive, _ = work(len(rounds) + 1, prompt, seconds, "fix session", fix=True)
+                    passed, output = check(docker, archive, entry)
+                    print(f"Check after the fix session: {'passed' if passed else 'failed'}", flush=True)
+                record["check"] = {"passed": passed, "output": output}
+                (entry / "submission.tar").write_bytes(archive)
+                extract_archive(archive, entry / "submission")
+                record.update(sealed=passed, state="done", submission_sha256=hashlib.sha256(archive).hexdigest())
     except BaseException as e:
         record["error"] = f"{type(e).__name__}: {e}"
         raise
     finally:
-        record["finished"] = now()
-        write_json(entry / "entry.json", record)
-    if record["sealed"]:
-        print(f"Sealed: {entry}")
-    else:
-        print(f"Not sealed, because the check failed: {entry}")
+        sitting["ended"] = now()
+        if "stop" in record:
+            sitting.setdefault("stop", record["stop"])
+        if record["state"] == "done":
+            record["finished"] = now()
+            try:
+                docker.remove_volume(volume)
+            except BenchmarkError as e:
+                print(f"Couldn't remove the entry's workspace: {e}")
+        else:
+            record["state"] = "paused"
+            used = sum(r["seconds"] for r in rounds if not r.get("fix"))
+            print(f"Paused with {duration(budget - used)} of working time left. Its workspace is the Docker "
+                  f"volume {volume}.\n  To go on:      python benchmark.py resume {record['id']}\n"
+                  f"  To seal it now: python benchmark.py resume {record['id']} --seal")
+        save()
+    if record["state"] == "done":
+        print(f"Sealed: {entry}" if record["sealed"] else f"Not sealed, because the check failed: {entry}")
     return entry
 
 

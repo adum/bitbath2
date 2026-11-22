@@ -150,8 +150,10 @@ class Docker:
             raise BenchmarkError(f"{self.image} isn't a benchmark image: run python benchmark.py build")
         return {"id": data["Id"], "kit_commit": labels["bitbath.kit.commit"], "kit_sha256": labels["bitbath.kit.sha256"]}
 
-    def base(self, name, *, network="none", user=AGENT_USER, caps=(), pids=512):
-        """The `docker run` arguments every benchmark container shares."""
+    def base(self, name, *, network="none", user=AGENT_USER, caps=(), pids=512, workspace=None):
+        """The `docker run` arguments every benchmark container shares.
+        `workspace` names a volume to keep /workspace in; without it the
+        container gets a volume of its own, which is removed with it."""
         scratch = "rw,exec,nosuid,nodev,size=1024m,mode=1777"
         args = [
             "run", "--detach", "--name", name, "--init", "--read-only",
@@ -159,8 +161,9 @@ class Docker:
             "--cpus", str(self.cpus), "--memory", self.memory, "--memory-swap", self.memory,
             "--ulimit", "nofile=4096:4096", "--user", user, "--network", network,
             "--tmpfs", f"/tmp:{scratch}", "--tmpfs", f"/home/bench:{scratch}",
-            # A new volume, which Docker fills with the image's kit.
-            "--mount", "type=volume,destination=/workspace", "--workdir", "/workspace",
+            # Docker fills a new volume with the image's kit.
+            "--mount", f"type=volume,{f'source={workspace},' if workspace else ''}destination=/workspace",
+            "--workdir", "/workspace",
             "--env", "HOME=/home/bench", "--env", "TMPDIR=/tmp",
         ]
         for cap in caps:
@@ -177,9 +180,11 @@ class Docker:
         self.supervisors[name] = children[0]
         return name
 
-    def agent(self, *, hosts, environment, seccomp=None):
+    def agent(self, *, hosts, environment, seccomp=None, workspace=None):
         """A build container: the kit in /workspace, and a network that
-        reaches only `hosts`, through a proxy in a container of its own."""
+        reaches only `hosts`, through a proxy in a container of its own.
+        With `workspace`, /workspace is that named volume, which outlives
+        the container."""
         internal, external = self.prefix + "-internal", self.prefix + "-egress"
         for network, extra in ((internal, ["--internal"]), (external, [])):
             self.networks.append(network)
@@ -191,7 +196,7 @@ class Docker:
         self.call("network", "connect", "--alias", "inference-proxy", internal, proxy)
 
         name = self.prefix + "-agent"
-        args = self.base(name, network=internal)
+        args = self.base(name, network=internal, workspace=workspace)
         if seccomp is not None:
             args += ["--security-opt", f"seccomp={seccomp}"]
         args += ["--dns", "127.0.0.1"]
@@ -243,6 +248,20 @@ class Docker:
             data = path.read_bytes()
         check_archive(data)
         return data
+
+    def volume_exists(self, volume):
+        try:
+            self.call("volume", "inspect", volume, timeout=30)
+            return True
+        except BenchmarkError:
+            return False
+
+    def volume_users(self, volume):
+        """The containers, running or not, that have a volume mounted."""
+        return self.call("ps", "--all", "--quiet", "--filter", f"volume={volume}", timeout=30).split()
+
+    def remove_volume(self, volume):
+        self.call("volume", "rm", volume, timeout=60)
 
     def remove(self, name):
         self.call("rm", "--force", "--volumes", name, timeout=60)
