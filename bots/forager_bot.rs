@@ -7,7 +7,9 @@
 //   after, so it takes ground fast.
 // - Cavalry and scouts raid: they hunt enemy wagons and stand on enemy
 //   sites, which stops them growing wheat, or on enemy cities, which stops
-//   them building.
+//   them building. Without supply there's nothing to raid but cities, so
+//   only scouts raid, and cavalry fight with the rest.
+// - Units that aren't capturing or raiding hunt the enemy units in sight.
 // - Pikemen hold the cities nearest the enemy and dig in.
 // - A unit attacks only when it takes more value than it loses back, with
 //   no planned kills.

@@ -336,6 +336,13 @@ The second tournament played the reference bot against itself with 60 rations, o
 
 So with today's numbers, supply decides how far armies can reach, but not sieges. Making sieges matter would take garrisons that run out of food far sooner than they do now.
 
+The third tournament added Forager, a simpler bot in Rust with a different strategy (§12 Work), on 2 maps, both sides, at most 400 rounds a game:
+
+- **Hauling wins with a second strategy too.** The reference bot won all 8 of its games, and Forager won all 4 of its games against the bot that doesn't haul.
+- **11 of 12 games ended by elimination,** in 151 to 276 rounds.
+- **Forager thinks for about 16 milliseconds a turn,** against about 400 for the reference bot.
+- **Big armies still starve.** The reference bot lost about 141 units a game to hunger and Forager 91, while the bot that doesn't haul, with a smaller army kept near its cities, lost 9.
+
 ### Work
 
 Done in phase 1:
@@ -349,6 +356,7 @@ Done in phase 1:
 - **Golden test vectors** in tests/vectors/supply.json, and random self-play with supply on.
 - **The viewer** draws sites and shows bread, wheat, and rations, and the runner's summaries show bread instead of gold.
 - **A reference bot,** [bots/supply_bot.py](bots/supply_bot.py): vanguard's fighting, plus building with each city's bread, taking sites, hauling wheat, and feeding the army. `--no-haul` turns hauling off.
+- **A second, simpler bot,** [bots/forager_bot.rs](bots/forager_bot.rs), in Rust: it spreads out to take ground, raids enemy wagons and sites with cavalry and scouts, holds its frontier cities with pikemen, and thinks for a few milliseconds a turn.
 
 Still to do:
 
