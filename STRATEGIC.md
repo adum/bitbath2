@@ -15,6 +15,7 @@ The default game is tactical: a 40 × 30 map, short distances, and one shared po
 - **Resource gathering:** wheat grows at a few sites and has to be carried to a city, where it becomes bread. Bread builds units and feeds them.
 - **Sieges:** a city that can't be supplied weakens and falls. A city with its own supply is a fortress.
 - **Ships:** transports, warships, and islands worth invading.
+- **Long wars:** a game is meant to last hundreds or thousands of rounds, and ends when one side runs out of cities.
 
 The default game stays as it is.
 
@@ -117,7 +118,7 @@ There are two kinds of goods. **Wheat** grows at sites. **Bread** is made from i
 - Then the garrison lives on its rations for 30 turns, and then starves, at 10 HP a turn. Starving units also hit weaker, since damage scales with HP.
 - A city with a site next to it takes in that site's wheat every turn, as bread. A site that grows 50 a turn feeds 10 units holding still. To starve such a city, the besieger has to stand on the site or capture it.
 - Besiegers eat too. Holding still, they last 30 turns on their rations, and starving a city out takes 45 turns or more, so a siege that waits needs wagons behind the lines, which a relief force can raid.
-- **Long rations make starving a city slow.** That fits a 400-round game, but if sieges drag in testing, `ration_max` is the knob.
+- **Starving a city out is slow,** which suits games meant to last hundreds or thousands of rounds. If sieges drag even so, `ration_max` is the knob.
 
 **In the field,** an army needs wagons of bread behind it or stocked cities along the way, so how far it can go depends on its supply. A captured city comes with its stockpile and starts making bread, so taking cities along the way helps feed an advance.
 
@@ -187,7 +188,7 @@ The five land units of the default game are unchanged (SPEC §3.3), except that 
 
 - **Wagons** are easy prey, for cavalry most of all. That gives cavalry a strategic job: raiding supply. Killing a wagon of wheat cuts its owner's income, and killing one of bread starves an army.
 - **Transports and galleys** can be hurt only by galleys and archers.
-- **Bombardment,** the galley row's first five entries, is the riskiest guess. No land unit strikes back at a galley, and only archers can shoot at one on their own turn, so bombardment could make coastal cities too hard to hold. Setting those entries to 0 turns it off.
+- **Bombardment,** the galley row's first five entries, stays (§14), but its numbers are the riskiest guess. No land unit strikes back at a galley, and only archers can shoot at one on their own turn, so bombardment could make coastal cities too hard to hold. If it does, those entries come down.
 
 ## 8. Fog of war
 
@@ -199,8 +200,8 @@ Fog works as in SPEC §4. For what's new:
 ## 9. Winning
 
 - **Out of cities** still loses (SPEC §3.8). Sites don't count.
-- **Round limit:** 400 rounds on the 80 × 60 map. The tiebreak counts cities, then sites, then army value.
-- **Elimination may take too long** on a big map. §13 lists other ways to win.
+- **No faster way to win.** Games are meant to last hundreds or thousands of rounds (§14), so elimination is the way to win.
+- **Round limit:** 5,000 rounds, as a backstop for games that stall. The tiebreak counts cities, then sites, then army value.
 
 ## 10. Rule constants
 
@@ -226,7 +227,7 @@ New keys, with their values in the strategic preset and in the default game:
 | `ration_cost` | 5 | – | bread per ration refilled |
 | `starve_hp` | 10 | – | HP a starving unit loses per turn |
 
-A dash means the key isn't used. With `supply` on, the gold keys (`start_gold`, `city_income`, and `unit_upkeep`) aren't used either. The preset also sets the map to 80 × 60 with 46 neutral cities and the round limit to 400, and adds the site terrain, the naval move cost, and the three unit types.
+A dash means the key isn't used. With `supply` on, the gold keys (`start_gold`, `city_income`, and `unit_upkeep`) aren't used either. The preset also sets the map to 80 × 60 with 46 neutral cities and the round limit to 5,000, and adds the site terrain, the naval move cost, and the three unit types.
 
 ## 11. Protocol changes
 
@@ -303,12 +304,13 @@ Each phase is playable on its own, and gets tournaments before the next one star
    - Does a bot that hauls wheat beat one that ignores it?
    - Do cities with sites next to them hold, and do cities without them fall to sieges? How long do sieges take?
    - How many orders a turn does supply take?
+   - How long do games last, in rounds and in real time?
    - What should the site ranges, `city_bread`, `cargo_max`, `ration_max`, and the eating costs be?
 2. **Ships.** The naval move cost, ports, transports, galleys, boarding and landing, and maps with more water. The tournaments should answer:
    - Can a player invade an island?
    - Do blockades work?
    - Is bombardment too strong?
-3. **The rest.** A way to win on big maps, the viewer and play page, time controls, and a small strategic preset for play by hand (SPEC §5).
+3. **The rest.** The viewer and play page, time controls (§13), and a small strategic preset for play by hand (SPEC §5).
 
 ### Work
 
@@ -319,19 +321,20 @@ Each phase is playable on its own, and gets tournaments before the next one star
 - **Determinism:** deliveries and refills go in id order, so every engine and kit agrees on them.
 - **Kits:** the new lines and fields, pathfinding for ships, and helpers for loading and feeding.
 - **Golden test vectors** for every new order, upkeep step, and edge case.
-- **Viewer and play page:** sites, piles, stockpiles, cargo, passengers, and ships, plus boarding and landing by clicking.
+- **Viewer and play page:** sites, piles, stockpiles, cargo, passengers, and ships, plus boarding and landing by clicking. The viewer also has to stay quick on replays thousands of rounds long, since it re-simulates every turn (SPEC §8).
 - **A reference bot.** None of today's bots know about goods.
 - **The benchmark:** a separate leaderboard. The ruleset also suits mode 3 (SPEC §5). Its big decisions, like which sites to take or where to land, play out over many turns, which is where a supervising LLM could help.
 
 ## 13. Open questions
 
-1. **A faster way to win on big maps?** Elimination could take hundreds of rounds. Options: you lose when you lose your home city, you win by holding most of the cities, or victory points decide at the round limit. *No proposal yet. Phase 1 games will show how long elimination takes.*
-2. **Hidden passengers?** Showing what a transport carries is simpler. Hiding it would allow decoys. *Proposed: shown, to start.*
-3. **Bombardment:** keep the galley's damage against land units, or set it to 0? *Proposed: keep it, and test it.*
-4. **More warship types?** One type may make naval play flat. A fast raider and a heavy ship are the obvious pair. *Proposed: one, until phase 2 shows whether it's enough.*
-5. **Seizing wagons:** could an attacker take a wagon's cargo instead of destroying it? *Proposed: no, to start.*
-6. **Roads:** terrain that makes wagons faster, which players build, so supply routes become something they make. SPEC §12 already has the hook for changing terrain (`TILE` lines). *Later.*
-7. **More raw goods?** Timber or iron, say, grown at sites and turned in cities into what some unit types need. They'd follow the pattern of wheat and bread, but there would be more to haul and track. *Later.*
+1. **How long may a game take in real time?** Long games make the clock matter more than the round count. At the large preset's 2 seconds a turn, a 2,000-round game can take over 2 hours if both bots use all their time, while bots that answer in a tenth of a second finish it in under 7 minutes. That decides how many tournament games fit in a day. *Proposed: keep the large preset's clock for phase 1, measure how long bots really take, and set the strategic clock in phase 3.*
+
+### Later
+
+Set aside for now:
+
+- **More warship types.** One type may make naval play flat. A fast raider and a heavy ship are the obvious pair.
+- **Roads:** terrain that makes wagons faster, which players build, so supply routes become something they make. SPEC §12 already has the hook for changing terrain (`TILE` lines).
 
 ## 14. Agreed so far
 
@@ -353,7 +356,16 @@ Settled on 2026-11-22:
 
 - **Sites differ** in how much they grow and how much they hold.
 - **Goods are processed in cities.** Sites grow wheat, which becomes bread only in a city, and units eat only bread. With one kind of goods, an army could live off a site and never need a city, and supply would have no shape.
+- **Wheat is the only raw good,** for now and probably for good.
+  - *Dropped:* timber, iron, and other goods that only some units would need. There would be more to haul and track.
 - **Wagons carry both** wheat and bread.
 - **Bread pays for everything.** Units cost bread to build, and there's no gold.
 - **Every unit eats, by what it does.** Holding still costs the least, and moving and attacking cost more. A unit carries enough to last a long time.
 - **Cities make a little bread,** so a player can never be left unable to build.
+- **Long games are intended:** hundreds or thousands of rounds. Elimination stays the way to win, and the round limit is only a backstop.
+  - *Dropped:* a faster way to win, such as losing with your home city, or victory points at the round limit.
+- **Passengers are shown.** A visible transport shows the units aboard.
+  - *Rejected:* hiding them, which would have allowed decoys.
+- **Bombardment stays.** Galleys can hit land units on the coast next to them.
+- **Wagons can't be seized,** to start. Destroying a wagon destroys its cargo.
+- **Later:** more warship types, and roads (§13).
