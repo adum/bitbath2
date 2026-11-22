@@ -56,6 +56,11 @@ def cmd_resume(args):
     resume(args)
 
 
+def cmd_list(args):
+    from .run import listing
+    listing(args)
+
+
 def cmd_arena(args):
     from .arena import arena
     arena(args)
@@ -106,6 +111,10 @@ def main():
     p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the benchmark image (default: {DEFAULT_IMAGE})")
     p.add_argument("--auth-file", help="a Codex auth.json, when there is no OPENAI_API_KEY")
     p.set_defaults(run=cmd_resume)
+
+    p = commands.add_parser("list", help="list the entries: sealed, paused, and how much time each has left")
+    p.add_argument("--all", action="store_true", help="also list the entries that failed")
+    p.set_defaults(run=cmd_list)
 
     p = commands.add_parser("arena", help="play the sealed entries and the reference bots against each other")
     p.add_argument("--season", default="default",

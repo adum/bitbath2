@@ -12,7 +12,7 @@ from pathlib import Path
 
 from bench import kit
 from bench.harnesses import Harness, activity, error_message, failure_kind, usage_records
-from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history, idle, sitting_note, sitting_seconds
+from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history, idle, sitting_note, sitting_seconds, status, summary
 from bench.sandbox import BenchmarkError, archive_of, check_archive, extract_archive
 
 
@@ -169,6 +169,20 @@ class Run(unittest.TestCase):
         self.assertIn("This is sitting 3, and 2 hours of it is left.", split)
         self.assertIn("lost between sittings, and so is anything still running.\n- This container has", split)
         self.assertIn("lasts until the working time is used up", sitting_note(2, None))
+
+    def test_entries_are_listed_with_their_status(self):
+        self.assertEqual(status({"sealed": True}), "sealed")
+        self.assertEqual(status({"sealed": False, "check": {"passed": False}}), "check failed")
+        self.assertEqual(status({"sealed": False, "error": "x"}), "failed")
+        paused = {"id": "e1", "harness": "codex", "state": "paused", "sealed": False,
+                  "conditions": {"hours": 20}, "started": "2026-11-22T03:09:08+00:00",
+                  "rounds": [{"seconds": 7000}, {"seconds": 200}, {"seconds": 900, "fix": True}],
+                  "sittings": [{"ended": "2026-11-22T05:10:00+00:00"}, {"ended": "2026-11-23T09:30:00+00:00"}]}
+        self.assertEqual(summary(paused), ["e1", "codex", "paused", "2:00", "20:00", "18:00", "3", "2",
+                                           "2026-11-23 09:30"])
+        old = {"id": "e0", "harness": "claude", "sealed": True, "conditions": {"hours": 1},
+               "rounds": [{"seconds": 3600}], "finished": "2026-11-21T02:45:00+00:00"}
+        self.assertEqual(summary(old), ["e0", "claude", "sealed", "1:00", "1:00", "-", "1", "1", "2026-11-21 02:45"])
 
     def test_a_sitting_is_long_enough_for_a_session(self):
         self.assertIsNone(sitting_seconds(None))

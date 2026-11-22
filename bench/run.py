@@ -539,6 +539,71 @@ def sit(entry, record, harness, docker, image, access, *, limit=None, seal=False
     return entry
 
 
+def status(record):
+    """One entry's state in a word or two."""
+    state = record.get("state")
+    if state == "paused":
+        return "paused"
+    if state == "working":
+        return "working"
+    if record.get("sealed"):
+        return "sealed"
+    if "check" in record:
+        return "check failed"
+    return "failed"
+
+
+def clock(seconds):
+    """Seconds as hours and minutes: "3:20"."""
+    minutes = max(0, round(seconds / 60))
+    return f"{minutes // 60}:{minutes % 60:02d}"
+
+
+def summary(record):
+    """One entry as a row of the list: its id, harness, status, time used
+    and left, sessions, sittings, and when it was last worked on."""
+    rounds = record.get("rounds", [])
+    used = sum(r["seconds"] for r in rounds if not r.get("fix"))
+    budget = record.get("conditions", {}).get("hours", 0) * 3600
+    open_ = status(record) in ("paused", "working")
+    sittings = record.get("sittings") or [{}]
+    last = sittings[-1].get("ended") or record.get("finished") or record.get("started") or ""
+    return [record.get("id", "?"), record.get("harness", "?"), status(record), clock(used), clock(budget),
+            clock(budget - used) if open_ else "-", str(len(rounds)), str(len(sittings)),
+            last[:16].replace("T", " ")]
+
+
+def listing(args):
+    """Prints every entry, oldest first, with what to do about the paused ones."""
+    records = []
+    for path in sorted(ENTRIES.glob("*/entry.json")):
+        try:
+            records.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            records.append({"id": path.parent.name})
+    if not args.all:
+        records = [r for r in records if status(r) in ("paused", "working", "sealed")]
+    if not records:
+        print("No entries." if args.all else "No sealed or paused entries. --all also lists the failed ones.")
+        return
+    head = ["entry", "harness", "status", "used", "of", "left", "sessions", "sittings", "last worked (UTC)"]
+    rows = [head] + [summary(r) for r in records]
+    widths = [max(len(row[i]) for row in rows) for i in range(len(head))]
+    right = {3, 4, 5, 6, 7}
+    for row in rows:
+        print("  ".join(c.rjust(w) if i in right else c.ljust(w) for i, (c, w) in enumerate(zip(row, widths))).rstrip())
+    counts = {}
+    for r in records:
+        counts[status(r)] = counts.get(status(r), 0) + 1
+    print()
+    print(", ".join(f"{n} {word}" for word, n in counts.items()))
+    paused = [r["id"] for r in records if status(r) == "paused"]
+    if paused:
+        print("To go on with a paused entry: python benchmark.py resume " + (paused[-1] if len(paused) == 1 else "<entry>"))
+    if any(status(r) == "working" for r in records):
+        print("A working entry is in a sitting now, or its last one was killed: resume it if nothing is running.")
+
+
 def finished(docker, agent):
     """Whether the model left the file that says it is done."""
     try:
