@@ -391,7 +391,20 @@ fn info_json(game: &Game) -> String {
         .map(|c| format!("[{},{},{}]", c.hex.q, c.hex.r, c.owner))
         .collect();
     s.push_str(&cities.join(","));
-    let _ = write!(s, "],\"capture_points\":{}}}", game.rules.c.capture_points);
+    // Sites, with supply on (STRATEGIC.md §4): q, r, initial owner, output, cap.
+    s.push_str("],\"sites\":[");
+    let sites: Vec<String> = game
+        .map
+        .sites
+        .iter()
+        .map(|c| format!("[{},{},{},{},{}]", c.hex.q, c.hex.r, c.owner, c.output, c.cap))
+        .collect();
+    s.push_str(&sites.join(","));
+    let _ = write!(
+        s,
+        "],\"supply\":{},\"capture_points\":{}}}",
+        game.rules.c.supply, game.rules.c.capture_points
+    );
     s
 }
 
@@ -438,13 +451,21 @@ impl Viewer {
             "{{\"step\":{step},\"round\":{},\"player\":{},\"gold\":[{},{}],\"units\":[",
             game.round, game.player, game.gold[1], game.gold[2]
         );
+        // With supply on, units also carry wheat, bread, and rations, cities
+        // their bread, and sites their owner, capture, and wheat.
+        let supply = game.rules.supply();
         let units: Vec<String> = game
             .units
             .iter()
             .map(|u| {
                 let flags = u.acted as u8 | (u.moved as u8) << 1 | (u.fresh as u8) << 2;
+                let food = if supply {
+                    format!(",{},{},{}", u.wheat, u.bread, u.rations)
+                } else {
+                    String::new()
+                };
                 format!(
-                    "[{},{},{},{},{},{},{},{},{}]",
+                    "[{},{},{},{},{},{},{},{},{}{food}]",
                     u.id,
                     u.owner,
                     esc(&game.rules.units[u.ty].code.to_string()),
@@ -462,9 +483,26 @@ impl Viewer {
         let cities: Vec<String> = game
             .cities
             .iter()
-            .map(|c| format!("[{},{},{},{}]", c.owner, c.capturer, c.progress, c.built as u8))
+            .map(|c| {
+                let bread = if supply { format!(",{}", c.bread) } else { String::new() };
+                format!("[{},{},{},{}{bread}]", c.owner, c.capturer, c.progress, c.built as u8)
+            })
             .collect();
         out.push_str(&cities.join(","));
+        if supply {
+            let sites: Vec<String> = game
+                .sites
+                .iter()
+                .map(|s| format!("[{},{},{},{}]", s.owner, s.capturer, s.progress, s.wheat))
+                .collect();
+            let _ = write!(
+                out,
+                "],\"bread\":[{},{}],\"sites\":[{}",
+                game.bread_of(1),
+                game.bread_of(2),
+                sites.join(",")
+            );
+        }
 
         // Vision by storage index: bit 1 for player 1, bit 2 for player 2.
         // The player whose turn it is sees what the engine tracked this turn.

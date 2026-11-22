@@ -226,9 +226,14 @@ pub fn summary(replay: &Replay, all_orders: bool) -> Result<String, String> {
         h["bitbath"].as_str().unwrap_or("?"),
         h["protocol"]
     );
+    let sites = if game.sites.is_empty() {
+        String::new()
+    } else {
+        format!(", {} sites", game.sites.len())
+    };
     let _ = writeln!(
         out,
-        "Map {}: {}x{}, {} cities",
+        "Map {}: {}x{}, {} cities{sites}",
         h["map"].as_str().unwrap_or("?"),
         game.map.width,
         game.map.height,
@@ -252,13 +257,24 @@ pub fn summary(replay: &Replay, all_orders: bool) -> Result<String, String> {
             events.clear();
             built.clear();
             rejected = 0;
-            header = format!(
-                "  P{p} {:<10} gold {:<5} cities {:<3} units {:<4}",
-                replay.name(p),
-                game.gold[p as usize],
-                game.cities_of(p),
-                game.units_of(p)
-            );
+            header = if game.rules.supply() {
+                format!(
+                    "  P{p} {:<10} bread {:<5} cities {:<3} sites {:<3} units {:<4}",
+                    replay.name(p),
+                    game.bread_of(p),
+                    game.cities_of(p),
+                    game.sites_of(p),
+                    game.units_of(p)
+                )
+            } else {
+                format!(
+                    "  P{p} {:<10} gold {:<5} cities {:<3} units {:<4}",
+                    replay.name(p),
+                    game.gold[p as usize],
+                    game.cities_of(p),
+                    game.units_of(p)
+                )
+            };
         }
         Visit::Order {
             game,

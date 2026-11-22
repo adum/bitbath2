@@ -463,13 +463,23 @@ fn run_turn(game: &mut Game, seat: &mut Seat, c: &Constants) -> (TurnRecord, Opt
 
 fn print_status(game: &Game, opts: &Options) {
     let side = |p: u8| {
-        format!(
-            "{}: {} cities, {} units, {} gold",
-            opts.players[p as usize - 1].name,
-            game.cities_of(p),
-            game.units_of(p),
-            game.gold[p as usize]
-        )
+        let name = &opts.players[p as usize - 1].name;
+        if game.rules.supply() {
+            format!(
+                "{name}: {} cities, {} sites, {} units, {} bread",
+                game.cities_of(p),
+                game.sites_of(p),
+                game.units_of(p),
+                game.bread_of(p)
+            )
+        } else {
+            format!(
+                "{name}: {} cities, {} units, {} gold",
+                game.cities_of(p),
+                game.units_of(p),
+                game.gold[p as usize]
+            )
+        }
     };
     println!("round {:>3} | {} | {}", game.round, side(1), side(2));
 }

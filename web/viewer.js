@@ -11,8 +11,8 @@
   const DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
   const DEBUG_COLORS = ["red", "green", "blue", "yellow", "orange", "purple", "white", "black"];
   const TERRAIN = {
-    light: { ".": "#e9e4c8", f: "#a3c48b", h: "#d4b787", C: "#efe7d6", "^": "#97918b", "~": "#8db6de" },
-    dark: { ".": "#3b3b30", f: "#30492c", h: "#5b4a31", C: "#4d473d", "^": "#5d5954", "~": "#2a4769" },
+    light: { ".": "#e9e4c8", f: "#a3c48b", h: "#d4b787", C: "#efe7d6", "^": "#97918b", "~": "#8db6de", R: "#ecd98b" },
+    dark: { ".": "#3b3b30", f: "#30492c", h: "#5b4a31", C: "#4d473d", "^": "#5d5954", "~": "#2a4769", R: "#5e5324" },
   };
   /** @param {string} id */
   const $ = (id) => /** @type {any} */ (document.getElementById(id));
@@ -320,6 +320,17 @@
           ctx.quadraticCurveTo(x - s * 0.2, y - s * 0.2, x, y);
           ctx.quadraticCurveTo(x + s * 0.2, y + s * 0.2, x + s * 0.4, y);
           ctx.stroke();
+        } else if (ch === "R") {
+          // A resource site: three stalks of wheat.
+          for (const dx of [-0.25, 0, 0.25]) {
+            ctx.beginPath();
+            ctx.moveTo(x + dx * s, y + s * 0.32);
+            ctx.lineTo(x + dx * s, y - s * 0.1);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.ellipse(x + dx * s, y - s * 0.22, s * 0.06, s * 0.14, 0, 0, 2 * Math.PI);
+            ctx.fill();
+          }
         }
       }
     }
@@ -463,6 +474,30 @@
       ctx.closePath();
       ctx.fillStyle = color;
       ctx.fill();
+      if (capturer && (!persp || visibleTo(q, r, persp))) {
+        const frac = Math.min(1, progress / v.info.capture_points);
+        ctx.beginPath();
+        ctx.arc(x, y, s * 0.68, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * frac);
+        ctx.strokeStyle = playerColor(capturer);
+        ctx.lineWidth = Math.max(2, s * 0.14);
+        ctx.stroke();
+      }
+    });
+    // Resource sites, with supply on: a dashed border in the owner's color,
+    // and capture progress as for cities.
+    if (!v.state.sites) return;
+    v.info.sites.forEach((/** @type {number[]} */ site, /** @type {number} */ i) => {
+      const [q, r] = site;
+      const [owner, capturer, progress] = v.state.sites[i];
+      const [x, y] = center(q, r);
+      if (owner) {
+        hexPath(ctx, x, y, s * 0.86);
+        ctx.strokeStyle = playerColor(owner);
+        ctx.lineWidth = Math.max(1.5, s * 0.11);
+        ctx.setLineDash([s * 0.28, s * 0.16]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       if (capturer && (!persp || visibleTo(q, r, persp))) {
         const frac = Math.min(1, progress / v.info.capture_points);
         ctx.beginPath();
@@ -979,8 +1014,8 @@
     /** @type {string[]} */ const killed = [];
     /** @type {string[]} */ const lost = [];
     /** @type {string[]} */ const built = [];
-    /** @type {number[]} */ const captured = [];
-    /** @type {Map<number, string>} */ const capturing = new Map();
+    /** @type {string[]} */ const captured = [];
+    /** @type {Map<string, string>} */ const capturing = new Map();
     for (const m of v.marks) {
       if (!m.ok) continue;
       const res = (v.info.results[m.step] || "").split(/\s+/);
@@ -998,10 +1033,12 @@
         if (aHp === 0) lost.push(name(m.id));
       } else if (m.op === "C") {
         const [q, r] = m.hexes[0];
-        const city = v.info.cities.findIndex((/** @type {number[]} */ c) => c[0] === q && c[1] === r);
-        capturing.delete(city);
-        if (res[1] === "captured") captured.push(city);
-        else capturing.set(city, city + " (" + res[1] + "/" + res[2] + ")");
+        const here = (/** @type {number[]} */ c) => c[0] === q && c[1] === r;
+        const city = v.info.cities.findIndex(here);
+        const key = city >= 0 ? String(city) : "site " + v.info.sites.findIndex(here);
+        capturing.delete(key);
+        if (res[1] === "captured") captured.push(key);
+        else capturing.set(key, key + " (" + res[1] + "/" + res[2] + ")");
       } else if (m.op === "B") {
         const t = v.info.units[m.type];
         built.push(t ? t.name : m.type);
@@ -1026,7 +1063,7 @@
     if (captured.length) cityNews.push("captured " + captured.join(", "));
     if (capturing.size) cityNews.push("capturing " + Array.from(capturing.values()).join(", "));
     if (cityNews.length) out.Cities = cityNews.join("; ");
-    if (built.length) out.Built = tally(built, ", ") + " · " + spent + " gold";
+    if (built.length) out.Built = tally(built, ", ") + " · " + spent + (v.info.supply ? " bread" : " gold");
     const issues = [];
     if (turn.skipped) issues.push("missed the turn");
     if (rejected) issues.push(rejected + " rejected");
@@ -1058,7 +1095,9 @@
     const table = $("players");
     table.replaceChildren();
     const head = document.createElement("tr");
-    for (const label of ["", "cities", "units", "gold", "army"]) head.append(el("th", label));
+    // With supply on there's no gold; the column shows the bread each player has.
+    const money = v.info.supply ? st.bread : st.gold;
+    for (const label of ["", "cities", "units", v.info.supply ? "bread" : "gold", "army"]) head.append(el("th", label));
     table.append(head);
     const army = [0, 0];
     const cities = [0, 0];
@@ -1079,7 +1118,7 @@
         // Of a hidden opponent, the units in sight and what they are worth:
         // at least that much, hence the plus.
         el("td", !secret ? String(units.length) : units.length ? units.length + "+" : "?", "num"),
-        el("td", secret ? "?" : String(st.gold[p - 1]), "num"),
+        el("td", secret ? "?" : String(money[p - 1]), "num"),
         el("td", !secret ? String(army[p - 1]) : units.length ? army[p - 1] + "+" : "?", "num"),
       );
       // What the army is made of, under its numbers, in a box of fixed size
@@ -1187,17 +1226,31 @@
     const seen = !fog || visibleTo(q, r, fog);
     v.info.cities.forEach((/** @type {number[]} */ c, /** @type {number} */ i) => {
       if (c[0] === q && c[1] === r) {
-        const [owner, capturer, progress] = v.state.cities[i];
+        const [owner, capturer, progress, , bread] = v.state.cities[i];
         let text = "city " + i + ", " + (owner ? "owned by " + playerName(owner) : "neutral");
         if (capturer && seen) text += ", " + playerName(capturer) + " capturing " + progress + "/" + v.info.capture_points;
+        if (v.info.supply && seen) text += ", " + bread + " bread";
         lines.push(text);
       }
     });
+    if (v.state.sites) {
+      v.info.sites.forEach((/** @type {number[]} */ s, /** @type {number} */ i) => {
+        if (s[0] === q && s[1] === r) {
+          const [owner, capturer, progress, wheat] = v.state.sites[i];
+          let text = "site " + i + ", " + (owner ? "owned by " + playerName(owner) : "neutral") + ", grows " + s[3] + " wheat a turn up to " + s[4];
+          if (seen) text += ", holds " + wheat;
+          if (capturer && seen) text += ", " + playerName(capturer) + " capturing " + progress + "/" + v.info.capture_points;
+          lines.push(text);
+        }
+      });
+    }
     if (fog && !seen) lines.push("out of sight");
     for (const u of v.state.units) {
       if (u[3] === q && u[4] === r && (seen || u[1] === fog)) {
         const type = v.info.units[u[2]];
-        lines.push("unit " + u[0] + " " + playerName(u[1]) + " " + (type ? type.name : u[2]) + " " + u[5] + " hp, " + u[6] + " mp" + (u[7] & 1 ? ", acted" : "") + (u[7] & 4 ? ", new" : "") + (u[8] ? ", dug in to level " + u[8] : ""));
+        // With supply on: wheat, bread, and rations follow the fortification level.
+        const food = v.info.supply ? ", " + u[11] + " rations" + (u[9] || u[10] ? ", carrying " + u[9] + " wheat and " + u[10] + " bread" : "") : "";
+        lines.push("unit " + u[0] + " " + playerName(u[1]) + " " + (type ? type.name : u[2]) + " " + u[5] + " hp, " + u[6] + " mp" + (u[7] & 1 ? ", acted" : "") + (u[7] & 4 ? ", new" : "") + (u[8] ? ", dug in to level " + u[8] : "") + food);
       }
     }
     if (fog) lines.push(...v.play.hoverLines(q, r));
@@ -1333,6 +1386,7 @@
     skirmish: "ignores zones of control",
     no_move_attack: "can't move and attack in one turn",
     fortify: "digs in when it holds still",
+    carry: "carries wheat and bread",
   });
 
   function buildRules() {
@@ -1373,20 +1427,37 @@
     const game = [
       "Two players on a " + v.info.width + " × " + v.info.height + " hex map with " + neutral + " neutral " + (neutral === 1 ? "city" : "cities") + ".",
     ];
-    if (start.length) game.push("Each player starts with " + tally(start.map(name)) + " on a home city, and " + num(c.start_gold) + " gold.");
+    // With supply on (the strategic ruleset), bread takes the place of gold.
+    const supply = !!c.supply;
+    if (start.length) {
+      const money = supply ? num(c.start_bread) + " bread in it" : num(c.start_gold) + " gold";
+      game.push("Each player starts with " + tally(start.map(name)) + " on a home city, and " + money + ".");
+    }
     game.push(
       "A player who owns no cities loses at once.",
-      "After " + c.round_limit + " rounds, the player with more cities wins. If that's tied, the bigger army wins: each unit counts its cost scaled by the HP it has left. Otherwise it's a draw.",
+      "After " + c.round_limit + " rounds, the player with more cities wins. If that's tied, " + (supply ? "the player with more sites wins, then " : "") + "the bigger army wins: each unit counts its cost scaled by the HP it has left. Otherwise it's a draw.",
       "A bot that crashes, goes over its memory limit, or fails to finish " + c.hang_turns + " turns in a row forfeits.",
     );
     section("The game", game);
 
+    const eats = "Feeding: each unit eats " + c.eat_base + " ration" + (c.eat_base === 1 ? "" : "s") + ", plus " + c.eat_move + " if it moved and " + c.eat_attack + " if it attacked on its last turn. Then it refills to " + c.ration_max + " from your cities and wagons on or next to its hex, at " + c.ration_cost + " bread a ration: cities first, then wagons, lower ids first. A unit that can't cover what it ate starves: it loses " + c.starve_hp + " HP, and doesn't heal this turn.";
     section("Each turn", [
-      "Income: " + c.city_income + " gold per city owned, minus " + c.unit_upkeep + " per unit. Gold never drops below 0, and nothing is disbanded.",
+      supply
+        ? "Production: each site you own grows its output of wheat, up to its cap, unless an enemy unit stands on it. A site next to one of your cities hands its wheat to that city, where it becomes bread. Each of your cities makes " + c.city_bread + " bread, unless an enemy unit is on it or next to it."
+        : "Income: " + c.city_income + " gold per city owned, minus " + c.unit_upkeep + " per unit. Gold never drops below 0, and nothing is disbanded.",
+      ...(supply ? [eats] : []),
       "Units standing on their own cities heal " + c.city_heal + " HP.",
-      "A city's capture progress is lost when the capturing player no longer has a unit on it.",
+      "A " + (supply ? "city's or site's" : "city's") + " capture progress is lost when the capturing player no longer has a unit on it.",
       "Every unit gets its full movement back, and one action: an attack or a capture. A unit can't move after its action.",
     ]);
+
+    if (supply) {
+      section("Wheat and bread", [
+        "Wheat grows at sites. It becomes bread, one for one, only when it enters a city. Bread builds units and feeds them; nothing eats wheat.",
+        "Wagons carry up to " + num(c.cargo_max) + " wheat and bread together. L loads a wagon with the wheat of the site it stands on, or the bread of the city; U unloads it into the city it stands on. A wagon can load and unload as often as it likes in a turn, but can't move afterward.",
+        "Sites are captured like cities. Each city keeps its own bread, which goes to whoever captures it.",
+      ]);
+    }
 
     const ground = Object.values(v.info.terrain).filter((t) => t.move_cost);
     const hexes = (/** @type {number} */ n) => (n === 1 ? "1 hex" : n + " hexes");
@@ -1416,7 +1487,7 @@
     const turns = hp && capturers.every(([, u]) => u.max_hp === hp) ? " At full HP that takes " + Math.ceil(c.capture_points / hp) + " turns." : "";
     section("Cities", [
       "A unit that captures adds its current HP to a city's capture progress; " + c.capture_points + " points take the city." + turns,
-      "Each city you own can build one unit per turn, if no enemy unit is on it and it holds fewer than " + c.stack_limit + " of your units. New units can't move or act until your next turn.",
+      "Each city you own can build one unit per turn, if no enemy unit is on it and it holds fewer than " + c.stack_limit + " of your units" + (supply ? ", paying with its own bread" : "") + ". New units can't move or act until your next turn.",
     ]);
 
     const diggers = units.filter(([, u]) => u.flags.split(",").includes("fortify")).map(([, u]) => plural(u.name));

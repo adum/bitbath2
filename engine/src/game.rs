@@ -323,6 +323,24 @@ impl Game {
         self.site_at[self.map.index(hex)].map(|s| &self.sites[s as usize])
     }
 
+    /// The bread in a player's cities and carried by their units, with
+    /// supply on.
+    pub fn bread_of(&self, player: u8) -> u64 {
+        let stored: u64 = self
+            .cities
+            .iter()
+            .filter(|c| c.owner == player)
+            .map(|c| c.bread as u64)
+            .sum();
+        let carried: u64 = self
+            .units
+            .iter()
+            .filter(|u| u.owner == player)
+            .map(|u| u.bread as u64)
+            .sum();
+        stored + carried
+    }
+
     /// Σ cost × hp / max_hp over a player's units, used by the tiebreak.
     pub fn army_value(&self, player: u8) -> u64 {
         self.units

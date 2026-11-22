@@ -1,0 +1,43 @@
+# The strategic ruleset (STRATEGIC.md), phase 1: wheat, bread, wagons, and
+# rations on the large map, with today's water. Games are meant to last
+# hundreds or thousands of rounds and end by elimination.
+
+map_width = 80
+map_height = 60            # must be even
+neutral_cities = 46        # must be even
+round_limit = 5000         # only a backstop (STRATEGIC.md §9)
+
+# The large preset's clock, for now (STRATEGIC.md §14).
+time_bank_ms = 10000
+time_increment_ms = 2000
+time_bank_cap_ms = 20000
+
+# Supply (STRATEGIC.md §4, §5, §10). There's no gold: units cost bread.
+supply = 1
+sites = 32                 # must be even
+start_bread = 300          # in each home city
+city_bread = 10            # per city per turn, unless an enemy is on or next to it
+site_output_min = 20       # wheat per turn
+site_output_max = 100
+site_cap_min = 400         # the most wheat a site piles up
+site_cap_max = 3000
+cargo_max = 1000           # wheat and bread together, per wagon
+ration_max = 30
+eat_base = 1               # rations a unit eats each turn,
+eat_move = 1               # plus this if it moved,
+eat_attack = 1             # plus this if it attacked
+ration_cost = 5            # bread per ration
+starve_hp = 10
+start_units = "I,I,S,W"
+
+# Resource sites are terrain R: <name> <move_cost> <defense> <vision_bonus> <conceal>
+terrain.R = "site 1 0 0 0"
+
+# Wagons carry wheat and bread. They can't attack or strike back.
+#   <name> <cost> <max_hp> <move> <vision> <range_min> <range_max> <flags>
+unit.W = "wagon 100 100 4 2 1 1 carry"
+damage.I.W = 70
+damage.P.W = 60
+damage.K.W = 90
+damage.A.W = 70
+damage.S.W = 40
