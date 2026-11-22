@@ -206,7 +206,7 @@ constants! {
     site_cap_min = 400,
     site_cap_max = 3000,
     cargo_max = 1000,
-    ration_max = 30,
+    ration_max = 60,
     eat_base = 1,
     eat_move = 1,
     eat_attack = 1,

@@ -3,6 +3,7 @@
  "rules": [
   "supply = 1",
   "start_bread = 0",
+  "ration_max = 30",
   "terrain.R = site 1 0 0 0",
   "unit.W = wagon 100 100 4 2 1 1 carry",
   "damage.I.W = 70",

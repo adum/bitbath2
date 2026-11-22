@@ -368,7 +368,7 @@ mod tests {
         let mut lines = map.lines(&rules);
         lines.extend(rules.lines(true));
         assert!(lines.contains(&"SITE 0 2 2 1 50 1000".to_string()));
-        assert!(lines.contains(&"RULE ration_max 30".to_string()));
+        assert!(lines.contains(&"RULE ration_max 60".to_string()));
         let (rules2, map2) = parse_setup(lines.iter().map(|s| s.as_str()), Rules::default()).unwrap();
         assert_eq!(rules, rules2);
         assert_eq!(map, map2);

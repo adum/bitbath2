@@ -34,7 +34,7 @@ The default game stays as it is.
 - **Sites** grow wheat every turn and pile it up, to a cap. Each site has its own output and cap. They're captured like cities.
 - **Cities** turn wheat into bread the moment it arrives, and make a little bread of their own. Each city keeps its own bread, which pays for the units built there and feeds the units on and around it. There's no gold.
 - **Wagons** carry wheat from sites to cities, and bread from cities to armies.
-- **Every unit eats** a ration a turn when it holds still, and more when it moves or attacks. It carries 30, and refills them with bread from a city or wagon on or next to its hex. A unit with none left starves.
+- **Every unit eats** a ration a turn when it holds still, and more when it moves or attacks. It carries 60, and refills them with bread from a city or wagon on or next to its hex. A unit with none left starves.
 - **Sieges** follow from these rules. A city under siege makes no bread. If no wagon gets in, it stops building once its stockpile is gone, and its garrison starves once their rations run out. A city with a site next to it is supplied every turn, with no wagon.
 - **Ships** sail on water, which land units can't enter. Transports carry land units, wagons included. Warships fight at sea, and sinking a transport sinks everything aboard.
 
@@ -96,7 +96,7 @@ There are two kinds of goods. **Wheat** grows at sites. **Bread** is made from i
 
 - Moving means changing hexes, as it does for fortification (SPEC §6.6), so boarding and landing count. Riding aboard a moving transport doesn't.
 - Only attacks on the unit's own turn count. Striking back costs nothing extra, and neither does capturing.
-- A full unit can hold still for 30 turns, march for 15, or march and fight for 10. Fifteen turns of marching take infantry roughly halfway across the map.
+- A full unit can hold still for 60 turns, march for 30, or march and fight for 20. Thirty turns of marching take infantry farther than the map is wide, on open ground.
 - Holding still is cheap, which suits defense: a unit holding a city digs in and eats the least. Attacking costs the most, so an offensive needs supply.
 
 **Upkeep** at the start of each turn runs in this order, in place of income (SPEC §3.4):
@@ -114,9 +114,9 @@ There are two kinds of goods. **Wheat** grows at sites. **Bread** is made from i
 **Sieges** come out of these rules. With the starting values:
 
 - Say a city holds 300 bread and 4 units, and the besiegers stand next to it, so it makes no bread. Holding still, the garrison eats 4 rations a turn, which costs 20 bread. If no wagon gets in, the stockpile lasts 15 turns.
-- Then the garrison lives on its rations for 30 turns, and then starves, at 10 HP a turn. Starving units also hit weaker, since damage scales with HP.
+- Then the garrison lives on its rations for 60 turns, and then starves, at 10 HP a turn. Starving units also hit weaker, since damage scales with HP.
 - A city with a site next to it takes in that site's wheat every turn, as bread. A site that grows 50 a turn feeds 10 units holding still. To starve such a city, the besieger has to stand on the site or capture it.
-- Besiegers eat too. Holding still, they last 30 turns on their rations, and starving a city out takes 45 turns or more, so a siege that waits needs wagons behind the lines, which a relief force can raid.
+- Besiegers eat too. Holding still, they last 60 turns on their rations, and starving a city out takes 75 turns or more, so a siege that waits needs wagons behind the lines, which a relief force can raid.
 - **Starving a city out is slow,** which suits games meant to last hundreds or thousands of rounds. If sieges drag even so, `ration_max` is the knob.
 
 **In the field,** an army needs wagons of bread behind it or stocked cities along the way, so how far it can go depends on its supply. A captured city comes with its stockpile and starts making bread, so taking cities along the way helps feed an advance.
@@ -151,7 +151,7 @@ There are two kinds of goods. **Wheat** grows at sites. **Bread** is made from i
 - **The galley** (`G`, §7) is the one warship type to start with. It fights other ships, and can bombard land units on the coast next to it.
 - **Zones of control** reach across the shoreline both ways. A line of galleys can close a strait, and pikemen on a beach slow a landing.
 - **Blockades** need no rule of their own. Galleys off a port sink the transports that come out, and their zones of control stop transports from slipping past.
-- **Fleets eat too.** A ship that sails every turn runs out after 15 turns away from port, so a longer voyage needs a wagon of bread aboard a transport nearby.
+- **Fleets eat too.** A ship that sails every turn runs out after 30 turns away from port, so a longer voyage needs a wagon of bread aboard a transport nearby.
 - **From land,** only archers can hurt ships (§7).
 
 ## 7. Unit types
@@ -219,7 +219,7 @@ New keys, with their values in the strategic preset and in the default game:
 | `site_cap_max` | 3000 | – | the largest cap on a site's pile |
 | `cargo_max` | 1000 | – | the most goods a wagon carries, wheat and bread together |
 | `passengers_max` | 4 | – | the most units a transport carries |
-| `ration_max` | 30 | – | the most rations a unit carries |
+| `ration_max` | 60 | – | the most rations a unit carries |
 | `eat_base` | 1 | – | rations a unit eats each turn |
 | `eat_move` | 1 | – | extra rations on a turn it moved |
 | `eat_attack` | 1 | – | extra rations on a turn it attacked |
@@ -247,7 +247,7 @@ The additions follow the pattern fortification set: new fields go at the end of 
 ```
 > CITY 4 1 0 0 420                     id owner capturer progress bread
 > SITE 0 1 0 0 650                     id owner capturer progress wheat
-> UNIT 41 1 W 12 9 100 0 0 0 0 30      id owner type q r hp fort carrier wheat bread rations
+> UNIT 41 1 W 12 9 100 0 0 0 0 60      id owner type q r hp fort carrier wheat bread rations
 > LOG SITE 5 2 1                       a site changed hands: id, old owner, new owner
 ```
 
@@ -314,7 +314,7 @@ Each phase is playable on its own, and gets tournaments before the next one star
 
 ### Phase 1 results so far
 
-The first tournament, on 2026-11-22: the reference bot against itself with hauling turned off (`--no-haul`), on 5 maps, each map twice with the sides swapped, at most 300 rounds a game, with the preset's 30 rations and with 60.
+The first tournament, on 2026-11-22: the reference bot against itself with hauling turned off (`--no-haul`), on 5 maps, each map twice with the sides swapped, at most 300 rounds a game, with 30 rations, the preset's value then, and with 60.
 
 | `ration_max` | hauler's record | ended by elimination | game length, rounds | hauler's army | walking to bread | starving |
 |---|---|---|---|---|---|---|
@@ -324,7 +324,7 @@ The first tournament, on 2026-11-22: the reference bot against itself with hauli
 The army and the shares walking to bread and starving are the hauler's averages over the second half of each game.
 
 - **Hauling wins.** The hauler won 19 of 20 games. Its bread income was about 2.6 times the other bot's with 30 rations, and 5 times with 60.
-- **With 30 rations, the bot can't keep an offensive fed.** Half its army is walking back to bread at any time, while its cities hold over 14,000 bread it can't get to the front. Most games reach the round cap. With 60 rations, offensives work and every game ends by elimination. This may be the bot as much as the rules: better feeding wagons would help at 30.
+- **With 30 rations, the bot can't keep an offensive fed.** Half its army is walking back to bread at any time, while its cities hold over 14,000 bread it can't get to the front. Most games reach the round cap. With 60 rations, offensives work and every game ends by elimination. This may be the bot as much as the rules: better feeding wagons would help at 30. The preset now uses 60 (§14).
 - **Supply takes few orders.** The hauler sends about 2.5 `L` and `U` orders a turn, among about 140 moves. It thinks for 0.4 to 0.7 seconds a turn, and a 300-round game takes about 4 minutes.
 - **Not measured yet:** sieges, and how long games between evenly matched bots last.
 
@@ -386,6 +386,7 @@ Settled on 2026-11-22:
 - **Bread pays for everything.** Units cost bread to build, and there's no gold.
 - **Every unit eats, by what it does.** Holding still costs the least, and moving and attacking cost more. A unit carries enough to last a long time.
 - **Cities make a little bread,** so a player can never be left unable to build.
+- **Units carry 60 rations,** after the first tournament (§12). With 30, half the army spent its time walking back to bread.
 - **Long games are intended:** hundreds or thousands of rounds. Elimination stays the way to win, and the round limit is only a backstop.
   - *Dropped:* a faster way to win, such as losing with your home city, or victory points at the round limit.
 - **Passengers are shown.** A visible transport shows the units aboard.
