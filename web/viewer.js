@@ -1834,7 +1834,7 @@
       }
     }
     const end = v.engine.seek(v.steps).outcome;
-    const decided = ["elimination", "cities", "army", "draw"].includes(result.reason);
+    const decided = ["elimination", "cities", "sites", "army", "draw"].includes(result.reason);
     if (end ? end[0] !== result.winner || end[1] !== result.reason : decided) {
       const recorded = result.winner ? playerName(result.winner) + " winning by " + result.reason : "a draw";
       return "The game ended with " + recorded + ", but the viewer's game " + (end ? "ends differently" : "doesn't end") + ".";

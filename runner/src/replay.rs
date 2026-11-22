@@ -147,7 +147,7 @@ impl Replay {
             let reason = result["reason"].as_str().unwrap_or("");
             match &game.outcome {
                 // The engine decides these, so re-simulation must reach them.
-                None if ["elimination", "cities", "army", "draw"].contains(&reason) => {
+                None if ["elimination", "cities", "sites", "army", "draw"].contains(&reason) => {
                     return Err(mismatch(format!(
                         "the game ended by {reason}, but the re-simulated game doesn't end"
                     )))
