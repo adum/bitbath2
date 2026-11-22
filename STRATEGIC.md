@@ -227,7 +227,7 @@ New keys, with their values in the strategic preset and in the default game:
 | `ration_cost` | 5 | – | bread per ration refilled |
 | `starve_hp` | 10 | – | HP a starving unit loses per turn |
 
-A dash means the key isn't used. With `supply` on, the gold keys (`start_gold`, `city_income`, and `unit_upkeep`) aren't used either. The preset also sets the map to 80 × 60 with 46 neutral cities and the round limit to 5,000, and adds the site terrain, the naval move cost, and the three unit types.
+A dash means the key isn't used. With `supply` on, the gold keys (`start_gold`, `city_income`, and `unit_upkeep`) aren't used either. The preset also sets the map to 80 × 60 with 46 neutral cities and the round limit to 5,000, keeps the large preset's clock for now (§14), and adds the site terrain, the naval move cost, and the three unit types.
 
 ## 11. Protocol changes
 
@@ -310,7 +310,7 @@ Each phase is playable on its own, and gets tournaments before the next one star
    - Can a player invade an island?
    - Do blockades work?
    - Is bombardment too strong?
-3. **The rest.** The viewer and play page, time controls (§13), and a small strategic preset for play by hand (SPEC §5).
+3. **The rest.** The viewer and play page, a clock set from the game times phase 1 measures (§14), and a small strategic preset for play by hand (SPEC §5).
 
 ### Work
 
@@ -327,7 +327,7 @@ Each phase is playable on its own, and gets tournaments before the next one star
 
 ## 13. Open questions
 
-1. **How long may a game take in real time?** Long games make the clock matter more than the round count. At the large preset's 2 seconds a turn, a 2,000-round game can take over 2 hours if both bots use all their time, while bots that answer in a tenth of a second finish it in under 7 minutes. That decides how many tournament games fit in a day. *Proposed: keep the large preset's clock for phase 1, measure how long bots really take, and set the strategic clock in phase 3.*
+None right now.
 
 ### Later
 
@@ -369,3 +369,5 @@ Settled on 2026-11-22:
 - **Bombardment stays.** Galleys can hit land units on the coast next to them.
 - **Wagons can't be seized,** to start. Destroying a wagon destroys its cargo.
 - **Later:** more warship types, and roads (§13).
+- **Phase 1 keeps the large preset's clock,** 2 seconds a turn, and measures how long games really take. The strategic clock gets set in phase 3 from those numbers.
+  - *Why:* long games make the clock matter more than the round count. At 2 seconds a turn, a 2,000-round game can take over 2 hours if both bots use all their time, while bots that answer in a tenth of a second finish one in under 7 minutes. That decides how many tournament games fit in a day.
