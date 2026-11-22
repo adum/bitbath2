@@ -20,9 +20,27 @@ impl Terrain {
     pub fn passable(&self) -> bool {
         self.move_cost > 0
     }
+
+    /// A terrain from the fields after the character in a `TERRAIN` line:
+    /// name, move cost, defense, vision bonus, and conceal. Replays recorded
+    /// before concealment leave out the last one.
+    pub fn from_fields(ch: char, t: &[&str]) -> Result<Terrain, String> {
+        if t.len() < 4 {
+            return Err("expected: name move_cost defense vision_bonus conceal".into());
+        }
+        let num = |i: usize, what: &str| t[i].parse::<u32>().map_err(|_| format!("bad {what} '{}'", t[i]));
+        Ok(Terrain {
+            ch,
+            name: t[0].to_string(),
+            move_cost: num(1, "move cost")?,
+            defense: num(2, "defense")?,
+            vision_bonus: num(3, "vision bonus")?,
+            conceal: if t.len() > 4 { num(4, "conceal")? } else { 0 },
+        })
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UnitType {
     pub code: char,
     pub name: String,
@@ -41,6 +59,28 @@ pub struct UnitType {
 }
 
 impl UnitType {
+    /// A unit type from the fields after the code in a `UNITTYPE` line: name,
+    /// cost, max HP, move, vision, range min and max, and flags.
+    pub fn from_fields(code: char, t: &[&str]) -> Result<UnitType, String> {
+        if t.len() < 7 {
+            return Err("expected: name cost max_hp move vision range_min range_max flags".into());
+        }
+        let num = |i: usize, what: &str| t[i].parse::<u32>().map_err(|_| format!("bad {what} '{}'", t[i]));
+        let mut u = UnitType {
+            code,
+            name: t[0].to_string(),
+            cost: num(1, "cost")?,
+            max_hp: num(2, "max hp")?,
+            mv: num(3, "move")?,
+            vision: num(4, "vision")?,
+            range_min: num(5, "range min")?,
+            range_max: num(6, "range max")?,
+            ..UnitType::default()
+        };
+        u.set_flags(t.get(7).copied().unwrap_or("-"))?;
+        Ok(u)
+    }
+
     pub fn in_range(&self, distance: u32) -> bool {
         self.range_min <= distance && distance <= self.range_max
     }
@@ -185,11 +225,7 @@ impl Default for Rules {
                 vision,
                 range_min,
                 range_max,
-                capture: false,
-                zoc: false,
-                skirmish: false,
-                no_move_attack: false,
-                fortify: false,
+                ..UnitType::default()
             };
             u.set_flags(flags).expect("default flags are valid");
             u
@@ -250,6 +286,9 @@ impl Rules {
 
     /// Overrides one rule from a config key, such as `round_limit`,
     /// `start_units`, `unit.I.cost`, `damage.K.P`, or `terrain.hills.defense`.
+    /// `unit.<code>` and `terrain.<char>` add a unit type or terrain, or
+    /// replace one, from the rest of a `UNITTYPE` or `TERRAIN` line. A new
+    /// unit type deals and takes no damage until `damage` keys say so.
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         let num = || {
             value
@@ -269,7 +308,34 @@ impl Rules {
             return Ok(());
         }
         let parts: Vec<&str> = key.split('.').collect();
+        let fields: Vec<&str> = value.split_whitespace().collect();
         match parts.as_slice() {
+            ["unit", code] => {
+                let code = single_char(code)
+                    .filter(|c| c.is_ascii_alphabetic())
+                    .ok_or_else(|| format!("{key}: a unit code is one letter"))?;
+                let u = UnitType::from_fields(code, &fields).map_err(|e| format!("{key}: {e}"))?;
+                match self.unit_index(code) {
+                    Some(i) => self.units[i] = u,
+                    None => {
+                        self.units.push(u);
+                        for row in &mut self.damage {
+                            row.push(0);
+                        }
+                        self.damage.push(vec![0; self.units.len()]);
+                    }
+                }
+            }
+            ["terrain", ch] => {
+                let ch = single_char(ch)
+                    .filter(|c| c.is_ascii_graphic())
+                    .ok_or_else(|| format!("{key}: a terrain character is one character"))?;
+                let t = Terrain::from_fields(ch, &fields).map_err(|e| format!("{key}: {e}"))?;
+                match self.terrain_index(ch) {
+                    Some(i) => self.terrains[i] = t,
+                    None => self.terrains.push(t),
+                }
+            }
             ["unit", name, field] => {
                 let i = self.unit_by_key(name)?;
                 let u = &mut self.units[i];
@@ -439,6 +505,40 @@ mod tests {
         assert_eq!(r.start_units, vec!['I', 'K']);
         assert!(r.set("nope", "1").is_err());
         assert!(r.set("round_limit", "-1").is_err());
+        r.validate().unwrap();
+    }
+
+    #[test]
+    fn config_can_add_unit_types_and_terrains() {
+        let mut r = Rules::default();
+        r.set("terrain.R", "site 1 0 0 0").unwrap();
+        r.set("unit.W", "wagon 100 100 4 2 1 1 -").unwrap();
+        r.set("damage.K.W", "90").unwrap();
+        assert_eq!(r.terrains.len(), 7);
+        assert_eq!(
+            r.terrains[6],
+            Terrain::from_fields('R', &["site", "1", "0", "0", "0"]).unwrap()
+        );
+        assert_eq!(r.units.len(), 6);
+        assert_eq!(
+            (r.units[5].name.as_str(), r.units[5].mv, r.units[5].flags()),
+            ("wagon", 4, "-".into())
+        );
+        assert_eq!(r.damage[5], vec![0; 6]);
+        assert_eq!(r.damage[2][5], 90);
+        assert_eq!(r.damage[0][5], 0);
+        // Replacing a type keeps its place and its damage.
+        r.set("unit.I", "foot 90 100 3 2 1 1 capture,zoc").unwrap();
+        assert_eq!(
+            (r.units[0].name.as_str(), r.units[0].cost, r.units.len()),
+            ("foot", 90, 6)
+        );
+        assert_eq!(r.damage[0][1], 45);
+        r.set("terrain.f", "woods 2 25 0 1").unwrap();
+        assert_eq!((r.terrains[1].name.as_str(), r.terrains.len()), ("woods", 7));
+        assert!(r.set("unit.wagon", "W 100 100 4 2 1 1 -").is_err());
+        assert!(r.set("unit.X", "x 1 2").is_err());
+        assert!(r.set("terrain.R", "site one 0 0 0").is_err());
         r.validate().unwrap();
     }
 }

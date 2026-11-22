@@ -27,6 +27,9 @@ max_orders_per_turn = 20000
 max_line_bytes = 1024
 
 # Unit types: unit.<code or name>.<cost|max_hp|move|vision|range_min|range_max|flags>
+# A new type takes the rest of its UNITTYPE line (SPEC §6.2), and deals and
+# takes no damage until damage keys say so:
+#   unit.<code> = "<name> <cost> <max_hp> <move> <vision> <range_min> <range_max> <flags>"
 unit.I.cost = 100
 unit.P.cost = 125
 unit.K.cost = 225
@@ -40,5 +43,7 @@ unit.A.flags = "zoc"       # add no_move_attack to stop archers moving and shoot
 damage.P.K = 80
 
 # Terrain: terrain.<name>.<move_cost|defense|vision_bonus|conceal>
+# A new terrain takes the rest of its TERRAIN line:
+#   terrain.<char> = "<name> <move_cost> <defense> <vision_bonus> <conceal>"
 terrain.hills.defense = 40
 terrain.forest.conceal = 1   # units in forest are seen from 1 hex less far, always from next door

@@ -164,33 +164,13 @@ where
                     let hex = Hex::new(int(t.get(2), "q")?, int(t.get(3), "r")?);
                     cities.push((hex, int(t.get(4), "owner")?));
                 }
-                "TERRAIN" => terrains.push(Terrain {
-                    ch: char_tok(t.get(1), "terrain character")?,
-                    name: t.get(2).ok_or("missing terrain name")?.to_string(),
-                    move_cost: int(t.get(3), "move cost")?,
-                    defense: int(t.get(4), "defense")?,
-                    vision_bonus: int(t.get(5), "vision bonus")?,
-                    // Replays recorded before concealment have no sixth field.
-                    conceal: if t.len() > 6 { int(t.get(6), "conceal")? } else { 0 },
-                }),
+                "TERRAIN" => {
+                    let ch = char_tok(t.get(1), "terrain character")?;
+                    terrains.push(Terrain::from_fields(ch, &t[2..])?);
+                }
                 "UNITTYPE" => {
-                    let mut u = UnitType {
-                        code: char_tok(t.get(1), "unit code")?,
-                        name: t.get(2).ok_or("missing unit name")?.to_string(),
-                        cost: int(t.get(3), "cost")?,
-                        max_hp: int(t.get(4), "max hp")?,
-                        mv: int(t.get(5), "move")?,
-                        vision: int(t.get(6), "vision")?,
-                        range_min: int(t.get(7), "range min")?,
-                        range_max: int(t.get(8), "range max")?,
-                        capture: false,
-                        zoc: false,
-                        skirmish: false,
-                        no_move_attack: false,
-                        fortify: false,
-                    };
-                    u.set_flags(t.get(9).copied().unwrap_or("-"))?;
-                    units.push(u);
+                    let code = char_tok(t.get(1), "unit code")?;
+                    units.push(UnitType::from_fields(code, &t[2..])?);
                 }
                 "DAMAGE" => {
                     let code = char_tok(t.get(1), "unit code")?;
@@ -293,6 +273,21 @@ mod tests {
     #[test]
     fn setup_round_trip() {
         let (rules, map) = parse_setup(SMALL.lines(), Rules::default()).unwrap();
+        let mut lines = map.lines(&rules);
+        lines.extend(rules.lines(true));
+        let (rules2, map2) = parse_setup(lines.iter().map(|s| s.as_str()), Rules::default()).unwrap();
+        assert_eq!(rules, rules2);
+        assert_eq!(map, map2);
+    }
+
+    #[test]
+    fn added_unit_types_and_terrains_round_trip() {
+        let mut rules = Rules::default();
+        rules.set("terrain.R", "site 1 0 0 0").unwrap();
+        rules.set("unit.W", "wagon 100 100 4 2 1 1 -").unwrap();
+        rules.set("damage.I.W", "70").unwrap();
+        let map_lines = SMALL.replace("ROW ..f.", "ROW ..fR");
+        let (rules, map) = parse_setup(map_lines.lines(), rules).unwrap();
         let mut lines = map.lines(&rules);
         lines.extend(rules.lines(true));
         let (rules2, map2) = parse_setup(lines.iter().map(|s| s.as_str()), Rules::default()).unwrap();
