@@ -1,6 +1,6 @@
 # Bitbath: Strategic Ruleset
 
-**Status:** design draft, 2026-11-22. Phase 1 (§12) is being built: the engine has the supply rules, but map generation, kits, and bots don't support them yet.
+**Status:** design draft, 2026-11-22. Phase 1 (§12) is built and playable: `bitbath play --config configs/strategic.toml`. Its first tournament results are in §12.
 
 - The choices agreed so far are listed in [§14](#14-agreed-so-far). Everything else is a proposal.
 - All numbers are starting values, to be tuned by tournaments as the default rules were.
@@ -312,17 +312,41 @@ Each phase is playable on its own, and gets tournaments before the next one star
    - Is bombardment too strong?
 3. **The rest.** The viewer and play page, a clock set from the game times phase 1 measures (§14), and a small strategic preset for play by hand (SPEC §5).
 
+### Phase 1 results so far
+
+The first tournament, on 2026-11-22: the reference bot against itself with hauling turned off (`--no-haul`), on 5 maps, each map twice with the sides swapped, at most 300 rounds a game, with the preset's 30 rations and with 60.
+
+| `ration_max` | hauler's record | ended by elimination | game length, rounds | hauler's army | walking to bread | starving |
+|---|---|---|---|---|---|---|
+| 30 | 9–1 | 3 of 10 | 160 to 300 | 152 units | 50% | 20% |
+| 60 | 10–0 | 10 of 10 | 87 to 197 | 203 units | 22% | 7% |
+
+The army and the shares walking to bread and starving are the hauler's averages over the second half of each game.
+
+- **Hauling wins.** The hauler won 19 of 20 games. Its bread income was about 2.6 times the other bot's with 30 rations, and 5 times with 60.
+- **With 30 rations, the bot can't keep an offensive fed.** Half its army is walking back to bread at any time, while its cities hold over 14,000 bread it can't get to the front. Most games reach the round cap. With 60 rations, offensives work and every game ends by elimination. This may be the bot as much as the rules: better feeding wagons would help at 30.
+- **Supply takes few orders.** The hauler sends about 2.5 `L` and `U` orders a turn, among about 140 moves. It thinks for 0.4 to 0.7 seconds a turn, and a 300-round game takes about 4 minutes.
+- **Not measured yet:** sieges, and how long games between evenly matched bots last.
+
 ### Work
 
-- **Rules:** a config can change the built-in unit types and terrains but can't add new ones. It needs to, so that `configs/strategic.toml` can add the site terrain and the three unit types.
-- **Switch:** `supply` turns on wheat, bread, and rations. Ships need no switch: they're unit types with the `naval` flag, and the default game has none.
-- **State:** bread per city; output, cap, and wheat per site; each wagon's wheat and bread; each unit's rations and carrier; and whether each unit moved or attacked on its last turn, for eating.
-- **Maps:** `SITE` lines in map files, with each site's output and cap, and the generator's water, site placement and richness, and land-and-sea check.
-- **Determinism:** deliveries and refills go in id order, so every engine and kit agrees on them.
-- **Kits:** the new lines and fields, pathfinding for ships, and helpers for loading and feeding.
-- **Golden test vectors** for every new order, upkeep step, and edge case.
-- **Viewer and play page:** sites, piles, stockpiles, cargo, passengers, and ships, plus boarding and landing by clicking. The viewer also has to stay quick on replays thousands of rounds long, since it re-simulates every turn (SPEC §8).
-- **A reference bot.** None of today's bots know about goods.
+Done in phase 1:
+
+- **Rules:** a config can add unit types and terrains (`unit.<code>` and `terrain.<char>`, as configs/default.toml describes), and [configs/strategic.toml](configs/strategic.toml) adds the site terrain and wagons.
+- **Switch:** `supply` turns on wheat, bread, and rations. With it off, the default game's messages don't change at all.
+- **State:** bread per city; output, cap, and wheat per site; each unit's wheat, bread, and rations; and whether it moved or attacked on its last turn, for eating.
+- **Maps:** `SITE` lines in map files, and the generator's site placement and richness (§3).
+- **Determinism:** deliveries and refills go in id order.
+- **The Python kit:** the new lines and fields, `load()` and `unload()`, and helpers for feeding.
+- **Golden test vectors** in tests/vectors/supply.json, and random self-play with supply on.
+- **The viewer** draws sites and shows bread, wheat, and rations, and the runner's summaries show bread instead of gold.
+- **A reference bot,** [bots/supply_bot.py](bots/supply_bot.py): vanguard's fighting, plus building with each city's bread, taking sites, hauling wheat, and feeding the army. `--no-haul` turns hauling off.
+
+Still to do:
+
+- **Ships** (phase 2): the naval move cost, ports, transports, galleys, the carrier field, `water_pct`, and the generator's land-and-sea check.
+- **The JavaScript kit and the play page:** the kit already skips the new lines and fields safely, but can't play supply games yet.
+- **Viewer:** boarding and landing, and staying quick on replays thousands of rounds long, since it re-simulates every turn (SPEC §8).
 - **The benchmark:** a separate leaderboard. The ruleset also suits mode 3 (SPEC §5). Its big decisions, like which sites to take or where to land, play out over many turns, which is where a supervising LLM could help.
 
 ## 13. Open questions
