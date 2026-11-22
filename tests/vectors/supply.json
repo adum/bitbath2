@@ -1,0 +1,183 @@
+{
+ "about": "Scripted turns for the strategic ruleset's supply rules (STRATEGIC.md §4, §5, §11), in the format of orders.json. Every scenario applies 'rules' to the default rules, in order, as config lines (key = value), then its own 'rules' if any, and starts from 'map'. 'cities' gives city state as in a CITY line (id owner capturer progress bread), 'sites' gives site state as in a SITE line (id owner capturer progress wheat), and 'units' gives units as in a UNIT line (id owner type q r hp fort carrier wheat bread rations), plus an optional last field for what the unit did on its last turn: '-' nothing, 'M' moved, 'A' attacked, or 'MA' both. Then 'player''s turn in 'round' begins, so production and feeding run. 'message' is the expected turn message with TIME 0 0. For ERR replies only the code is checked. 'next_message' is the other player's turn message after this turn ends.",
+ "rules": [
+  "supply = 1",
+  "start_bread = 0",
+  "terrain.R = site 1 0 0 0",
+  "unit.W = wagon 100 100 4 2 1 1 carry",
+  "damage.I.W = 70",
+  "damage.P.W = 60",
+  "damage.K.W = 90",
+  "damage.A.W = 70",
+  "damage.S.W = 40"
+ ],
+ "map": [
+  "MAP 10 8",
+  "ROW CR........",
+  "ROW ..........",
+  "ROW ..R.......",
+  "ROW .....C....",
+  "ROW ......R...",
+  "ROW ..........",
+  "ROW .......R..",
+  "ROW ........RC",
+  "CITY 0 0 0 1",
+  "CITY 1 6 7 2",
+  "CITY 2 4 3 0",
+  "SITE 0 1 0 1 50 1000",
+  "SITE 1 1 2 1 40 100",
+  "SITE 2 4 4 0 30 600",
+  "SITE 3 4 6 0 20 400",
+  "SITE 4 5 7 2 60 1200"
+ ],
+ "scenarios": [
+  {
+   "name": "production: sites grow wheat and deliver it next to a city, and cities make bread, unless an enemy stops them",
+   "player": 1, "round": 1,
+   "cities": ["0 1 0 0 100", "1 2 0 0 50", "2 1 0 0 0"],
+   "sites": ["0 1 0 0 0", "1 1 0 0 90", "2 1 0 0 15", "3 1 0 0 5", "4 2 0 0 0"],
+   "units": ["1 1 I 0 0 100 0 0 0 0 30", "2 2 I 4 6 100 0 0 0 0 30", "3 2 I 5 3 100 0 0 0 0 30"],
+   "message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 155", "CITY 1 2 0 0 0", "CITY 2 1 0 0 45",
+    "SITE 0 1 0 0 0", "SITE 1 1 0 0 100", "SITE 2 1 0 0 0", "SITE 3 1 0 0 5", "SITE 4 2 0 0 0",
+    "UNIT 1 1 I 0 0 100 0 0 0 0 30",
+    "UNIT 2 2 I 4 6 100 0 0 0 0 30", "UNIT 3 2 I 5 3 100 0 0 0 0 30",
+    "GO"
+   ],
+   "steps": [],
+   "next_message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 0", "CITY 1 2 0 0 120", "CITY 2 1 0 0 45",
+    "SITE 0 1 0 0 0", "SITE 1 1 0 0 0", "SITE 2 1 0 0 0", "SITE 3 1 0 0 5", "SITE 4 2 0 0 0",
+    "UNIT 2 2 I 4 6 100 0 0 0 0 29", "UNIT 3 2 I 5 3 100 0 0 0 0 29",
+    "GO"
+   ]
+  },
+  {
+   "name": "feeding: units eat by what they did, refill from cities before wagons, and starve without food",
+   "player": 1, "round": 2,
+   "cities": ["0 1 0 0 12", "1 2 0 0 0", "2 1 0 0 0"],
+   "sites": ["0 2 0 0 0", "1 0 0 0 0", "2 0 0 0 0", "3 0 0 0 0", "4 2 0 0 0"],
+   "units": ["1 1 I 0 0 60 0 0 0 0 30 -", "2 1 I 0 1 100 0 0 0 0 20 M", "3 1 W 0 1 100 0 0 0 100 30 M",
+             "4 1 I 3 1 100 0 0 0 0 2 MA", "5 1 I 4 3 50 0 0 0 0 0 -", "6 2 I 5 3 100 0 0 0 0 30",
+             "7 1 W 7 1 5 0 0 300 0 0 -"],
+   "message": [
+    "TURN 2", "TIME 0 0",
+    "CITY 0 1 0 0 2", "CITY 1 2 0 0 0", "CITY 2 1 0 0 0",
+    "SITE 0 2 0 0 0", "SITE 1 0 0 0 0", "SITE 2 0 0 0 0", "SITE 3 0 0 0 0", "SITE 4 2 0 0 0",
+    "UNIT 1 1 I 0 0 80 0 0 0 0 30", "UNIT 2 1 I 0 1 100 0 0 0 0 30", "UNIT 3 1 W 0 1 100 0 0 0 45 30",
+    "UNIT 4 1 I 3 1 90 0 0 0 0 0", "UNIT 5 1 I 4 3 40 0 0 0 0 0",
+    "UNIT 6 2 I 5 3 100 0 0 0 0 30",
+    "GO"
+   ],
+   "steps": []
+  },
+  {
+   "name": "wagons load wheat at sites and bread at cities, unload into cities, and can't move after either",
+   "player": 1, "round": 1,
+   "cities": ["0 1 0 0 100", "1 2 0 0 0", "2 0 0 0 0"],
+   "sites": ["0 0 0 0 0", "1 1 0 0 70", "2 0 0 0 0", "3 0 0 0 0", "4 2 0 0 0"],
+   "units": ["1 1 W 1 2 100 0 0 0 0 30", "2 1 W 0 0 100 0 0 500 20 30", "3 1 I 0 0 100 0 0 0 0 30",
+             "4 1 W 5 7 100 0 0 0 0 30", "5 1 W 0 0 100 0 0 0 990 30"],
+   "message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 95", "CITY 1 2 0 0 0", "CITY 2 0 0 0 0",
+    "SITE 0 0 0 0 0", "SITE 1 1 0 0 100", "SITE 2 0 0 0 0", "SITE 3 0 0 0 0", "SITE 4 2 0 0 0",
+    "UNIT 1 1 W 1 2 100 0 0 0 0 29", "UNIT 2 1 W 0 0 100 0 0 500 20 30", "UNIT 3 1 I 0 0 100 0 0 0 0 30",
+    "UNIT 4 1 W 5 7 100 0 0 0 0 29", "UNIT 5 1 W 0 0 100 0 0 0 990 30",
+    "GO"
+   ],
+   "steps": [
+    {"order": "L 1 30", "reply": ["OK 30 0 70"]},
+    {"order": "L 1", "reply": ["OK 100 0 0"]},
+    {"order": "M 1 0", "reply": ["ERR no_mp"]},
+    {"order": "U 1", "reply": ["ERR cannot_unload"]},
+    {"order": "L 5", "reply": ["OK 0 1000 85"]},
+    {"order": "U 2 300", "reply": ["OK 200 20 385"]},
+    {"order": "U 2", "reply": ["OK 0 0 605"]},
+    {"order": "L 2 50", "reply": ["OK 0 50 555"]},
+    {"order": "L 2 0", "reply": ["OK 0 50 555"]},
+    {"order": "M 2 5", "reply": ["ERR no_mp"]},
+    {"order": "L 3", "reply": ["ERR cannot_carry"]},
+    {"order": "L 4", "reply": ["ERR cannot_load"]},
+    {"order": "B 0 W", "reply": ["OK 6"]},
+    {"order": "L 6", "reply": ["ERR new_unit"]},
+    {"order": "L 1 x", "reply": ["ERR syntax"]},
+    {"order": "L 1 5 6", "reply": ["ERR syntax"]},
+    {"order": "U 7", "reply": ["ERR unknown"]}
+   ]
+  },
+  {
+   "name": "each city builds with its own bread",
+   "player": 1, "round": 1,
+   "cities": ["0 1 0 0 140", "1 2 0 0 0", "2 1 0 0 30"],
+   "sites": ["0 0 0 0 0", "1 0 0 0 0", "2 0 0 0 0", "3 0 0 0 0", "4 2 0 0 0"],
+   "units": [],
+   "message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 150", "CITY 1 2 0 0 0", "CITY 2 1 0 0 40",
+    "SITE 0 0 0 0 0", "SITE 1 0 0 0 0", "SITE 2 0 0 0 0", "SITE 3 0 0 0 0", "SITE 4 2 0 0 0",
+    "GO"
+   ],
+   "steps": [
+    {"order": "B 2 S", "reply": ["ERR no_bread"]},
+    {"order": "B 0 I", "reply": ["OK 1"]},
+    {"order": "B 0 I", "reply": ["ERR city_used"]},
+    {"order": "B 2 I", "reply": ["ERR no_bread"]}
+   ],
+   "next_message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 0", "CITY 1 2 0 0 70", "CITY 2 1 0 0 0",
+    "SITE 0 0 0 0 0", "SITE 1 0 0 0 0", "SITE 2 0 0 0 0", "SITE 3 0 0 0 0", "SITE 4 2 0 0 0",
+    "GO"
+   ]
+  },
+  {
+   "name": "sites are captured like cities, and the other player hears of it",
+   "player": 1, "round": 1,
+   "cities": ["0 1 0 0 0", "1 2 0 0 0", "2 0 0 0 0"],
+   "sites": ["0 0 0 0 0", "1 1 0 0 0", "2 0 0 0 0", "3 0 0 0 0", "4 2 0 0 0"],
+   "units": ["1 1 I 4 6 100 0 0 0 0 30", "2 1 I 4 6 100 0 0 0 0 30", "3 1 I 1 2 100 0 0 0 0 30",
+             "4 1 W 4 6 100 0 0 0 0 30"],
+   "steps": [
+    {"order": "C 4", "reply": ["ERR cannot_capture"]},
+    {"order": "C 3", "reply": ["ERR cannot_capture"]},
+    {"order": "C 1", "reply": ["OK 100 200"]},
+    {"order": "C 1", "reply": ["ERR acted"]},
+    {"order": "C 2", "reply": ["OK captured"]}
+   ],
+   "next_message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 0", "CITY 1 2 0 0 70", "CITY 2 0 0 0 0",
+    "SITE 0 0 0 0 0", "SITE 1 1 0 0 0", "SITE 2 0 0 0 0", "SITE 3 1 0 0 0", "SITE 4 2 0 0 0",
+    "UNIT 1 1 I 4 6 100 0 0 0 0 29", "UNIT 2 1 I 4 6 100 0 0 0 0 29", "UNIT 4 1 W 4 6 100 0 0 0 0 29",
+    "LOG SITE 3 0 1",
+    "GO"
+   ]
+  },
+  {
+   "name": "wagons can't attack, since an attack with base damage 0 is refused, and die with their cargo",
+   "player": 1, "round": 1,
+   "cities": ["0 1 0 0 0", "1 2 0 0 0", "2 0 0 0 0"],
+   "sites": ["0 0 0 0 0", "1 0 0 0 0", "2 0 0 0 0", "3 0 0 0 0", "4 2 0 0 0"],
+   "units": ["1 1 W 2 4 100 0 0 0 0 30", "2 2 I 3 4 100 0 0 0 0 30", "3 1 I 2 6 100 0 0 0 0 30",
+             "4 2 W 3 6 100 0 0 400 0 30", "5 1 I 3 5 100 0 0 0 0 30"],
+   "steps": [
+    {"order": "A 1 2", "reply": ["ERR no_damage"]},
+    {"order": "A 3 4", "reply": ["OK 30 100"]},
+    {"order": "A 5 4", "reply": ["OK 0 100"]}
+   ],
+   "next_message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 0", "CITY 1 2 0 0 70", "CITY 2 0 0 0 0",
+    "SITE 0 0 0 0 0", "SITE 1 0 0 0 0", "SITE 2 0 0 0 0", "SITE 3 0 0 0 0", "SITE 4 2 0 0 0",
+    "UNIT 2 2 I 3 4 100 0 0 0 0 29",
+    "UNIT 1 1 W 2 4 100 0 0 0 0 29", "UNIT 3 1 I 2 6 100 0 0 0 0 29", "UNIT 5 1 I 3 5 100 0 0 0 0 29",
+    "LOG HIT 3 I 2 6 4 30 100",
+    "LOG HIT 5 I 3 5 4 0 100",
+    "GO"
+   ]
+  }
+ ]
+}

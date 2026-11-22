@@ -24,6 +24,13 @@ pub struct Unit {
     /// owner's turns it spends without moving or acting, up to
     /// `fortify_max`, and loses them all when it moves (SPEC §3.7).
     pub fort: u32,
+    /// Attacked this turn. With supply on, that makes its turn cost more food.
+    pub attacked: bool,
+    /// Rations left, with supply on (STRATEGIC.md §5).
+    pub rations: u32,
+    /// Wheat and bread carried by a `carry` unit (STRATEGIC.md §4).
+    pub wheat: u32,
+    pub bread: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,15 +43,47 @@ pub struct City {
     pub progress: u32,
     /// Built a unit or was captured this turn, so it can't build until its owner's next turn.
     pub built: bool,
+    /// The city's stockpile, with supply on (STRATEGIC.md §4).
+    pub bread: u32,
+}
+
+/// A resource site, with supply on (STRATEGIC.md §4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Site {
+    pub id: u32,
+    pub hex: Hex,
+    pub owner: u8,
+    /// The player with capture progress here, or 0.
+    pub capturer: u8,
+    pub progress: u32,
+    /// The pile of wheat waiting to be collected.
+    pub wheat: u32,
+    /// Wheat grown per turn, and the most the pile holds.
+    pub output: u32,
+    pub cap: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Outcome {
     /// 1 or 2, or 0 for a draw.
     pub winner: u8,
-    /// `elimination`, `cities`, `army`, or `draw`, or why a bot forfeited,
-    /// such as `crash` or `hang`.
+    /// `elimination`, `cities`, `sites`, `army`, or `draw`, or why a bot
+    /// forfeited, such as `crash` or `hang`.
     pub reason: String,
+}
+
+/// Buys up to `want` rations at `cost` bread each from `stock`, and returns
+/// how many it bought. Rations are free when `cost` is 0.
+fn buy(stock: &mut u32, want: i64, cost: u32) -> i64 {
+    if want <= 0 {
+        return 0;
+    }
+    if cost == 0 {
+        return want;
+    }
+    let n = (*stock / cost).min(want.min(u32::MAX as i64) as u32);
+    *stock -= n * cost;
+    n as i64
 }
 
 /// A rejected order: an `ERR` code and a plain-English explanation.
@@ -82,7 +121,10 @@ pub struct Game {
     /// Live units, sorted by id.
     pub units: Vec<Unit>,
     pub cities: Vec<City>,
-    /// Gold by player. Index 0 is unused.
+    /// Resource sites in id order. Only games with supply on have any.
+    pub sites: Vec<Site>,
+    /// Gold by player. Index 0 is unused. Always 0 with supply on, which
+    /// pays for units with bread instead.
     pub gold: [u32; 3],
     /// The current round, from 1. It is 0 before the first turn.
     pub round: u32,
@@ -96,6 +138,8 @@ pub struct Game {
     occupants: Vec<Vec<u32>>,
     /// The city on each hex, if any.
     city_at: Vec<Option<u32>>,
+    /// The site on each hex, if any.
+    site_at: Vec<Option<u32>>,
     /// `LOG` lines waiting for each player's next turn message.
     logs: [Vec<String>; 3],
     /// Whether `end_turn` has already run for the current turn. Callers may
@@ -126,10 +170,14 @@ impl Game {
         Ok(Game::new(rules, map))
     }
 
-    /// A game with the map's cities but no units, for tests and scenarios.
+    /// A game with the map's cities and sites but no units, for tests and
+    /// scenarios. With supply on, each player's home city (their lowest
+    /// numbered) starts with `start_bread`; otherwise each player starts
+    /// with `start_gold`.
     pub fn empty(rules: Rules, map: Map) -> Game {
         let n = map.len();
-        let cities: Vec<City> = map
+        let supply = rules.supply();
+        let mut cities: Vec<City> = map
             .cities
             .iter()
             .enumerate()
@@ -140,18 +188,46 @@ impl Game {
                 capturer: 0,
                 progress: 0,
                 built: false,
+                bread: 0,
+            })
+            .collect();
+        if supply {
+            for player in 1..=2u8 {
+                if let Some(home) = cities.iter_mut().find(|c| c.owner == player) {
+                    home.bread = rules.c.start_bread;
+                }
+            }
+        }
+        let sites: Vec<Site> = map
+            .sites
+            .iter()
+            .enumerate()
+            .map(|(i, s)| Site {
+                id: i as u32,
+                hex: s.hex,
+                owner: s.owner,
+                capturer: 0,
+                progress: 0,
+                wheat: 0,
+                output: s.output,
+                cap: s.cap,
             })
             .collect();
         let mut city_at = vec![None; n];
         for c in &cities {
             city_at[map.index(c.hex)] = Some(c.id);
         }
-        let start_gold = rules.c.start_gold;
+        let mut site_at = vec![None; n];
+        for s in &sites {
+            site_at[map.index(s.hex)] = Some(s.id);
+        }
+        let start_gold = if supply { 0 } else { rules.c.start_gold };
         Game {
             rules,
             map,
             units: Vec::new(),
             cities,
+            sites,
             gold: [0, start_gold, start_gold],
             round: 0,
             player: 0,
@@ -160,12 +236,13 @@ impl Game {
             visible: vec![false; n],
             occupants: vec![Vec::new(); n],
             city_at,
+            site_at,
             logs: Default::default(),
             turn_over: false,
         }
     }
 
-    /// Adds a full-HP unit and returns its id.
+    /// Adds a full-HP unit with full rations and returns its id.
     pub fn spawn(&mut self, owner: u8, ty: usize, hex: Hex, fresh: bool) -> u32 {
         let id = self.next_unit_id;
         self.next_unit_id += 1;
@@ -181,6 +258,10 @@ impl Game {
             moved: false,
             fresh,
             fort: 0,
+            attacked: false,
+            rations: self.rules.c.ration_max,
+            wheat: 0,
+            bread: 0,
         });
         let i = self.map.index(hex);
         self.occupants[i].push(id);
@@ -233,6 +314,15 @@ impl Game {
         self.units.iter().filter(|u| u.owner == player).count()
     }
 
+    pub fn sites_of(&self, player: u8) -> usize {
+        self.sites.iter().filter(|s| s.owner == player).count()
+    }
+
+    /// The site on a hex on the map, if any.
+    pub fn site_at(&self, hex: Hex) -> Option<&Site> {
+        self.site_at[self.map.index(hex)].map(|s| &self.sites[s as usize])
+    }
+
     /// Σ cost × hp / max_hp over a player's units, used by the tiebreak.
     pub fn army_value(&self, player: u8) -> u64 {
         self.units
@@ -245,7 +335,8 @@ impl Game {
             .sum()
     }
 
-    /// Hexes `player` can see from their current units and cities (SPEC §4).
+    /// Hexes `player` can see from their current units, cities, and sites
+    /// (SPEC §4). A site sees as far as a city.
     pub fn vision(&self, player: u8) -> Vec<bool> {
         let mut vis = vec![false; self.map.len()];
         let mut mark = |center: Hex, radius: u32| {
@@ -265,11 +356,18 @@ impl Game {
                 mark(c.hex, self.rules.c.city_vision);
             }
         }
+        for s in &self.sites {
+            if s.owner == player {
+                mark(s.hex, self.rules.c.city_vision);
+            }
+        }
         vis
     }
 
     /// Starts `player`'s turn: income, healing, capture reset, refresh, and
-    /// vision, in that order (SPEC §3.4). Player 1's turn starts a new round.
+    /// vision, in that order (SPEC §3.4). With supply on, production and
+    /// feeding take the place of income (STRATEGIC.md §5). Player 1's turn
+    /// starts a new round.
     pub fn begin_turn(&mut self, player: u8) {
         assert!(player == 1 || player == 2, "player must be 1 or 2");
         if player == 1 {
@@ -279,17 +377,23 @@ impl Game {
         self.turn_over = false;
         let p = player as usize;
 
-        let cities = self.cities_of(player) as i64;
-        let units = self.units_of(player) as i64;
-        let c = &self.rules.c;
-        let gold = self.gold[p] as i64 + cities * c.city_income as i64 - units * c.unit_upkeep as i64;
-        self.gold[p] = gold.clamp(0, u32::MAX as i64) as u32;
+        let mut starved = Vec::new();
+        if self.rules.supply() {
+            self.produce(player);
+            starved = self.feed(player);
+        } else {
+            let cities = self.cities_of(player) as i64;
+            let units = self.units_of(player) as i64;
+            let c = &self.rules.c;
+            let gold = self.gold[p] as i64 + cities * c.city_income as i64 - units * c.unit_upkeep as i64;
+            self.gold[p] = gold.clamp(0, u32::MAX as i64) as u32;
+        }
 
         for i in 0..self.units.len() {
             let u = &self.units[i];
             let on_own_city =
                 self.city_at[self.map.index(u.hex)].is_some_and(|cid| self.cities[cid as usize].owner == player);
-            if u.owner == player && on_own_city {
+            if u.owner == player && on_own_city && starved.binary_search(&u.id).is_err() {
                 let max_hp = self.rules.units[u.ty].max_hp;
                 let u = &mut self.units[i];
                 u.hp = (u.hp + self.rules.c.city_heal).min(max_hp);
@@ -303,6 +407,13 @@ impl Game {
                 self.cities[ci].progress = 0;
             }
         }
+        for si in 0..self.sites.len() {
+            let capturer = self.sites[si].capturer;
+            if capturer != 0 && !self.has_unit_of(self.sites[si].hex, capturer) {
+                self.sites[si].capturer = 0;
+                self.sites[si].progress = 0;
+            }
+        }
 
         for u in self.units.iter_mut() {
             if u.owner == player {
@@ -310,6 +421,7 @@ impl Game {
                 u.acted = false;
                 u.moved = false;
                 u.fresh = false;
+                u.attacked = false;
             }
         }
         for c in self.cities.iter_mut() {
@@ -317,6 +429,108 @@ impl Game {
         }
 
         self.visible = self.vision(player);
+    }
+
+    /// `player`'s sites grow wheat and hand it to a city of theirs next to
+    /// them, where it becomes bread, and their cities make bread. An enemy
+    /// unit on a site stops it, and one on or next to a city stops that
+    /// city's bread (STRATEGIC.md §4).
+    fn produce(&mut self, player: u8) {
+        let enemy = 3 - player;
+        for si in 0..self.sites.len() {
+            let hex = self.sites[si].hex;
+            if self.sites[si].owner != player || self.has_unit_of(hex, enemy) {
+                continue;
+            }
+            let s = &mut self.sites[si];
+            if s.wheat < s.cap {
+                s.wheat = s.wheat.saturating_add(s.output).min(s.cap);
+            }
+            // Cities are in id order, so the first one found has the lowest id.
+            let home = hex
+                .neighbors()
+                .into_iter()
+                .filter(|&nb| self.map.contains(nb))
+                .filter_map(|nb| self.city_at[self.map.index(nb)])
+                .filter(|&ci| self.cities[ci as usize].owner == player)
+                .min();
+            if let Some(ci) = home {
+                let wheat = std::mem::take(&mut self.sites[si].wheat);
+                let city = &mut self.cities[ci as usize];
+                city.bread = city.bread.saturating_add(wheat);
+            }
+        }
+        let made = self.rules.c.city_bread;
+        for ci in 0..self.cities.len() {
+            let hex = self.cities[ci].hex;
+            let besieged = std::iter::once(hex)
+                .chain(hex.neighbors())
+                .any(|h| self.map.contains(h) && self.has_unit_of(h, enemy));
+            if self.cities[ci].owner == player && !besieged {
+                let city = &mut self.cities[ci];
+                city.bread = city.bread.saturating_add(made);
+            }
+        }
+    }
+
+    /// Each of `player`'s units eats what its last turn cost, then refills to
+    /// `ration_max` from its player's cities and wagons on or next to its hex:
+    /// cities first, then wagons, each in id order, until it's full or they
+    /// run out. A unit that can't cover what it ate starves (STRATEGIC.md §5).
+    /// Returns the ids of the units that starved, in id order.
+    fn feed(&mut self, player: u8) -> Vec<u32> {
+        let c = &self.rules.c;
+        let (max, cost, starve_hp) = (c.ration_max as i64, c.ration_cost, c.starve_hp);
+        let (eat_base, eat_move, eat_attack) = (c.eat_base, c.eat_move, c.eat_attack);
+        let ids: Vec<u32> = self.units.iter().filter(|u| u.owner == player).map(|u| u.id).collect();
+        let mut starved = Vec::new();
+        for id in ids {
+            let i = self.unit_idx(id).expect("only the unit being fed can starve");
+            let u = &self.units[i];
+            let eaten = eat_base + if u.moved { eat_move } else { 0 } + if u.attacked { eat_attack } else { 0 };
+            let mut have = u.rations as i64 - eaten as i64;
+            if have < max {
+                let hex = u.hex;
+                let mut cities = Vec::new();
+                let mut wagons = Vec::new();
+                for h in std::iter::once(hex).chain(hex.neighbors()) {
+                    if !self.map.contains(h) {
+                        continue;
+                    }
+                    let k = self.map.index(h);
+                    if let Some(ci) = self.city_at[k].filter(|&ci| self.cities[ci as usize].owner == player) {
+                        cities.push(ci as usize);
+                    }
+                    for &o in &self.occupants[k] {
+                        let w = &self.units[self.unit_idx(o).expect("occupants are live units")];
+                        if w.owner == player && self.rules.units[w.ty].carry {
+                            wagons.push(o);
+                        }
+                    }
+                }
+                cities.sort_unstable();
+                wagons.sort_unstable();
+                for ci in cities {
+                    have += buy(&mut self.cities[ci].bread, max - have, cost);
+                }
+                for w in wagons {
+                    let wi = self.unit_idx(w).expect("wagons are live units");
+                    have += buy(&mut self.units[wi].bread, max - have, cost);
+                }
+            }
+            let u = &mut self.units[i];
+            if have >= 0 {
+                u.rations = have as u32;
+            } else {
+                starved.push(id);
+                u.rations = 0;
+                u.hp = u.hp.saturating_sub(starve_hp);
+                if u.hp == 0 {
+                    self.remove_unit(id);
+                }
+            }
+        }
+        starved
     }
 
     /// Ends the current turn: the player's `fortify` units that neither moved
@@ -344,6 +558,13 @@ impl Game {
             return Outcome {
                 winner: if c1 > c2 { 1 } else { 2 },
                 reason: "cities".into(),
+            };
+        }
+        let (s1, s2) = (self.sites_of(1), self.sites_of(2));
+        if s1 != s2 {
+            return Outcome {
+                winner: if s1 > s2 { 1 } else { 2 },
+                reason: "sites".into(),
             };
         }
         let (a1, a2) = (self.army_value(1), self.army_value(2));
@@ -390,20 +611,33 @@ impl Game {
     }
 
     /// The current player's turn message (SPEC §6.3). Call after `begin_turn`.
+    /// With supply on there's no `GOLD` line, `CITY` lines end with the
+    /// city's bread, `SITE` lines follow them, and `UNIT` lines carry the
+    /// supply fields (STRATEGIC.md §11).
     pub fn turn_message(&self, time_ms: u64, bank_ms: u64) -> Vec<String> {
         let p = self.player;
-        let mut out = vec![
-            format!("TURN {}", self.round),
-            format!("TIME {time_ms} {bank_ms}"),
-            format!("GOLD {}", self.gold[p as usize]),
-        ];
+        let supply = self.rules.supply();
+        let mut out = vec![format!("TURN {}", self.round), format!("TIME {time_ms} {bank_ms}")];
+        if !supply {
+            out.push(format!("GOLD {}", self.gold[p as usize]));
+        }
         for c in &self.cities {
-            let (capturer, progress) = if self.visible[self.map.index(c.hex)] {
-                (c.capturer, c.progress)
+            let seen = self.visible[self.map.index(c.hex)];
+            let (capturer, progress) = if seen { (c.capturer, c.progress) } else { (0, 0) };
+            if supply {
+                let bread = if seen { c.bread } else { 0 };
+                out.push(format!("CITY {} {} {} {} {}", c.id, c.owner, capturer, progress, bread));
             } else {
-                (0, 0)
+                out.push(format!("CITY {} {} {} {}", c.id, c.owner, capturer, progress));
+            }
+        }
+        for s in &self.sites {
+            let (capturer, progress, wheat) = if self.visible[self.map.index(s.hex)] {
+                (s.capturer, s.progress, s.wheat)
+            } else {
+                (0, 0, 0)
             };
-            out.push(format!("CITY {} {} {} {}", c.id, c.owner, capturer, progress));
+            out.push(format!("SITE {} {} {} {} {}", s.id, s.owner, capturer, progress, wheat));
         }
         let mine = self.units.iter().filter(|u| u.owner == p);
         let seen = self
@@ -411,15 +645,27 @@ impl Game {
             .iter()
             .filter(|u| u.owner != p && self.visible[self.map.index(u.hex)]);
         for u in mine.chain(seen) {
-            let code = self.rules.units[u.ty].code;
-            out.push(format!(
-                "UNIT {} {} {} {} {} {} {}",
-                u.id, u.owner, code, u.hex.q, u.hex.r, u.hp, u.fort
-            ));
+            out.push(format!("UNIT {}", self.unit_fields(u)));
         }
         out.extend(self.logs[p as usize].iter().cloned());
         out.push("GO".into());
         out
+    }
+
+    /// A `UNIT` or `SEE` line after its keyword: id, owner, type, q, r, HP,
+    /// and fortification level (SPEC §6.3), then with supply on the carrier
+    /// (always 0 until transports), wheat, bread, and rations.
+    fn unit_fields(&self, u: &Unit) -> String {
+        let code = self.rules.units[u.ty].code;
+        let base = format!(
+            "{} {} {} {} {} {} {}",
+            u.id, u.owner, code, u.hex.q, u.hex.r, u.hp, u.fort
+        );
+        if self.rules.supply() {
+            format!("{base} 0 {} {} {}", u.wheat, u.bread, u.rations)
+        } else {
+            base
+        }
     }
 
     /// Runs one order line for the current player and returns the reply:
@@ -427,6 +673,7 @@ impl Game {
     pub fn apply(&mut self, line: &str) -> Vec<String> {
         let mut out = Vec::new();
         let t: Vec<&str> = line.split_whitespace().collect();
+        let supply = self.rules.supply();
         let result = if self.outcome.is_some() {
             reject("late", "the game is over")
         } else if self.player == 0 {
@@ -437,10 +684,19 @@ impl Game {
                 Some("A") => self.order_attack(&t, &mut out),
                 Some("C") => self.order_capture(&t, &mut out),
                 Some("B") => self.order_build(&t, &mut out),
-                Some(other) => reject(
-                    "syntax",
-                    format!("unknown order '{other}'; orders are M, A, C, B, D, and END"),
-                ),
+                Some("L") if supply => self.order_load(&t, &mut out),
+                Some("U") if supply => self.order_unload(&t, &mut out),
+                Some(other) => {
+                    let orders = if supply {
+                        "M, A, C, B, L, U, D,"
+                    } else {
+                        "M, A, C, B, D,"
+                    };
+                    reject(
+                        "syntax",
+                        format!("unknown order '{other}'; orders are {orders} and END"),
+                    )
+                }
                 None => reject("syntax", "empty order"),
             }
         };
@@ -558,6 +814,12 @@ impl Game {
             _ => return reject("no_target", format!("there is no visible enemy unit {target}")),
         };
         let (dty, d_hex, d_hp) = (self.units[di].ty, self.units[di].hex, self.units[di].hp);
+        if self.rules.damage[aty][dty] == 0 {
+            return reject(
+                "no_damage",
+                format!("{}s can't hurt {}s", at.name, self.rules.units[dty].name),
+            );
+        }
         let dist = a_hex.distance(d_hex);
         if !at.in_range(dist) {
             return reject(
@@ -579,6 +841,7 @@ impl Game {
         let attacker = &mut self.units[ai];
         attacker.hp = a_hp;
         attacker.acted = true;
+        attacker.attacked = true;
         attacker.mp = 0;
         self.units[di].hp = d_hp;
         let victim = self.units[di].owner as usize;
@@ -609,8 +872,17 @@ impl Game {
                 format!("{}s can't capture cities", self.rules.units[ty].name),
             );
         }
-        let Some(ci) = self.city_at[self.map.index(hex)].map(|c| c as usize) else {
-            return reject("cannot_capture", format!("unit {id} isn't on a city"));
+        let at = self.map.index(hex);
+        if let Some(si) = self.site_at[at] {
+            return self.capture_site(si as usize, ui, out);
+        }
+        let Some(ci) = self.city_at[at].map(|c| c as usize) else {
+            let what = if self.rules.supply() {
+                "a city or site"
+            } else {
+                "a city"
+            };
+            return reject("cannot_capture", format!("unit {id} isn't on {what}"));
         };
         let player = self.player;
         if self.cities[ci].owner == player {
@@ -642,6 +914,37 @@ impl Game {
         if old != 0 && self.cities_of(old) == 0 {
             self.finish(player, "elimination");
         }
+        Ok(())
+    }
+
+    /// Unit `ui` captures site `si` as it would a city, though taking a site
+    /// never ends the game. The pile goes with the site.
+    fn capture_site(&mut self, si: usize, ui: usize, out: &mut Vec<String>) -> Result<(), Reject> {
+        let player = self.player;
+        if self.sites[si].owner == player {
+            return reject("cannot_capture", format!("you already own site {si}"));
+        }
+        let (hex, hp) = (self.units[ui].hex, self.units[ui].hp);
+        let capture_points = self.rules.c.capture_points;
+        let site = &mut self.sites[si];
+        if site.capturer != player {
+            site.capturer = player;
+            site.progress = 0;
+        }
+        site.progress += hp;
+        self.units[ui].acted = true;
+        if self.sites[si].progress < capture_points {
+            out.push(format!("OK {} {capture_points}", self.sites[si].progress));
+            return Ok(());
+        }
+        let site = &mut self.sites[si];
+        let old = site.owner;
+        site.owner = player;
+        site.capturer = 0;
+        site.progress = 0;
+        self.logs[(3 - player) as usize].push(format!("LOG SITE {si} {old} {player}"));
+        self.reveal(hex, self.rules.c.city_vision, out);
+        out.push("OK captured".into());
         Ok(())
     }
 
@@ -687,19 +990,108 @@ impl Game {
         }
         let (cost, name) = (self.rules.units[ty].cost, &self.rules.units[ty].name);
         let p = self.player as usize;
-        if self.gold[p] < cost {
-            return reject(
-                "no_gold",
-                format!("a {name} costs {cost} gold and you have {}", self.gold[p]),
-            );
+        if self.rules.supply() {
+            // Each city pays from its own stockpile (STRATEGIC.md §4).
+            let bread = self.cities[ci].bread;
+            if bread < cost {
+                return reject(
+                    "no_bread",
+                    format!("a {name} costs {cost} bread and city {ci} has {bread}"),
+                );
+            }
+            self.cities[ci].bread -= cost;
+        } else {
+            if self.gold[p] < cost {
+                return reject(
+                    "no_gold",
+                    format!("a {name} costs {cost} gold and you have {}", self.gold[p]),
+                );
+            }
+            self.gold[p] -= cost;
         }
 
-        self.gold[p] -= cost;
         self.cities[ci].built = true;
         let id = self.spawn(self.player, ty, hex, true);
         let radius = self.unit_vision(self.units.len() - 1);
         self.reveal(hex, radius, out);
         out.push(format!("OK {id}"));
+        Ok(())
+    }
+
+    /// The unit and amount in an `L` or `U` order, after the checks both share.
+    fn carrier_order(&self, t: &[&str], usage: &str) -> Result<(usize, u32), Reject> {
+        if t.len() != 2 && t.len() != 3 {
+            return reject("syntax", usage);
+        }
+        let id = number(t[1], "unit id")?;
+        let limit = match t.get(2) {
+            Some(tok) => number(tok, "amount")?,
+            None => u32::MAX,
+        };
+        let ui = self.own_unit(id)?;
+        self.check_ready(ui)?;
+        let ty = &self.rules.units[self.units[ui].ty];
+        if !ty.carry {
+            return reject("cannot_carry", format!("{}s can't carry goods", ty.name));
+        }
+        Ok((ui, limit))
+    }
+
+    /// `L <unit> [amount]`: a wagon takes wheat from the site it stands on, or
+    /// bread from the city, as much as fits (STRATEGIC.md §4).
+    fn order_load(&mut self, t: &[&str], out: &mut Vec<String>) -> Result<(), Reject> {
+        let (ui, limit) = self.carrier_order(t, "usage: L <unit> [amount]")?;
+        let (id, hex) = (self.units[ui].id, self.units[ui].hex);
+        let at = self.map.index(hex);
+        let player = self.player;
+        let u = &self.units[ui];
+        let room = self.rules.c.cargo_max.saturating_sub(u.wheat.saturating_add(u.bread));
+        let left = if let Some(ci) = self.city_at[at]
+            .map(|c| c as usize)
+            .filter(|&c| self.cities[c].owner == player)
+        {
+            let n = self.cities[ci].bread.min(room).min(limit);
+            self.cities[ci].bread -= n;
+            self.units[ui].bread += n;
+            self.cities[ci].bread
+        } else if let Some(si) = self.site_at[at]
+            .map(|s| s as usize)
+            .filter(|&s| self.sites[s].owner == player)
+        {
+            let n = self.sites[si].wheat.min(room).min(limit);
+            self.sites[si].wheat -= n;
+            self.units[ui].wheat += n;
+            self.sites[si].wheat
+        } else {
+            return reject("cannot_load", format!("unit {id} isn't on a site or city you hold"));
+        };
+        let u = &mut self.units[ui];
+        u.mp = 0;
+        out.push(format!("OK {} {} {left}", u.wheat, u.bread));
+        Ok(())
+    }
+
+    /// `U <unit> [amount]`: a wagon puts its wheat, then its bread, into the
+    /// city it stands on. The wheat becomes bread (STRATEGIC.md §4).
+    fn order_unload(&mut self, t: &[&str], out: &mut Vec<String>) -> Result<(), Reject> {
+        let (ui, limit) = self.carrier_order(t, "usage: U <unit> [amount]")?;
+        let (id, hex) = (self.units[ui].id, self.units[ui].hex);
+        let player = self.player;
+        let Some(ci) = self.city_at[self.map.index(hex)]
+            .map(|c| c as usize)
+            .filter(|&c| self.cities[c].owner == player)
+        else {
+            return reject("cannot_unload", format!("unit {id} isn't on a city you hold"));
+        };
+        let u = &mut self.units[ui];
+        let wheat = u.wheat.min(limit);
+        let bread = u.bread.min(limit - wheat);
+        u.wheat -= wheat;
+        u.bread -= bread;
+        u.mp = 0;
+        let city = &mut self.cities[ci];
+        city.bread = city.bread.saturating_add(wheat + bread);
+        out.push(format!("OK {} {} {}", u.wheat, u.bread, city.bread));
         Ok(())
     }
 
@@ -810,11 +1202,7 @@ impl Game {
         for id in seen {
             let u = &self.units[self.unit_idx(id).expect("occupants are live units")];
             if u.owner != self.player {
-                let code = self.rules.units[u.ty].code;
-                out.push(format!(
-                    "SEE {} {} {} {} {} {} {}",
-                    u.id, u.owner, code, u.hex.q, u.hex.r, u.hp, u.fort
-                ));
+                out.push(format!("SEE {}", self.unit_fields(u)));
             }
         }
     }
@@ -861,6 +1249,18 @@ impl Game {
             let t = &self.rules.units[u.ty];
             if u.hp == 0 || u.hp > t.max_hp || u.mp > t.mv {
                 return Err(format!("unit {} has hp {} and mp {}", u.id, u.hp, u.mp));
+            }
+            if u.rations > self.rules.c.ration_max {
+                return Err(format!("unit {} has {} rations", u.id, u.rations));
+            }
+            let cargo = u.wheat as u64 + u.bread as u64;
+            if cargo > if t.carry { self.rules.c.cargo_max as u64 } else { 0 } {
+                return Err(format!("unit {} carries {} wheat and {} bread", u.id, u.wheat, u.bread));
+            }
+        }
+        for s in &self.sites {
+            if s.wheat > s.cap {
+                return Err(format!("site {} holds {} wheat, over its cap", s.id, s.wheat));
             }
         }
         Ok(())
@@ -914,6 +1314,36 @@ mod tests {
         g.begin_turn(1);
         let reply = g.apply(&format!("B {ci} I"));
         assert!(reply.last().unwrap().starts_with("OK "), "{reply:?}");
+    }
+
+    /// The default rules with supply on, a site terrain, and wagons.
+    fn supply_rules() -> Rules {
+        let mut r = Rules::default();
+        r.set("supply", "1").unwrap();
+        r.set("terrain.R", "site 1 0 0 0").unwrap();
+        r.set("unit.W", "wagon 100 100 4 2 1 1 carry").unwrap();
+        r
+    }
+
+    #[test]
+    fn a_site_feeds_the_lowest_numbered_city_next_to_it_and_sites_break_ties() {
+        let lines = "MAP 6 4\nROW C.....\nROW .CRC..\nROW ......\nROW .....C\n\
+                     CITY 0 0 0 1\nCITY 1 3 1 1\nCITY 2 1 1 1\nCITY 3 4 3 2\nSITE 0 2 1 1 50 1000";
+        let (rules, map) = parse_setup(lines.lines(), supply_rules()).unwrap();
+        let mut g = Game::empty(rules, map);
+        assert_eq!(g.gold, [0, 0, 0]);
+        g.begin_turn(1);
+        let bread: Vec<u32> = g.cities.iter().map(|c| c.bread).collect();
+        assert_eq!(bread, vec![310, 60, 10, 300]);
+        assert!(!g.turn_message(0, 0).iter().any(|l| l.starts_with("GOLD")));
+
+        g.cities[2].owner = 2;
+        g.end_turn();
+        g.begin_turn(2);
+        g.round = g.rules.c.round_limit;
+        g.end_turn();
+        let outcome = g.outcome.clone().unwrap();
+        assert_eq!((outcome.winner, outcome.reason.as_str()), (1, "sites"));
     }
 
     #[test]

@@ -37,6 +37,7 @@ fn blank_map(w: i32, h: i32) -> Map {
         height: h,
         tiles: vec![0; (w * h) as usize],
         cities: Vec::new(),
+        sites: Vec::new(),
     }
 }
 
@@ -167,6 +168,7 @@ fn vision_vectors() {
         height: rows.len() as i32,
         tiles,
         cities: Vec::new(),
+        sites: Vec::new(),
     };
     for case in list(&v["cases"]) {
         let mut g = Game::empty(rules.clone(), map.clone());
@@ -218,49 +220,102 @@ fn order_vectors() {
             g.units.last_mut().unwrap().fort = t.get(6).map_or(0, |f| f.parse().unwrap());
         }
         g.gold = [0, int(&sc["gold"][0]) as u32, int(&sc["gold"][1]) as u32];
-        let player = int(&sc["player"]) as u8;
-        let round = int(&sc["round"]) as u32;
-        g.round = if player == 1 { round - 1 } else { round };
-        g.begin_turn(player);
-        if let Some(msg) = sc.get("message") {
-            assert_eq!(g.turn_message(0, 0), strings(msg), "{name}: turn message");
-        }
-        for step in list(&sc["steps"]) {
-            let order = step["order"].as_str().unwrap();
-            let reply = g.apply(order);
-            let want = strings(&step["reply"]);
-            assert_eq!(
-                reply.len(),
-                want.len(),
-                "{name}: '{order}' replied {reply:?}, expected {want:?}"
-            );
-            for (got, expected) in reply.iter().zip(&want) {
-                if expected.starts_with("ERR ") {
-                    assert!(
-                        got.starts_with(&format!("{expected} ")),
-                        "{name}: '{order}' replied '{got}', expected '{expected}'"
-                    );
-                } else {
-                    assert_eq!(got, expected, "{name}: '{order}'");
-                }
+        play_scenario(sc, g);
+    }
+}
+
+/// Begins the scenario's turn, so upkeep runs, then checks its turn
+/// message, the reply to each order, the outcome, and the other player's
+/// next turn message.
+fn play_scenario(sc: &Value, mut g: Game) {
+    let name = sc["name"].as_str().unwrap();
+    let player = int(&sc["player"]) as u8;
+    let round = int(&sc["round"]) as u32;
+    g.round = if player == 1 { round - 1 } else { round };
+    g.begin_turn(player);
+    if let Some(msg) = sc.get("message") {
+        assert_eq!(g.turn_message(0, 0), strings(msg), "{name}: turn message");
+    }
+    for step in list(&sc["steps"]) {
+        let order = step["order"].as_str().unwrap();
+        let reply = g.apply(order);
+        let want = strings(&step["reply"]);
+        assert_eq!(
+            reply.len(),
+            want.len(),
+            "{name}: '{order}' replied {reply:?}, expected {want:?}"
+        );
+        for (got, expected) in reply.iter().zip(&want) {
+            if expected.starts_with("ERR ") {
+                assert!(
+                    got.starts_with(&format!("{expected} ")),
+                    "{name}: '{order}' replied '{got}', expected '{expected}'"
+                );
+            } else {
+                assert_eq!(got, expected, "{name}: '{order}'");
             }
-            g.check_invariants()
-                .unwrap_or_else(|e| panic!("{name}: after '{order}': {e}"));
         }
-        if let Some(o) = sc.get("outcome") {
-            let outcome = g
-                .outcome
-                .clone()
-                .unwrap_or_else(|| panic!("{name}: the game should be over"));
-            assert_eq!(outcome.winner as i64, int(&o["winner"]), "{name}");
-            assert_eq!(outcome.reason, o["reason"].as_str().unwrap(), "{name}");
-        } else {
-            assert!(g.outcome.is_none(), "{name}: the game ended unexpectedly");
+        g.check_invariants()
+            .unwrap_or_else(|e| panic!("{name}: after '{order}': {e}"));
+    }
+    if let Some(o) = sc.get("outcome") {
+        let outcome = g
+            .outcome
+            .clone()
+            .unwrap_or_else(|| panic!("{name}: the game should be over"));
+        assert_eq!(outcome.winner as i64, int(&o["winner"]), "{name}");
+        assert_eq!(outcome.reason, o["reason"].as_str().unwrap(), "{name}");
+    } else {
+        assert!(g.outcome.is_none(), "{name}: the game ended unexpectedly");
+    }
+    if let Some(msg) = sc.get("next_message") {
+        g.end_turn();
+        g.begin_turn(3 - player);
+        assert_eq!(g.turn_message(0, 0), strings(msg), "{name}: next turn message");
+    }
+}
+
+/// The supply rules of the strategic ruleset (STRATEGIC.md §4, §5). Cities,
+/// sites, and units are given as in `CITY`, `SITE`, and `UNIT` lines, and a
+/// unit may end with what it did on its last turn: `M` moved, `A` attacked.
+#[test]
+fn supply_vectors() {
+    let v = load("supply.json");
+    let map_lines = strings(&v["map"]);
+    for sc in list(&v["scenarios"]) {
+        let name = sc["name"].as_str().unwrap();
+        let mut rules = Rules::default();
+        for lines in [v.get("rules"), sc.get("rules")].into_iter().flatten() {
+            for line in strings(lines) {
+                let (key, value) = line.split_once('=').unwrap();
+                rules.set(key.trim(), value.trim()).unwrap();
+            }
         }
-        if let Some(msg) = sc.get("next_message") {
-            g.end_turn();
-            g.begin_turn(3 - player);
-            assert_eq!(g.turn_message(0, 0), strings(msg), "{name}: next turn message");
+        let (rules, map) = parse_setup(map_lines.iter().map(|s| s.as_str()), rules).unwrap();
+        let mut g = Game::empty(rules, map);
+        for c in strings(&sc["cities"]) {
+            let t: Vec<u32> = c.split_whitespace().map(|x| x.parse().unwrap()).collect();
+            let city = &mut g.cities[t[0] as usize];
+            (city.owner, city.capturer, city.progress, city.bread) = (t[1] as u8, t[2] as u8, t[3], t[4]);
         }
+        for s in strings(&sc["sites"]) {
+            let t: Vec<u32> = s.split_whitespace().map(|x| x.parse().unwrap()).collect();
+            let site = &mut g.sites[t[0] as usize];
+            (site.owner, site.capturer, site.progress, site.wheat) = (t[1] as u8, t[2] as u8, t[3], t[4]);
+        }
+        for u in strings(&sc["units"]) {
+            let t: Vec<&str> = u.split_whitespace().collect();
+            let num = |i: usize| t[i].parse::<u32>().unwrap();
+            let ty = g.rules.unit_index(t[2].chars().next().unwrap()).unwrap();
+            let at = Hex::new(t[3].parse().unwrap(), t[4].parse().unwrap());
+            g.place(num(0), num(1) as u8, ty, at, num(5))
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(num(7), 0, "{name}: no unit can be aboard a transport yet");
+            let last = t.get(11).copied().unwrap_or("-");
+            let unit = g.units.last_mut().unwrap();
+            (unit.fort, unit.wheat, unit.bread, unit.rations) = (num(6), num(8), num(9), num(10));
+            (unit.moved, unit.attacked) = (last.contains('M'), last.contains('A'));
+        }
+        play_scenario(sc, g);
     }
 }

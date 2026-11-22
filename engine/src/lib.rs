@@ -12,7 +12,7 @@ pub mod mapgen;
 pub mod rng;
 pub mod rules;
 
-pub use game::{damage, City, Game, Outcome, Unit};
+pub use game::{damage, City, Game, Outcome, Site, Unit};
 pub use hex::Hex;
 pub use map::{parse_setup, Map};
 pub use rules::Rules;

@@ -127,6 +127,7 @@ fn try_generate(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64
         height: h,
         tiles: Vec::new(),
         cities: Vec::new(),
+        sites: Vec::new(),
     };
     let passable = |tile: u8| rules.terrains[tile as usize].passable();
 

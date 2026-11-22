@@ -1,13 +1,24 @@
 //! The map grid, and parsing of setup lines (SPEC §3.1, §6.2).
 
 use crate::hex::Hex;
-use crate::rules::{Rules, Terrain, UnitType, CITY_CHAR};
+use crate::rules::{Rules, Terrain, UnitType, CITY_CHAR, SITE_CHAR};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CityInfo {
     pub hex: Hex,
     /// Owner at the start of the game: 0 for neutral, or 1 or 2.
     pub owner: u8,
+}
+
+/// A resource site (STRATEGIC.md §3): it grows `output` wheat a turn for its
+/// owner, and piles up at most `cap`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SiteInfo {
+    pub hex: Hex,
+    /// Owner at the start of the game: 0 for neutral, or 1 or 2.
+    pub owner: u8,
+    pub output: u32,
+    pub cap: u32,
 }
 
 /// A `width × height` grid in the odd-r layout: column `i` of row `r` holds
@@ -20,6 +31,8 @@ pub struct Map {
     pub tiles: Vec<u8>,
     /// Cities in id order.
     pub cities: Vec<CityInfo>,
+    /// Resource sites in id order. Only maps for the strategic ruleset have any.
+    pub sites: Vec<SiteInfo>,
 }
 
 impl Map {
@@ -59,7 +72,7 @@ impl Map {
         self.tiles[self.index(h)] as usize
     }
 
-    /// `MAP`, `ROW`, and `CITY` lines.
+    /// `MAP`, `ROW`, `CITY`, and `SITE` lines.
     pub fn lines(&self, rules: &Rules) -> Vec<String> {
         let mut out = vec![format!("MAP {} {}", self.width, self.height)];
         for row in self.tiles.chunks(self.width as usize) {
@@ -69,11 +82,17 @@ impl Map {
         for (id, c) in self.cities.iter().enumerate() {
             out.push(format!("CITY {} {} {} {}", id, c.hex.q, c.hex.r, c.owner));
         }
+        for (id, s) in self.sites.iter().enumerate() {
+            out.push(format!(
+                "SITE {} {} {} {} {} {}",
+                id, s.hex.q, s.hex.r, s.owner, s.output, s.cap
+            ));
+        }
         out
     }
 
     /// Checks the map against the rules: every city sits on a city hex and
-    /// every city hex has a city.
+    /// every city hex has a city, and the same for sites.
     pub fn validate(&self, rules: &Rules) -> Result<(), String> {
         if self.width < 1 || self.height < 2 || self.height % 2 != 0 {
             return Err("the map needs width >= 1 and an even height".into());
@@ -104,6 +123,30 @@ impl Map {
         }
         if let Some(i) = (0..self.len()).find(|&i| self.tiles[i] == city_t && !has_city[i]) {
             return Err(format!("the '{CITY_CHAR}' hex at {} has no CITY line", self.hex(i)));
+        }
+        let site_t = rules.terrain_index(SITE_CHAR).map(|t| t as u8);
+        let mut has_site = vec![false; self.len()];
+        for (id, s) in self.sites.iter().enumerate() {
+            if !self.contains(s.hex) {
+                return Err(format!("site {id} at {} is off the map", s.hex));
+            }
+            let i = self.index(s.hex);
+            if Some(self.tiles[i]) != site_t {
+                return Err(format!("site {id} at {} isn't on a '{SITE_CHAR}' hex", s.hex));
+            }
+            if has_site[i] {
+                return Err(format!("two sites at {}", s.hex));
+            }
+            if s.owner > 2 {
+                return Err(format!("site {id} has owner {}; owners are 0, 1, or 2", s.owner));
+            }
+            has_site[i] = true;
+        }
+        if let Some(i) = (0..self.len()).find(|&i| Some(self.tiles[i]) == site_t && !has_site[i]) {
+            return Err(format!("the '{SITE_CHAR}' hex at {} has no SITE line", self.hex(i)));
+        }
+        if !self.sites.is_empty() && !rules.supply() {
+            return Err("the map has sites, which need supply = 1".into());
         }
         for p in 1..=2 {
             if !self.cities.iter().any(|c| c.owner == p) {
@@ -139,6 +182,7 @@ where
     let mut size: Option<(i32, i32)> = None;
     let mut rows: Vec<String> = Vec::new();
     let mut cities: Vec<(Hex, u8)> = Vec::new();
+    let mut sites: Vec<SiteInfo> = Vec::new();
     let mut terrains: Vec<Terrain> = Vec::new();
     let mut units: Vec<UnitType> = Vec::new();
     let mut damage: Vec<(char, Vec<u32>)> = Vec::new();
@@ -163,6 +207,18 @@ where
                     }
                     let hex = Hex::new(int(t.get(2), "q")?, int(t.get(3), "r")?);
                     cities.push((hex, int(t.get(4), "owner")?));
+                }
+                "SITE" => {
+                    let id: usize = int(t.get(1), "site id")?;
+                    if id != sites.len() {
+                        return Err(format!("expected site id {}", sites.len()));
+                    }
+                    sites.push(SiteInfo {
+                        hex: Hex::new(int(t.get(2), "q")?, int(t.get(3), "r")?),
+                        owner: int(t.get(4), "owner")?,
+                        output: int(t.get(5), "output")?,
+                        cap: int(t.get(6), "cap")?,
+                    });
                 }
                 "TERRAIN" => {
                     let ch = char_tok(t.get(1), "terrain character")?;
@@ -242,10 +298,14 @@ where
         height,
         tiles,
         cities: cities.into_iter().map(|(hex, owner)| CityInfo { hex, owner }).collect(),
+        sites,
     };
     rules.c.map_width = width as u32;
     rules.c.map_height = height as u32;
     rules.c.neutral_cities = map.cities.iter().filter(|c| c.owner == 0).count() as u32;
+    if rules.supply() {
+        rules.c.sites = map.sites.len() as u32;
+    }
     rules.validate()?;
     map.validate(&rules)?;
     Ok((rules, map))
@@ -283,16 +343,46 @@ mod tests {
     #[test]
     fn added_unit_types_and_terrains_round_trip() {
         let mut rules = Rules::default();
-        rules.set("terrain.R", "site 1 0 0 0").unwrap();
+        rules.set("terrain.s", "swamp 3 10 0 1").unwrap();
         rules.set("unit.W", "wagon 100 100 4 2 1 1 -").unwrap();
         rules.set("damage.I.W", "70").unwrap();
-        let map_lines = SMALL.replace("ROW ..f.", "ROW ..fR");
+        let map_lines = SMALL.replace("ROW ..f.", "ROW ..fs");
         let (rules, map) = parse_setup(map_lines.lines(), rules).unwrap();
         let mut lines = map.lines(&rules);
         lines.extend(rules.lines(true));
         let (rules2, map2) = parse_setup(lines.iter().map(|s| s.as_str()), Rules::default()).unwrap();
         assert_eq!(rules, rules2);
         assert_eq!(map, map2);
+    }
+
+    #[test]
+    fn sites_round_trip_and_need_supply() {
+        let mut rules = Rules::default();
+        rules.set("terrain.R", "site 1 0 0 0").unwrap();
+        let map_lines = SMALL.replace("ROW ..f.", "ROW ..fR") + "SITE 0 2 2 1 50 1000\n";
+        assert!(parse_setup(map_lines.lines(), rules.clone()).is_err());
+        rules.set("supply", "1").unwrap();
+        let (rules, map) = parse_setup(map_lines.lines(), rules).unwrap();
+        assert_eq!(rules.c.sites, 1);
+        assert_eq!(map.sites[0].hex, Hex::new(2, 2));
+        let mut lines = map.lines(&rules);
+        lines.extend(rules.lines(true));
+        assert!(lines.contains(&"SITE 0 2 2 1 50 1000".to_string()));
+        assert!(lines.contains(&"RULE ration_max 30".to_string()));
+        let (rules2, map2) = parse_setup(lines.iter().map(|s| s.as_str()), Rules::default()).unwrap();
+        assert_eq!(rules, rules2);
+        assert_eq!(map, map2);
+        // An R hex needs a SITE line.
+        let missing = map_lines.replace("SITE 0 2 2 1 50 1000\n", "");
+        assert!(parse_setup(missing.lines(), rules.clone()).is_err());
+    }
+
+    #[test]
+    fn the_default_game_sends_no_supply_rules() {
+        let lines = Rules::default().lines(false);
+        assert!(!lines
+            .iter()
+            .any(|l| l.starts_with("RULE supply") || l.starts_with("RULE ration")));
     }
 
     #[test]

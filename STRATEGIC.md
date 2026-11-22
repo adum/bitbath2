@@ -1,6 +1,6 @@
 # Bitbath: Strategic Ruleset
 
-**Status:** design draft, 2026-11-22. None of it is built yet.
+**Status:** design draft, 2026-11-22. Phase 1 (§12) is being built: the engine has the supply rules, but map generation, kits, and bots don't support them yet.
 
 - The choices agreed so far are listed in [§14](#14-agreed-so-far). Everything else is a proposal.
 - All numbers are starting values, to be tuned by tournaments as the default rules were.
@@ -102,10 +102,9 @@ There are two kinds of goods. **Wheat** grows at sites. **Bread** is made from i
 **Upkeep** at the start of each turn runs in this order, in place of income (SPEC §3.4):
 
 1. **Production:** sites grow wheat, sites next to cities deliver it, and cities make bread (§4).
-2. **Feeding:** each of the player's units eats what its last turn cost, then refills to `ration_max` from one of its player's cities or wagons that is on its hex or next to it, paying `ration_cost` bread per ration.
+2. **Feeding:** each of the player's units eats what its last turn cost, then refills to `ration_max` from its player's cities and wagons on its hex or next to it, paying `ration_cost` bread per ration.
    - Units are served in id order.
-   - Each takes from the first source with bread: cities before wagons, and lower ids first.
-   - A source that runs short pays for what it can.
+   - Each takes from its sources in turn, cities before wagons and lower ids first, until it's full or they run out. A source pays for whole rations only.
    - A unit that can't cover what it ate, from its rations and a refill together, is left with none and starves: it loses `starve_hp` HP, and can die of it. So a unit that reaches bread in time never starves.
 3. **Healing,** as in SPEC §3.4, except that a unit that starved this turn doesn't heal. Ships heal next to their own cities (§6).
 4. **Capture reset, refresh, and vision,** as in SPEC §3.4. Capture reset covers sites too.
@@ -267,7 +266,8 @@ The additions follow the pattern fortification set: new fields go at the end of 
 
 - `M` also boards and lands (§6), and `C` also captures sites.
 - `B` pays in bread from the city's stockpile, and puts ships next to the port.
-- New error codes include `no_bread`, for a build the city's stockpile can't pay for, and one for attacks whose base damage is 0. Golden test vectors will pin the cases down, as they do for the default rules.
+- New error codes: `no_bread`, for a build the city's stockpile can't pay for; `no_damage`, for an attack whose base damage is 0; and `cannot_carry`, `cannot_load`, and `cannot_unload`, for `L` and `U` orders that can't be carried out. With supply off, `L` and `U` are unknown orders, as before.
+- The golden test vectors in [tests/vectors/supply.json](tests/vectors/supply.json) pin the cases down, as orders.json does for the default rules.
 
 **Example.** A wagon at (12,9) drives onto site 0 at (15,7) and loads the 650 wheat piled there:
 

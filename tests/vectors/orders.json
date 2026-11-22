@@ -30,6 +30,7 @@
     {"order": "M 7 0", "reply": ["ERR unknown"]},
     {"order": "M 2 0", "reply": ["ERR unknown"]},
     {"order": "X 1", "reply": ["ERR syntax"]},
+    {"order": "L 1", "reply": ["ERR syntax"]},
     {"order": "M 3 3", "reply": ["ERR path"]}
    ]
   },

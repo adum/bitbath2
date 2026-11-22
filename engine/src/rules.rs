@@ -56,6 +56,8 @@ pub struct UnitType {
     pub no_move_attack: bool,
     /// Digs in while it holds still (SPEC §3.7).
     pub fortify: bool,
+    /// Carries wheat and bread, and can load and unload them (STRATEGIC.md §4).
+    pub carry: bool,
 }
 
 impl UnitType {
@@ -103,6 +105,9 @@ impl UnitType {
         if self.fortify {
             f.push("fortify");
         }
+        if self.carry {
+            f.push("carry");
+        }
         if f.is_empty() {
             "-".into()
         } else {
@@ -116,6 +121,7 @@ impl UnitType {
         self.skirmish = false;
         self.no_move_attack = false;
         self.fortify = false;
+        self.carry = false;
         for f in flags.split(',').map(str::trim).filter(|f| !f.is_empty() && *f != "-") {
             match f {
                 "capture" => self.capture = true,
@@ -123,6 +129,7 @@ impl UnitType {
                 "skirmish" => self.skirmish = true,
                 "no_move_attack" => self.no_move_attack = true,
                 "fortify" => self.fortify = true,
+                "carry" => self.carry = true,
                 _ => return Err(format!("unknown unit flag '{f}'")),
             }
         }
@@ -189,10 +196,49 @@ constants! {
     hang_turns = 3,
     max_orders_per_turn = 20000,
     max_line_bytes = 1024,
+    // The strategic ruleset (STRATEGIC.md §10). Sent only while supply is on.
+    supply = 0,
+    sites = 0,
+    start_bread = 300,
+    city_bread = 10,
+    site_output_min = 20,
+    site_output_max = 100,
+    site_cap_min = 400,
+    site_cap_max = 3000,
+    cargo_max = 1000,
+    ration_max = 30,
+    eat_base = 1,
+    eat_move = 1,
+    eat_attack = 1,
+    ration_cost = 5,
+    starve_hp = 10,
 }
+
+/// Constants that only matter while `supply` is on. `RULE` lines leave them
+/// out otherwise, so the default game's init message doesn't change.
+pub const SUPPLY_CONSTANTS: &[&str] = &[
+    "supply",
+    "sites",
+    "start_bread",
+    "city_bread",
+    "site_output_min",
+    "site_output_max",
+    "site_cap_min",
+    "site_cap_max",
+    "cargo_max",
+    "ration_max",
+    "eat_base",
+    "eat_move",
+    "eat_attack",
+    "ration_cost",
+    "starve_hp",
+];
 
 /// The terrain character that marks city hexes.
 pub const CITY_CHAR: char = 'C';
+
+/// The terrain character that marks resource sites (STRATEGIC.md §3).
+pub const SITE_CHAR: char = 'R';
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rules {
@@ -429,7 +475,31 @@ impl Rules {
         if let Some(code) = self.start_units.iter().find(|&&code| self.unit_index(code).is_none()) {
             return Err(format!("start_units: no unit type '{code}'"));
         }
+        if c.supply > 1 {
+            return Err("supply must be 0 or 1".into());
+        }
+        if c.supply == 0 && c.sites > 0 {
+            return Err("sites needs supply = 1".into());
+        }
+        if c.supply == 1 {
+            if c.site_output_min > c.site_output_max || c.site_cap_min > c.site_cap_max {
+                return Err("each site range needs its min at most its max".into());
+            }
+            if c.ration_max == 0 {
+                return Err("ration_max must be positive".into());
+            }
+            if let Some(i) = self.terrain_index(SITE_CHAR) {
+                if !self.terrains[i].passable() {
+                    return Err(format!("terrain '{SITE_CHAR}' (site) must be passable"));
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Whether the strategic ruleset's wheat, bread, and rations are on.
+    pub fn supply(&self) -> bool {
+        self.c.supply != 0
     }
 
     /// `TERRAIN`, `UNITTYPE`, `DAMAGE`, and `RULE` lines (SPEC §6.2), plus a
@@ -462,7 +532,9 @@ impl Rules {
             out.push(format!("DAMAGE {} {}", u.code, cells.join(" ")));
         }
         for name in Constants::NAMES {
-            out.push(format!("RULE {} {}", name, self.c.get(name).unwrap_or(0)));
+            if self.supply() || !SUPPLY_CONSTANTS.contains(name) {
+                out.push(format!("RULE {} {}", name, self.c.get(name).unwrap_or(0)));
+            }
         }
         if with_start {
             let codes: Vec<String> = self.start_units.iter().map(|c| c.to_string()).collect();
