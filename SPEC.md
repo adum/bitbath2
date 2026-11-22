@@ -24,7 +24,7 @@ Putting the benchmark first means:
 
 - Sandboxing untrusted code (§10).
 - More than two players.
-- Exotic mechanics: food logistics, naval units and transport, terrain modification, structures. v1 leaves hooks for them (§12).
+- Exotic mechanics: food logistics, naval units and transport, terrain modification, structures. v1 leaves hooks for them (§12), and [STRATEGIC.md](STRATEGIC.md) designs a ruleset with the first two.
 - Multi-turn orders in the engine (§5).
 - City razing. Cities can only be captured (§14).
 
@@ -654,7 +654,7 @@ bitbath2/
 6. **Later:**
    - the WASI/fuel launcher and more language kits
    - shroud, and suspending the idle bot
-   - exotic mechanics
+   - exotic mechanics, starting with the strategic ruleset in [STRATEGIC.md](STRATEGIC.md)
 
 ## 14. Open questions
 
