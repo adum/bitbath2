@@ -326,7 +326,15 @@ The army and the shares walking to bread and starving are the hauler's averages 
 - **Hauling wins.** The hauler won 19 of 20 games. Its bread income was about 2.6 times the other bot's with 30 rations, and 5 times with 60.
 - **With 30 rations, the bot can't keep an offensive fed.** Half its army is walking back to bread at any time, while its cities hold over 14,000 bread it can't get to the front. Most games reach the round cap. With 60 rations, offensives work and every game ends by elimination. This may be the bot as much as the rules: better feeding wagons would help at 30. The preset now uses 60 (§14).
 - **Supply takes few orders.** The hauler sends about 2.5 `L` and `U` orders a turn, among about 140 moves. It thinks for 0.4 to 0.7 seconds a turn, and a 300-round game takes about 4 minutes.
-- **Not measured yet:** sieges, and how long games between evenly matched bots last.
+The second tournament played the reference bot against itself with 60 rations, on 4 maps, at most 1,000 rounds a game. The bot plays the same way every time, so each map's two games were mirror images: 4 different games.
+
+- **Even games ended by elimination in 129 to 283 rounds.** One side gets ahead and snowballs.
+- **They took 1 to 3 minutes of thinking in all,** about 0.15 to 0.45 seconds a turn per bot, with no turn over 0.8 seconds.
+- **About 64 units starved to death per game,** and about 4% of the army was starving at any time.
+- **Cities fall by assault, not hunger.** A replay analysis counted every stretch of turns a city spent with enemy units on it or next to it, across both tournaments. Such a siege ended, with the city held or taken, after a median of 1 to 2 rounds. Of 742 sieges in the even games, 4 lasted 10 rounds or more. Starving out a garrison of 4 in a city with 300 bread would take over 75 turns, so it never decided anything.
+- **A site next to a city helps it hold.** In the even games, 41% of sieges of a city with its owner's site next to it ended with the city taken, against 56% for other cities. Part of that may be where those cities are, as each home city has one.
+
+So with today's numbers, supply decides how far armies can reach, but not sieges. Making sieges matter would take garrisons that run out of food far sooner than they do now.
 
 ### Work
 
