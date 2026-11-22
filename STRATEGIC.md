@@ -12,7 +12,7 @@
 The default game is tactical: a 40 × 30 map, short distances, and one shared pool of gold. The strategic ruleset is a second game on the same engine, about territory and supply:
 
 - **A big, open map** with long distances, where holding ground and keeping it supplied matter more than any single fight.
-- **Resource gathering:** goods come from a few sites and have to be carried to cities.
+- **Resource gathering:** wheat grows at a few sites and has to be carried to a city, where it becomes bread. Bread builds units and feeds them.
 - **Sieges:** a city that can't be supplied weakens and falls. A city with its own supply is a fortress.
 - **Ships:** transports, warships, and islands worth invading.
 
@@ -23,17 +23,18 @@ The default game stays as it is.
 **Principles:**
 
 - **Supply is visible.** Goods travel in units on the map, which can be seen, chased, and escorted. Nothing arrives by an invisible route (§14).
-- **Few, big carriers.** Sites store many turns of output, and one wagon holds a full site's worth. Keeping an empire supplied should take a handful of orders a turn.
+- **Cities are the hubs.** Wheat becomes bread only in a city, and units eat only bread, so every unit built and every meal eaten passes through a city.
+- **Few, big carriers.** Sites store many turns of output, and one wagon carries many turns' worth. Keeping an empire supplied should take a handful of orders a turn.
 - **Same machinery.** Combat, zones of control, capture, fog of war, fortification, and the determinism rules (SPEC §12) carry over. New mechanics are data where possible: terrain columns, unit flags, and rule constants.
 - **Readable from the rules message.** Everything a bot needs still comes in the init message (SPEC §6.2), so rule variants keep working.
 
 ## 2. Overview
 
-- **Sites** produce goods every turn and pile them up, to a cap. They're captured like cities.
-- **Wagons** load goods at sites and unload them in cities.
-- **Each city has its own stockpile.** It pays for the units built there and feeds the units on and around it. There's no gold.
-- **Every unit eats** one ration a turn. It carries 10, and refills them from a city or wagon on or next to its hex. A unit with none left starves.
-- **Sieges** follow from these rules. A city no wagon can reach stops building once its stockpile is gone, and its garrison starves once their rations run out. A city with a site next to it is supplied every turn, with no wagon.
+- **Sites** grow wheat every turn and pile it up, to a cap. Each site has its own output and cap. They're captured like cities.
+- **Cities** turn wheat into bread the moment it arrives, and make a little bread of their own. Each city keeps its own bread, which pays for the units built there and feeds the units on and around it. There's no gold.
+- **Wagons** carry wheat from sites to cities, and bread from cities to armies.
+- **Every unit eats** a ration a turn when it holds still, and more when it moves or attacks. It carries 30, and refills them with bread from a city or wagon on or next to its hex. A unit with none left starves.
+- **Sieges** follow from these rules. A city under siege makes no bread. If no wagon gets in, it stops building once its stockpile is gone, and its garrison starves once their rations run out. A city with a site next to it is supplied every turn, with no wagon.
 - **Ships** sail on water, which land units can't enter. Transports carry land units, wagons included. Warships fight at sea, and sinking a transport sinks everything aboard.
 
 ## 3. Map
@@ -44,64 +45,81 @@ The default game stays as it is.
   - one next to each home city, owned by that player from the start;
   - some next to neutral cities, which makes those cities fortresses worth fighting over;
   - the rest in the open, away from cities, where only wagons can collect them. Some of these are on islands.
+- **Each site has its own output and cap,** which the generator picks from the ranges in §10. The two sites of a mirrored pair match.
+  - The sites next to the homes get the middle of each range. Sites get richer the farther they are from the nearer home, so the best ones are in the middle of the map and on islands. A neutral city next to a rich site is the biggest prize on the map.
+  - Output and cap are picked separately, so sites come in kinds. A *fast* site, with high output and a small cap, fills up quickly, so it wants a city next to it or frequent visits. A *deep* site, with low output and a big cap, can be left alone for 50 turns and emptied in one haul, which also makes it a tempting raid.
 - **Validation:** instead of every city being reachable by land (SPEC §3.9), every city and site must be reachable from both homes by land and sea, and each home's landmass must have a port (§6).
-- **Start:** each player gets `I, I, S` and a wagon on their home city, and `start_goods` in it.
+- **Start:** each player gets `I, I, S` and a wagon on their home city, and `start_bread` in it.
 - **The default game's maps don't change.** The new generator parameters default to today's behavior.
 
-## 4. Goods
+## 4. Wheat and bread
+
+There are two kinds of goods. **Wheat** grows at sites. **Bread** is made from it in cities: wheat becomes bread, one for one, the moment it enters a city. Bread builds units and feeds them, and nothing eats wheat, so an army can't live off a site. It needs a city behind it.
 
 ### Sites
 
-- **Production:** at the start of its owner's turn, a site adds `site_output` goods to its pile, up to `site_cap`. Neutral sites produce nothing.
+- **Production:** at the start of its owner's turn, a site adds its output of wheat to its pile, up to its cap. Neutral sites produce nothing.
 - **Occupied sites:** a site neither produces nor delivers while an enemy unit stands on it, so a raider can cut off a site without capturing it.
 - **Capture:** sites are captured like cities (SPEC §3.5), with the `C` order and `capture_points`. The pile goes with the site, so taking a site its owner has left alone for a while takes everything on it.
 - **Vision:** a site gives its owner vision like a city (`city_vision`).
-- **Next to a city:** right after production, a site next to one of its owner's cities moves its whole pile into that city. If there are several such cities, the lowest city id gets it. This is what it means for a city to have its own supply.
+- **Next to a city:** right after production, a site next to one of its owner's cities moves its whole pile into that city, where it becomes bread. If there are several such cities, the lowest city id gets it. This is what it means for a city to have its own supply.
 
 ### Cities
 
-- **Stockpile:** each city stores any amount of goods.
-- **Building** pays the unit's cost from that city's stockpile. Otherwise it works as in SPEC §3.5.
+- **Stockpile:** each city stores any amount of bread.
+- **Making bread:** at the start of its owner's turn, a city makes `city_bread` bread, unless an enemy unit stands on it or next to it. Neutral cities make none.
+  - This keeps a player from ever being stuck. One with no sites and no wagons can still build, slowly: on its own, a city builds a scout in 8 turns, or infantry or a wagon in 10.
+  - It doesn't help a city under siege, which has to live on its stockpile, a site next to it, and the wagons that get through. Without that exception, 10 bread a turn would keep two units holding still alive in every besieged city forever.
+  - A single enemy unit next to a city, even a scout, stops its bread. That's cheap harassment, but it costs the city only `city_bread` a turn, and the unit is easy to kill.
+- **Building** pays the unit's cost in bread from that city's stockpile. Otherwise it works as in SPEC §3.5. To build near the front, send bread there first.
 - **Capture:** whoever captures a city takes its stockpile.
-- **No gold:** there's no shared pool, city income, or gold upkeep. Neutral cities start empty.
+- **No gold:** there's no shared pool, gold income, or gold upkeep. Neutral cities start empty.
 
 ### Wagons
 
-- **Capacity:** a wagon carries up to `cargo_max` goods, as much as a full site holds.
-- **Loading:** `L <wagon>` takes goods from the site or city the wagon stands on, which its player must hold, as many as fit.
-- **Unloading:** `U <wagon>` puts the wagon's goods into the city it stands on, which its player must hold.
-- **Amounts:** both orders take an optional amount, to move at most that many, for instance to leave some goods in a city.
-- **Uses the action:** loading and unloading each use the wagon's action, like capturing. A wagon can move and then load or unload in the same turn, but can't move afterward.
+- **Capacity:** a wagon carries up to `cargo_max` goods, wheat and bread together.
+- **Loading:** `L <wagon>` takes wheat from the site the wagon stands on, or bread from the city it stands on, as much as fits. Its player must hold the site or city.
+- **Unloading:** `U <wagon>` puts the wagon's goods into the city it stands on, which its player must hold. The wheat becomes bread. A wagon can also carry bread from one city to another.
+- **Amounts:** both orders take an optional amount, to move at most that much, for instance to leave some bread in a city. Unloading takes wheat first.
+- **One stop:** a wagon can load and unload as often as it likes in a turn, but can't move after doing either. So a wagon can drive into a city, unload its wheat, and take bread on, all in one turn.
   - A wagon passing through a city delivers nothing.
   - Even a site next to a city would take two turns per round trip, which is why such sites deliver by themselves.
 - **Losing a wagon loses its cargo.** The goods aren't dropped or captured.
-- **Feeding:** wagons also feed the units next to them (§5).
+- **Feeding:** wagons also feed the units on and next to them with their bread (§5). Wheat feeds no one.
 
 ## 5. Food and sieges
 
 **Rations.** Every unit carries up to `ration_max` rations. New units start full.
 
+**Eating.** Each turn costs a unit `eat_base` rations, plus `eat_move` if it moved and `eat_attack` if it attacked. With the starting values, holding still costs 1, moving or attacking 2, and both 3.
+
+- Moving means changing hexes, as it does for fortification (SPEC §6.6), so boarding and landing count. Riding aboard a moving transport doesn't.
+- Only attacks on the unit's own turn count. Striking back costs nothing extra, and neither does capturing.
+- A full unit can hold still for 30 turns, march for 15, or march and fight for 10. Fifteen turns of marching take infantry roughly halfway across the map.
+- Holding still is cheap, which suits defense: a unit holding a city digs in and eats the least. Attacking costs the most, so an offensive needs supply.
+
 **Upkeep** at the start of each turn runs in this order, in place of income (SPEC §3.4):
 
-1. **Production:** sites produce, and sites next to cities deliver (§4).
-2. **Eating:** each of the player's units eats a ration. A unit that has none starves instead: it loses `starve_hp` HP, and can die of it.
-3. **Refilling:** each unit refills to `ration_max` from one of its player's cities or wagons that is on its hex or next to it, paying `ration_cost` goods per ration.
+1. **Production:** sites grow wheat, sites next to cities deliver it, and cities make bread (§4).
+2. **Feeding:** each of the player's units eats what its last turn cost, then refills to `ration_max` from one of its player's cities or wagons that is on its hex or next to it, paying `ration_cost` bread per ration.
    - Units are served in id order.
-   - Each takes from the first source with goods: cities before wagons, and lower ids first.
+   - Each takes from the first source with bread: cities before wagons, and lower ids first.
    - A source that runs short pays for what it can.
-4. **Healing,** as in SPEC §3.4, except that a unit that starved this turn doesn't heal. Ships heal next to their own cities (§6).
-5. **Capture reset, refresh, and vision,** as in SPEC §3.4. Capture reset covers sites too.
+   - A unit that can't cover what it ate, from its rations and a refill together, is left with none and starves: it loses `starve_hp` HP, and can die of it. So a unit that reaches bread in time never starves.
+3. **Healing,** as in SPEC §3.4, except that a unit that starved this turn doesn't heal. Ships heal next to their own cities (§6).
+4. **Capture reset, refresh, and vision,** as in SPEC §3.4. Capture reset covers sites too.
 
-**What it costs.** A unit costs `ration_cost` goods a turn wherever it is, paid when it refills. So a player's goods income limits the army they can keep, as gold upkeep does in the default game.
+**What it costs.** Every ration is paid for in bread when the unit refills, at `ration_cost` each. With the starting values, a unit holding still costs 5 bread a turn, the same as gold upkeep in the default game. One that moves costs 10, and one that moves and attacks costs 15. So bread limits the army a player can keep, and an offensive costs more than holding a line. If cavalry raids turn out too cheap, a per-type appetite, such as cavalry eating double, is the obvious next knob.
 
 **Sieges** come out of these rules. With the starting values:
 
-- Say a city holds 300 goods and 4 units. Their refills cost 20 goods a turn, so if no wagon gets in, the stockpile lasts 15 turns.
-- Then the garrison lives on its rations for 10 turns, and then starves, at 10 HP a turn. Starving units also hit weaker, since damage scales with HP.
-- A city with a site next to it takes in 50 goods a turn, more than a full garrison eats. To starve it, the besieger has to stand on the site or capture it.
-- Besiegers eat too. A siege longer than 10 turns needs wagons behind the lines, which a relief force can raid.
+- Say a city holds 300 bread and 4 units, and the besiegers stand next to it, so it makes no bread. Holding still, the garrison eats 4 rations a turn, which costs 20 bread. If no wagon gets in, the stockpile lasts 15 turns.
+- Then the garrison lives on its rations for 30 turns, and then starves, at 10 HP a turn. Starving units also hit weaker, since damage scales with HP.
+- A city with a site next to it takes in that site's wheat every turn, as bread. A site that grows 50 a turn feeds 10 units holding still. To starve such a city, the besieger has to stand on the site or capture it.
+- Besiegers eat too. Holding still, they last 30 turns on their rations, and starving a city out takes 45 turns or more, so a siege that waits needs wagons behind the lines, which a relief force can raid.
+- **Long rations make starving a city slow.** That fits a 400-round game, but if sieges drag in testing, `ration_max` is the knob.
 
-**In the field,** an army needs wagons behind it or cities along the way, so how far it can go depends on its supply.
+**In the field,** an army needs wagons of bread behind it or stocked cities along the way, so how far it can go depends on its supply. A captured city comes with its stockpile and starts making bread, so taking cities along the way helps feed an advance.
 
 ## 6. Ships
 
@@ -133,12 +151,12 @@ The default game stays as it is.
 - **The galley** (`G`, §7) is the one warship type to start with. It fights other ships, and can bombard land units on the coast next to it.
 - **Zones of control** reach across the shoreline both ways. A line of galleys can close a strait, and pikemen on a beach slow a landing.
 - **Blockades** need no rule of their own. Galleys off a port sink the transports that come out, and their zones of control stop transports from slipping past.
-- **Fleets eat too.** One that stays away from port for more than 10 turns needs a wagon aboard a transport nearby.
+- **Fleets eat too.** A ship that sails every turn runs out after 15 turns away from port, so a longer voyage needs a wagon of bread aboard a transport nearby.
 - **From land,** only archers can hurt ships (§7).
 
 ## 7. Unit types
 
-The five land units of the default game are unchanged (SPEC §3.3). The ruleset adds three:
+The five land units of the default game are unchanged (SPEC §3.3), except that their costs are paid in bread. The ruleset adds three:
 
 | code | unit | cost | move | vision | range | flags |
 |---|---|---|---|---|---|---|
@@ -148,7 +166,7 @@ The five land units of the default game are unchanged (SPEC §3.3). The ruleset 
 
 **New flags:**
 
-- `carry`: holds goods, and can load and unload them (§4).
+- `carry`: holds goods, wheat and bread, and can load and unload them (§4).
 - `naval`: moves on water, by each terrain's naval move cost (§6).
 - `transport`: carries land units (§6).
 
@@ -167,7 +185,7 @@ The five land units of the default game are unchanged (SPEC §3.3). The ruleset 
 | T transport | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | G galley | 25 | 25 | 25 | 30 | 35 | 50 | 80 | 55 |
 
-- **Wagons** are easy prey, for cavalry most of all. That gives cavalry a strategic job: raiding supply.
+- **Wagons** are easy prey, for cavalry most of all. That gives cavalry a strategic job: raiding supply. Killing a wagon of wheat cuts its owner's income, and killing one of bread starves an army.
 - **Transports and galleys** can be hurt only by galleys and archers.
 - **Bombardment,** the galley row's first five entries, is the riskiest guess. No land unit strikes back at a galley, and only archers can shoot at one on their own turn, so bombardment could make coastal cities too hard to hold. Setting those entries to 0 turns it off.
 
@@ -176,7 +194,7 @@ The five land units of the default game are unchanged (SPEC §3.3). The ruleset 
 Fog works as in SPEC §4. For what's new:
 
 - **Units:** a visible enemy unit shows everything, as now, including its cargo and rations. A visible transport shows the units aboard.
-- **Cities and sites:** who owns them is public. A stockpile or pile shows only while you can see the city or site, as capture progress does (SPEC §3.6).
+- **Cities and sites:** who owns them is public, and so is each site's output and cap. A stockpile or pile shows only while you can see the city or site, as capture progress does (SPEC §3.6).
 
 ## 9. Winning
 
@@ -190,19 +208,25 @@ New keys, with their values in the strategic preset and in the default game:
 
 | key | strategic | default | meaning |
 |---|---|---|---|
-| `supply` | 1 | 0 | 1 turns on goods and rations (§4, §5), in place of gold |
+| `supply` | 1 | 0 | 1 turns on wheat, bread, and rations (§4, §5), in place of gold |
 | `sites` | 32 | 0 | resource sites on generated maps, including the two next to the homes; must be even |
 | `water_pct` | 40 | 6 | how much of a generated map is water |
-| `start_goods` | 300 | – | goods in each home city at the start |
-| `site_output` | 50 | – | goods a site produces per turn |
-| `site_cap` | 1000 | – | the most goods a site's pile holds: 20 turns of output |
-| `cargo_max` | 1000 | – | the most goods a wagon carries |
+| `start_bread` | 300 | – | bread in each home city at the start |
+| `city_bread` | 10 | – | bread a city makes per turn, unless an enemy unit is on or next to it |
+| `site_output_min` | 20 | – | the least wheat a site grows per turn |
+| `site_output_max` | 100 | – | the most wheat a site grows per turn |
+| `site_cap_min` | 400 | – | the smallest cap on a site's pile |
+| `site_cap_max` | 3000 | – | the largest cap on a site's pile |
+| `cargo_max` | 1000 | – | the most goods a wagon carries, wheat and bread together |
 | `passengers_max` | 4 | – | the most units a transport carries |
-| `ration_max` | 10 | – | the most rations a unit carries |
-| `ration_cost` | 5 | – | goods per ration refilled |
+| `ration_max` | 30 | – | the most rations a unit carries |
+| `eat_base` | 1 | – | rations a unit eats each turn |
+| `eat_move` | 1 | – | extra rations on a turn it moved |
+| `eat_attack` | 1 | – | extra rations on a turn it attacked |
+| `ration_cost` | 5 | – | bread per ration refilled |
 | `starve_hp` | 10 | – | HP a starving unit loses per turn |
 
-A dash means the key isn't used. The preset also sets the map to 80 × 60 with 46 neutral cities and the round limit to 400, and adds the site terrain, the naval move cost, and the three unit types.
+A dash means the key isn't used. With `supply` on, the gold keys (`start_gold`, `city_income`, and `unit_upkeep`) aren't used either. The preset also sets the map to 80 × 60 with 46 neutral cities and the round limit to 400, and adds the site terrain, the naval move cost, and the three unit types.
 
 ## 11. Protocol changes
 
@@ -214,42 +238,57 @@ The additions follow the pattern fortification set: new fields go at the end of 
 > TERRAIN ~ water 0 0 0 0 1            ... conceal naval_move_cost (0 = ships can't enter)
 > TERRAIN R site 1 0 0 0 0
 > UNITTYPE W wagon 100 100 4 2 1 1 carry
-> SITE 0 15 7 1                        id q r initial_owner, one per site
+> SITE 0 15 7 0 30 2400                id q r initial_owner output cap, one per site
 > RULE supply 1
 ```
 
 **Turn state:**
 
 ```
-> CITY 4 1 0 0 420                     id owner capturer progress goods
-> SITE 0 1 0 0 650                     id owner capturer progress pile
-> UNIT 41 1 W 12 9 100 0 0 0 10        id owner type q r hp fort carrier cargo rations
+> CITY 4 1 0 0 420                     id owner capturer progress bread
+> SITE 0 1 0 0 650                     id owner capturer progress wheat
+> UNIT 41 1 W 12 9 100 0 0 0 0 30      id owner type q r hp fort carrier wheat bread rations
 > LOG SITE 5 2 1                       a site changed hands: id, old owner, new owner
 ```
 
 - There's no `GOLD` line.
 - `carrier` is the transport a unit is aboard, or 0. It's the field SPEC §12 reserved for transport. A unit aboard reports its transport's hex.
+- `wheat` and `bread` are a wagon's cargo, and 0 for other units.
 - `SEE` lines get the same new fields as `UNIT` lines.
 
 **Orders:**
 
 ```
-< L <unit> [amount]         load goods from the site or city the wagon stands on
-< U <unit> [amount]         unload goods into the city the wagon stands on
-> OK <cargo> <goods>        the wagon's cargo afterward, and the goods left at the site or city
+< L <unit> [amount]         load wheat from the site, or bread from the city, that the wagon stands on
+< U <unit> [amount]         unload into the city the wagon stands on, wheat first
+> OK <wheat> <bread> <left> the wagon's wheat and bread afterward, and what's left at the site or city
 ```
 
 - `M` also boards and lands (§6), and `C` also captures sites.
-- `B` pays from the city's stockpile, and puts ships next to the port.
-- New error codes include `no_goods`, for a build the city's stockpile can't pay for, and one for attacks whose base damage is 0. Golden test vectors will pin the cases down, as they do for the default rules.
+- `B` pays in bread from the city's stockpile, and puts ships next to the port.
+- New error codes include `no_bread`, for a build the city's stockpile can't pay for, and one for attacks whose base damage is 0. Golden test vectors will pin the cases down, as they do for the default rules.
 
-**Example.** A wagon at (12,9) drives onto site 0 at (15,7) and loads its pile. Then a pikeman at (10,8) boards transport 60, which waits offshore at (9,8):
+**Example.** A wagon at (12,9) drives onto site 0 at (15,7) and loads the 650 wheat piled there:
 
 ```
 < M 41 0012
 > OK 15 7 0
 < L 41
-> OK 650 0
+> OK 650 0 0
+```
+
+A few turns later it reaches city 4, which holds 420 bread. In the same turn, it unloads, so its wheat becomes bread, and takes on 300 bread for an army:
+
+```
+< U 41
+> OK 0 0 1070
+< L 41 300
+> OK 0 300 770
+```
+
+Elsewhere, a pikeman at (10,8) boards transport 60, which waits offshore at (9,8):
+
+```
 < M 52 3
 > OK 9 8 0
 ```
@@ -260,11 +299,11 @@ The additions follow the pattern fortification set: new fields go at the end of 
 
 Each phase is playable on its own, and gets tournaments before the next one starts.
 
-1. **Goods and sieges, on land.** Sites, stockpiles, wagons, the `L` and `U` orders, rations, and site placement, on the large map with today's water. The tournaments should answer:
-   - Does a bot that hauls goods beat one that ignores them?
-   - Do cities with sites next to them hold, and do cities without them fall to sieges?
+1. **Goods and sieges, on land.** Sites, wheat and bread, wagons, the `L` and `U` orders, rations, and site placement, on the large map with today's water. The tournaments should answer:
+   - Does a bot that hauls wheat beat one that ignores it?
+   - Do cities with sites next to them hold, and do cities without them fall to sieges? How long do sieges take?
    - How many orders a turn does supply take?
-   - What should `site_output`, `site_cap`, `cargo_max`, and `ration_max` be?
+   - What should the site ranges, `city_bread`, `cargo_max`, `ration_max`, and the eating costs be?
 2. **Ships.** The naval move cost, ports, transports, galleys, boarding and landing, and maps with more water. The tournaments should answer:
    - Can a player invade an island?
    - Do blockades work?
@@ -274,9 +313,9 @@ Each phase is playable on its own, and gets tournaments before the next one star
 ### Work
 
 - **Rules:** a config can change the built-in unit types and terrains but can't add new ones. It needs to, so that `configs/strategic.toml` can add the site terrain and the three unit types.
-- **Switch:** `supply` turns on goods and rations. Ships need no switch: they're unit types with the `naval` flag, and the default game has none.
-- **State:** goods per city, a pile per site, and each unit's cargo, rations, and carrier.
-- **Maps:** `SITE` lines in map files, and the generator's water, site placement, and land-and-sea check.
+- **Switch:** `supply` turns on wheat, bread, and rations. Ships need no switch: they're unit types with the `naval` flag, and the default game has none.
+- **State:** bread per city; output, cap, and wheat per site; each wagon's wheat and bread; each unit's rations and carrier; and whether each unit moved or attacked on its last turn, for eating.
+- **Maps:** `SITE` lines in map files, with each site's output and cap, and the generator's water, site placement and richness, and land-and-sea check.
 - **Determinism:** deliveries and refills go in id order, so every engine and kit agrees on them.
 - **Kits:** the new lines and fields, pathfinding for ships, and helpers for loading and feeding.
 - **Golden test vectors** for every new order, upkeep step, and edge case.
@@ -286,22 +325,20 @@ Each phase is playable on its own, and gets tournaments before the next one star
 
 ## 13. Open questions
 
-1. **Rations, or food for garrisons only?** Feeding only the units on cities is simpler. But units outside cities would then cost nothing, so armies would grow without limit, and besiegers would need no supply. *Proposed: rations.*
-2. **Should cities produce goods too?** A small trickle would make cities without sites worth more. But it would let every city feed a small garrison forever, which weakens sieges. *Proposed: no, to start.*
-3. **A faster way to win on big maps?** Elimination could take hundreds of rounds. Options: you lose when you lose your home city, you win by holding most of the cities, or victory points decide at the round limit. *No proposal yet. Phase 1 games will show how long elimination takes.*
-4. **Hidden passengers?** Showing what a transport carries is simpler. Hiding it would allow decoys. *Proposed: shown, to start.*
-5. **Bombardment:** keep the galley's damage against land units, or set it to 0? *Proposed: keep it, and test it.*
-6. **More warship types?** One type may make naval play flat. A fast raider and a heavy ship are the obvious pair. *Proposed: one, until phase 2 shows whether it's enough.*
-7. **One kind of goods, or several?** Several, such as food, timber, and iron, would let unit types need different goods, but there would be more to haul and track. *Proposed: one.*
-8. **Seizing wagons:** could an attacker take a wagon's cargo instead of destroying it? *Proposed: no, to start.*
-9. **Roads:** terrain that makes wagons faster, which players build, so supply routes become something they make. SPEC §12 already has the hook for changing terrain (`TILE` lines). *Later.*
+1. **A faster way to win on big maps?** Elimination could take hundreds of rounds. Options: you lose when you lose your home city, you win by holding most of the cities, or victory points decide at the round limit. *No proposal yet. Phase 1 games will show how long elimination takes.*
+2. **Hidden passengers?** Showing what a transport carries is simpler. Hiding it would allow decoys. *Proposed: shown, to start.*
+3. **Bombardment:** keep the galley's damage against land units, or set it to 0? *Proposed: keep it, and test it.*
+4. **More warship types?** One type may make naval play flat. A fast raider and a heavy ship are the obvious pair. *Proposed: one, until phase 2 shows whether it's enough.*
+5. **Seizing wagons:** could an attacker take a wagon's cargo instead of destroying it? *Proposed: no, to start.*
+6. **Roads:** terrain that makes wagons faster, which players build, so supply routes become something they make. SPEC §12 already has the hook for changing terrain (`TILE` lines). *Later.*
+7. **More raw goods?** Timber or iron, say, grown at sites and turned in cities into what some unit types need. They'd follow the pattern of wheat and bread, but there would be more to haul and track. *Later.*
 
 ## 14. Agreed so far
 
 Settled in discussion on 2026-11-21:
 
 - **A separate ruleset.** The default game stays as it is.
-- **Supply is carried.** Goods travel in wagons and transports.
+- **Supply is carried.** Goods travel in wagons, which ride transports at sea.
   - *Rejected:* "connected" supply, where a site's goods would reach a city by themselves whenever a path between them avoided enemy units. Nobody would see the route, players would have to learn what blocks it, and the blocking rule would be easy for kits to get subtly wrong.
 - **Few carriers that hold a lot,** and sites that store goods for many turns, up to a high cap.
 - **Each city keeps its own stockpile.** With one shared pool, a delivery to any city would feed every city, and a siege would only cost some income.
@@ -311,3 +348,12 @@ Settled in discussion on 2026-11-21:
 - **Wagons ride on transports.** They're separate units, and neither is amphibious.
   - *Rejected:* an amphibious wagon. It would be odd next to infantry that can't swim, and it would let supply cross water without ships.
   - *Dropped:* transports holding goods themselves. Where there's no port, goods would need an extra order to pass from a wagon to a ship.
+
+Settled on 2026-11-22:
+
+- **Sites differ** in how much they grow and how much they hold.
+- **Goods are processed in cities.** Sites grow wheat, which becomes bread only in a city, and units eat only bread. With one kind of goods, an army could live off a site and never need a city, and supply would have no shape.
+- **Wagons carry both** wheat and bread.
+- **Bread pays for everything.** Units cost bread to build, and there's no gold.
+- **Every unit eats, by what it does.** Holding still costs the least, and moving and attacking cost more. A unit carries enough to last a long time.
+- **Cities make a little bread,** so a player can never be left unable to build.
