@@ -1,14 +1,17 @@
 //! Seeded, point-symmetric map generation (SPEC §3.9). Integer math only.
 
-use crate::map::{CityInfo, Map};
+use crate::map::{CityInfo, Map, SiteInfo};
 use crate::rng::{mix64, SplitMix64};
-use crate::rules::{Rules, CITY_CHAR};
+use crate::rules::{Rules, CITY_CHAR, SITE_CHAR};
 
-/// Bumped whenever generated maps change for the same seed and rules.
+/// Bumped whenever generated maps change for the same seed and rules. Maps
+/// without sites are unchanged by site placement, which draws nothing from
+/// the generator when there are no sites to place.
 pub const GENERATOR_VERSION: u32 = 1;
 
-/// Generates the map for `seed` using `rules.c` for its size and number of
-/// neutral cities. Rerolls deterministically until the map is valid.
+/// Generates the map for `seed` using `rules.c` for its size, number of
+/// neutral cities, and, with supply on, number of sites. Rerolls
+/// deterministically until the map is valid.
 pub fn generate(rules: &Rules, seed: u64) -> Result<Map, String> {
     let w = rules.c.map_width as i32;
     let h = rules.c.map_height as i32;
@@ -17,6 +20,10 @@ pub fn generate(rules: &Rules, seed: u64) -> Result<Map, String> {
     }
     if !rules.c.neutral_cities.is_multiple_of(2) {
         return Err("neutral_cities must be even, since generated cities come in mirrored pairs".into());
+    }
+    let sites = if rules.supply() { rules.c.sites } else { 0 };
+    if !sites.is_multiple_of(2) {
+        return Err("sites must be even, since generated sites come in mirrored pairs".into());
     }
     let terrain = |ch: char| {
         rules
@@ -31,6 +38,7 @@ pub fn generate(rules: &Rules, seed: u64) -> Result<Map, String> {
         city: terrain(CITY_CHAR)?,
         mountains: terrain('^')?,
         water: terrain('~')?,
+        site: if sites > 0 { terrain(SITE_CHAR)? } else { 0 },
     };
     for attempt in 0..1000u64 {
         let mut rng = SplitMix64::new(mix64(seed ^ mix64(attempt.wrapping_add(1))));
@@ -48,6 +56,8 @@ struct Palette {
     city: u8,
     mountains: u8,
     water: u8,
+    /// Used only when there are sites to place.
+    site: u8,
 }
 
 /// Smoothstep weight for offset `t` within a lattice cell of size `s`, in `0..=s`.
@@ -175,10 +185,15 @@ fn try_generate(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64
     for &s in &sites {
         tiles[s] = t.city;
     }
+    let resources = if rules.supply() && rules.c.sites > 0 {
+        place_sites(rules, t, &map, &mut tiles, &sites, rng)?
+    } else {
+        Vec::new()
+    };
     map.tiles = tiles;
 
-    // Every city must be reachable from player 1's home. By symmetry it is
-    // then reachable from player 2's home too.
+    // Every city and site must be reachable from player 1's home. By
+    // symmetry it is then reachable from player 2's home too.
     let mut seen = vec![false; n];
     let mut queue = vec![sites[0]];
     seen[sites[0]] = true;
@@ -193,7 +208,7 @@ fn try_generate(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64
             }
         }
     }
-    if sites.iter().any(|&s| !seen[s]) {
+    if sites.iter().chain(resources.iter().map(|(k, _)| k)).any(|&s| !seen[s]) {
         return None;
     }
 
@@ -206,7 +221,137 @@ fn try_generate(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64
             owner: if i < 2 { owners[i] } else { 0 },
         })
         .collect();
+    map.sites = resources.into_iter().map(|(_, s)| s).collect();
     Some(map)
+}
+
+/// `v` rounded down to a multiple of `step`, but at least `min`.
+fn round_down(v: u32, step: u32, min: u32) -> u32 {
+    (v / step * step).max(min)
+}
+
+/// A value in `lo..=hi` drawn for a site with `richness` in `0..=1000`: the
+/// richer the site, the higher the value tends to be.
+fn draw(lo: u32, hi: u32, richness: u32, rng: &mut SplitMix64) -> u32 {
+    let frac = (richness + rng.below(1000) as u32) / 2;
+    lo + ((hi - lo) as u64 * frac as u64 / 1000) as u32
+}
+
+/// Places the resource sites in mirrored pairs (STRATEGIC.md §3): one next
+/// to each home, owned by that player; half the rest, rounded down, next to
+/// neutral cities, at most one each; and the others in the open, at least 3
+/// hexes from any city. The pair by the homes gets the middle of each range
+/// of output and cap. Other pairs get richer the farther they are from the
+/// nearer home, with output and cap drawn separately. Returns each site's
+/// storage index and info in id order, or None to reroll the map.
+fn place_sites(
+    rules: &Rules,
+    t: &Palette,
+    map: &Map,
+    tiles: &mut [u8],
+    cities: &[usize],
+    rng: &mut SplitMix64,
+) -> Option<Vec<(usize, SiteInfo)>> {
+    let n = tiles.len();
+    let c = &rules.c;
+    let pairs = (c.sites / 2) as usize;
+    let gap = ((map.width + map.height) / 28).max(2) as u32;
+    let hex = |k: usize| map.hex(k);
+    let free = |tiles: &[u8], cells: &[usize], k: usize| {
+        let (hk, hm) = (hex(k), hex(n - 1 - k));
+        rules.terrains[tiles[k] as usize].passable()
+            && tiles[k] != t.city
+            && hk.distance(hm) >= 2
+            && cells
+                .iter()
+                .all(|&s| hex(s).distance(hk) >= gap && hex(s).distance(hm) >= gap)
+    };
+    let next_to = |center: usize| -> Vec<usize> {
+        hex(center)
+            .neighbors()
+            .into_iter()
+            .filter(|&h| map.contains(h))
+            .map(|h| map.index(h))
+            .collect()
+    };
+
+    // The pair next to the homes. Homes are never boxed in, and no other
+    // city is next to one, so there is always room.
+    let around: Vec<usize> = next_to(cities[0])
+        .into_iter()
+        .filter(|&k| free(tiles, &[], k))
+        .collect();
+    if around.is_empty() {
+        return None;
+    }
+    let k = around[rng.below(around.len() as u64) as usize];
+    let mut cells = vec![k, n - 1 - k];
+
+    // Pairs next to neutral cities. Each mirrored pair of cities is listed
+    // by its first city, which is in the top half of the map.
+    let mut towns: Vec<usize> = cities[2..].iter().step_by(2).copied().collect();
+    let mut near = (pairs - 1) / 2;
+    while near > 0 && !towns.is_empty() {
+        let town = towns.swap_remove(rng.below(towns.len() as u64) as usize);
+        let spots: Vec<usize> = next_to(town).into_iter().filter(|&k| free(tiles, &cells, k)).collect();
+        if !spots.is_empty() {
+            let k = spots[rng.below(spots.len() as u64) as usize];
+            cells.extend([k, n - 1 - k]);
+            near -= 1;
+        }
+    }
+
+    // The rest in the open, in the top half of the map and their mirrors.
+    let mut tries = 0;
+    while cells.len() < 2 * pairs {
+        tries += 1;
+        if tries > 8000 {
+            return None;
+        }
+        let k = rng.below((n / 2) as u64) as usize;
+        let hk = hex(k);
+        if free(tiles, &cells, k)
+            && hk.distance(hex(n - 1 - k)) >= gap
+            && cities.iter().all(|&s| hex(s).distance(hk) >= 3)
+        {
+            cells.extend([k, n - 1 - k]);
+        }
+    }
+
+    let (home1, home2) = (hex(cities[0]), hex(cities[1]));
+    let half = (home1.distance(home2) / 2).max(1);
+    let mut out = Vec::with_capacity(cells.len());
+    for (i, pair) in cells.chunks(2).enumerate() {
+        let (output, cap) = if i == 0 {
+            (
+                (c.site_output_min + c.site_output_max) / 2,
+                (c.site_cap_min + c.site_cap_max) / 2,
+            )
+        } else {
+            let at = hex(pair[0]);
+            let richness = (at.distance(home1).min(at.distance(home2)) * 1000 / half).min(1000);
+            let output = draw(c.site_output_min, c.site_output_max, richness, rng);
+            let cap = draw(c.site_cap_min, c.site_cap_max, richness, rng);
+            (
+                round_down(output, 5, c.site_output_min),
+                round_down(cap, 50, c.site_cap_min),
+            )
+        };
+        for (j, &k) in pair.iter().enumerate() {
+            tiles[k] = t.site;
+            let owner = if i == 0 { j as u8 + 1 } else { 0 };
+            out.push((
+                k,
+                SiteInfo {
+                    hex: hex(k),
+                    owner,
+                    output,
+                    cap,
+                },
+            ));
+        }
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -233,6 +378,51 @@ mod tests {
             }
         }
         assert_ne!(generate(&rules, 1).unwrap(), generate(&rules, 2).unwrap());
+    }
+
+    fn site_rules(w: u32, h: u32, cities: u32, sites: u32) -> Rules {
+        let mut rules = Rules::default();
+        rules.set("supply", "1").unwrap();
+        rules.set("terrain.R", "site 1 0 0 0").unwrap();
+        (rules.c.map_width, rules.c.map_height) = (w, h);
+        (rules.c.neutral_cities, rules.c.sites) = (cities, sites);
+        rules
+    }
+
+    #[test]
+    fn sites_come_in_mirrored_pairs() {
+        for (rules, seeds) in [(site_rules(40, 30, 10, 12), 0..6), (site_rules(80, 60, 46, 32), 0..3)] {
+            for seed in seeds {
+                let m = generate(&rules, seed).unwrap();
+                assert_eq!(m, generate(&rules, seed).unwrap());
+                m.validate(&rules).unwrap();
+                let n = m.len();
+                assert!((0..n).all(|k| m.tiles[k] == m.tiles[n - 1 - k]), "seed {seed}");
+                assert_eq!(m.sites.len(), rules.c.sites as usize);
+                for pair in m.sites.chunks(2) {
+                    assert_eq!(m.mirror(pair[0].hex), pair[1].hex);
+                    assert_eq!((pair[0].output, pair[0].cap), (pair[1].output, pair[1].cap));
+                }
+                assert_eq!((m.sites[0].owner, m.sites[1].owner), (1, 2));
+                assert_eq!(m.sites[0].hex.distance(m.cities[0].hex), 1);
+                assert_eq!((m.sites[0].output, m.sites[0].cap), (60, 1700));
+                for s in &m.sites[2..] {
+                    assert_eq!(s.owner, 0);
+                    assert!((20..=100).contains(&s.output) && (400..=3000).contains(&s.cap), "{s:?}");
+                }
+                // Half the other pairs, rounded down, sit next to a neutral city.
+                let near = m.sites[2..]
+                    .iter()
+                    .filter(|s| m.cities.iter().any(|c| c.hex.distance(s.hex) == 1))
+                    .count();
+                assert_eq!(near, 2 * ((rules.c.sites as usize / 2 - 1) / 2), "seed {seed}");
+            }
+        }
+        // Small maps work too.
+        let rules = site_rules(16, 12, 4, 4);
+        for seed in 0..20 {
+            generate(&rules, seed).unwrap().validate(&rules).unwrap();
+        }
     }
 
     #[test]

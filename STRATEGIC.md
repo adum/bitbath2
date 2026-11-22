@@ -44,8 +44,8 @@ The default game stays as it is.
 - **Water:** about 40% of the map instead of about 6%, which makes seas, coasts, and islands. Maps stay point-symmetric (SPEC §3.9).
 - **Resource sites** are a new terrain, `R`: move cost 1, with no defense, vision bonus, or concealment. The generator places `sites` of them in mirrored pairs:
   - one next to each home city, owned by that player from the start;
-  - some next to neutral cities, which makes those cities fortresses worth fighting over;
-  - the rest in the open, away from cities, where only wagons can collect them. Some of these are on islands.
+  - half of the other pairs, rounded down, next to neutral cities, at most one per city, which makes those cities fortresses worth fighting over;
+  - the rest in the open, at least 3 hexes from any city, where only wagons can collect them. Some of these are on islands.
 - **Each site has its own output and cap,** which the generator picks from the ranges in §10. The two sites of a mirrored pair match.
   - The sites next to the homes get the middle of each range. Sites get richer the farther they are from the nearer home, so the best ones are in the middle of the map and on islands. A neutral city next to a rich site is the biggest prize on the map.
   - Output and cap are picked separately, so sites come in kinds. A *fast* site, with high output and a small cap, fills up quickly, so it wants a city next to it or frequent visits. A *deep* site, with low output and a big cap, can be left alone for 50 turns and emptied in one haul, which also makes it a tempting raid.
