@@ -255,5 +255,132 @@ class Supply(unittest.TestCase):
         self.assertEqual(bot.food_near((3, 2)), [])
 
 
+# The init message of a game with ships (STRATEGIC.md §11): water that takes
+# ships, transports carrying 2 units, and galleys. City 0 is a port, with
+# water east and north-east of it.
+SHIPS_INIT = """\
+PLAYER 1
+MAP 6 4
+ROW ..~~..
+ROW .C~~..
+ROW ..~~..
+ROW ..~~.C
+CITY 0 1 1 1
+CITY 1 4 3 2
+TERRAIN . plains 1 0 0 0 0
+TERRAIN f forest 2 25 0 1 0
+TERRAIN h hills 2 40 1 0 0
+TERRAIN C city 1 30 0 0 0
+TERRAIN ^ mountains 0 0 0 0 0
+TERRAIN ~ water 0 0 0 0 1
+UNITTYPE I infantry 100 100 3 2 1 1 capture,zoc
+UNITTYPE P pikeman 125 100 3 2 1 1 capture,zoc,fortify
+UNITTYPE K cavalry 225 100 5 3 1 1 zoc
+UNITTYPE A archer 200 100 3 2 2 2 zoc
+UNITTYPE S scout 80 100 6 4 1 1 skirmish
+UNITTYPE W wagon 100 100 4 2 1 1 carry
+UNITTYPE T transport 150 100 6 2 1 1 naval,transport
+UNITTYPE G galley 200 100 5 3 1 1 naval,zoc
+DAMAGE I 55 45 40 65 75 70 0 0
+DAMAGE P 45 50 80 55 70 60 0 0
+DAMAGE K 70 35 55 85 90 90 0 0
+DAMAGE A 50 55 40 45 70 70 40 40
+DAMAGE S 20 15 10 25 40 40 0 0
+DAMAGE W 0 0 0 0 0 0 0 0
+DAMAGE T 0 0 0 0 0 0 0 0
+DAMAGE G 25 25 25 30 35 50 80 55
+RULE stack_limit 4
+RULE supply 1
+RULE passengers_max 2
+RULE ration_max 60
+INIT
+"""
+
+
+class Ships(unittest.TestCase):
+    def setUp(self):
+        self.bot = make_bot(["..~~..", ".C~~..", "..~~..", "..~~.C"], SHIPS_INIT)
+        lines = iter(["TIME 1000 1000", "CITY 0 1 0 0 900", "CITY 1 2 0 0 0",
+                      "UNIT 10 1 T 2 1 100 0 0 0 0 60", "UNIT 11 1 G 3 0 100 0 0 0 0 60",
+                      "UNIT 12 1 I 1 1 100 0 0 0 0 60", "UNIT 13 1 I 1 0 100 0 0 0 0 60",
+                      "UNIT 20 2 T 2 0 30 0 0 0 0 60", "UNIT 21 2 P 2 0 100 0 20 0 0 60", "GO"])
+        self.bot.state = bb._parse_turn(self.bot, "TURN 4", lambda: next(lines))
+
+    send = Supply.send
+
+    def test_rules_terrain_and_ports(self):
+        bot, state = self.bot, self.bot.state
+        water = bot.rules.terrains["~"]
+        self.assertEqual((water.naval_move_cost, water.navigable, water.passable), (1, True, False))
+        self.assertEqual(water.cost_for(True), 1)
+        self.assertTrue(bot.rules.naval)
+        self.assertFalse(make_bot(["......"] * 4).rules.naval)
+        t, g = bot.rules.unit_types["T"], bot.rules.unit_types["G"]
+        self.assertEqual((t.naval, t.transport, g.naval, g.transport), (True, True, True, False))
+        self.assertTrue(bot.is_port(0))
+        self.assertFalse(bot.is_port(1))
+        self.assertEqual(state.units[21].carrier, 20)
+        self.assertTrue(state.units[21].aboard)
+        self.assertEqual(state.passengers(state.units[20]), [state.units[21]])
+        # Units aboard don't count toward the stack limit, exert no zone of
+        # control, and can't be attacked.
+        self.assertEqual(state.friends_at((2, 0)), 0)
+        self.assertNotIn((1, 0), bot.zoc_hexes())
+        self.assertEqual(bot.targets_in_range(state.units[11]), [state.units[20]])
+        self.assertEqual(bot.targets_in_range(state.units[13]), [])   # infantry can't hurt ships
+
+    def test_reachable_for_ships_boarding_and_landing(self):
+        bot, state = self.bot, self.bot.state
+        transport, foot = state.units[10], state.units[12]
+        reach = bot.reachable(transport)
+        self.assertTrue(all(bot.map.navigable(h) for h in reach))
+        self.assertNotIn((1, 1), reach)
+        self.assertEqual(reach[(2, 3)], "55")
+        self.assertEqual(bot.distance_field([(2, 3)], naval=True)[(2, 1)], 2)
+        foot_reach = bot.reachable(foot)
+        self.assertEqual(foot_reach[(2, 1)], "0")   # boarding the transport next to it
+        self.assertNotIn((3, 1), foot_reach)        # water without a transport
+        reply, sent = self.send(["OK 2 1 0"], lambda: bot.move(foot, "0"))
+        self.assertTrue(reply)
+        self.assertEqual((sent, foot.hex, foot.carrier, foot.mp), ("M 12 0\n", (2, 1), 10, 0))
+        self.assertEqual(state.friends_at((2, 1)), 1)
+        # The transport sails, and its passengers with it.
+        reply, _ = self.send(["OK 2 3 4"], lambda: bot.move(transport, "55"))
+        self.assertEqual((transport.hex, foot.hex), ((2, 3), (2, 3)))
+        foot.mp = 3   # as on the next turn
+        self.assertEqual(bot.reachable(foot), {(3, 3): "0", (3, 2): "1"})
+        reply, _ = self.send(["OK 3 3 0"], lambda: bot.move(foot, "0"))
+        self.assertEqual((foot.hex, foot.carrier, foot.moved), ((3, 3), 0, True))
+        self.assertEqual(state.passengers(transport), [])
+
+    def test_a_full_transport_takes_no_one(self):
+        bot, state = self.bot, self.bot.state
+        for i in (30, 31):
+            state.units[i] = bb.Unit(i, 1, "I", 2, 1, 100, carrier=10)
+        self.assertIsNone(bot.transport_with_room((2, 1)))
+        self.assertNotIn((2, 1), bot.reachable(state.units[12]))
+
+    def test_sinking_takes_everything_aboard(self):
+        bot, state = self.bot, self.bot.state
+        galley = state.units[11]
+        reply, _ = self.send(["OK 0 100"], lambda: bot.attack(galley, 20))
+        self.assertTrue(reply)
+        self.assertNotIn(20, state.units)
+        self.assertNotIn(21, state.units)
+
+    def test_a_port_builds_ships_on_its_launch_hex(self):
+        bot, state = self.bot, self.bot.state
+        self.assertEqual(bot.launch_hex(0), (2, 1))
+        for i in (40, 41, 42):
+            state.units[i] = bb.Unit(i, 1, "G", 2, 1, 100)
+        # (2,1) now holds 4 ships, and the enemy transport is on (2,0), so the
+        # next water hex in direction order is (1,2).
+        self.assertEqual(bot.launch_hex(0), (1, 2))
+        reply, _ = self.send(["OK 50"], lambda: bot.build(0, "G"))
+        self.assertTrue(reply)
+        self.assertEqual((state.units[50].hex, state.cities[0].bread), ((1, 2), 700))
+        self.assertIsNone(bot.launch_hex(1))   # city 1 isn't a port
+
+
 if __name__ == "__main__":
     unittest.main()

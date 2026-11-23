@@ -28,6 +28,12 @@ there's no gold, and each city keeps its own bread (city.bread), which pays
 for the units it builds. Sites (state.sites) grow wheat, which wagons carry
 to cities with load() and unload(). Units carry rations (unit.rations) and
 eat them every turn; meal() tells you how many a turn costs.
+
+Ships (rules.naval) sail on water by each terrain's naval_move_cost, and
+ports, cities next to water, build them onto the water next to them. A land
+unit boards a transport by moving onto it as the last step of a move, and a
+unit aboard (unit.carrier) rides along and lands with a one-step move onto
+land. reachable() and distance_field() know all this.
 """
 
 import heapq
@@ -128,14 +134,25 @@ def line(a, b):
 # Rules and map.
 
 class Terrain:
-    def __init__(self, ch, name, move_cost, defense, vision_bonus, conceal=0):
+    def __init__(self, ch, name, move_cost, defense, vision_bonus, conceal=0, naval_move_cost=0):
         self.ch, self.name = ch, name
         self.move_cost, self.defense, self.vision_bonus = move_cost, defense, vision_bonus
         self.conceal = conceal  # seen from at most vision - conceal away, always from next door
+        self.naval_move_cost = naval_move_cost  # what entering costs a ship; 0: ships can't
 
     @property
     def passable(self):
+        """Whether land units can enter it."""
         return self.move_cost > 0
+
+    @property
+    def navigable(self):
+        """Whether ships can enter it."""
+        return self.naval_move_cost > 0
+
+    def cost_for(self, naval):
+        """What entering it costs a naval unit, or a land unit. 0: it can't."""
+        return self.naval_move_cost if naval else self.move_cost
 
     def __repr__(self):
         return "Terrain(%r)" % self.name
@@ -154,6 +171,8 @@ class UnitType:
     no_move_attack = property(lambda self: "no_move_attack" in self.flags)
     fortify = property(lambda self: "fortify" in self.flags)
     carry = property(lambda self: "carry" in self.flags)   # carries wheat and bread
+    naval = property(lambda self: "naval" in self.flags)   # moves on water
+    transport = property(lambda self: "transport" in self.flags)   # carries land units
 
     def in_range(self, dist):
         return self.range_min <= dist <= self.range_max
@@ -183,6 +202,12 @@ class Rules:
         """Whether the strategic ruleset's wheat, bread, and rations are on."""
         return self.constants.get("supply", 0) == 1
 
+    @property
+    def naval(self):
+        """Whether transports can carry land units across water."""
+        return (any(t.transport for t in self.unit_types.values())
+                and any(t.navigable for t in self.terrains.values()))
+
 
 class Map:
     def __init__(self, width, height, rows, rules):
@@ -202,8 +227,18 @@ class Map:
         return self.rules.terrains[self.rows[row][col]]
 
     def passable(self, h):
+        """Whether land units can enter h."""
         t = self.terrain(h)
         return t is not None and t.passable
+
+    def navigable(self, h):
+        """Whether ships can enter h."""
+        t = self.terrain(h)
+        return t is not None and t.navigable
+
+    def is_port(self, h):
+        """Whether a city on h would be a port: ships can enter a hex next to it."""
+        return any(self.navigable(n) for n in neighbors(h))
 
     def hexes(self):
         """Every hex on the map, row by row."""
@@ -235,8 +270,9 @@ class Unit:
         self.id, self.owner, self.type = id, owner, type
         self.q, self.r, self.hp = q, r, hp
         self.fort = fort        # fortification level; moving resets it to 0
-        # With supply on: the transport it's aboard (always 0 for now), the
-        # wheat and bread a wagon carries, and the rations left.
+        # With supply on: the transport it's aboard, or 0, the wheat and
+        # bread a wagon carries, and the rations left. A unit aboard has its
+        # transport's hex.
         self.carrier, self.wheat, self.bread, self.rations = carrier, wheat, bread, rations
         # Tracked for your own units during your turn.
         self.mp = 0
@@ -248,6 +284,11 @@ class Unit:
     @property
     def hex(self):
         return (self.q, self.r)
+
+    @property
+    def aboard(self):
+        """Whether it's aboard a transport."""
+        return self.carrier != 0
 
     def __repr__(self):
         return "Unit(%d, p%d %s at (%d,%d), %d hp)" % (self.id, self.owner, self.type, self.q, self.r, self.hp)
@@ -335,7 +376,15 @@ class State:
         return any(u.owner != self.player and u.hex == h for u in self.units.values())
 
     def friends_at(self, h, excluding=None):
-        return sum(1 for u in self.units.values() if u.owner == self.player and u.hex == h and u is not excluding)
+        """How many of your units on h count toward the stack limit: all but
+        those aboard transports."""
+        return sum(1 for u in self.units.values()
+                   if u.owner == self.player and u.hex == h and not u.carrier and u is not excluding)
+
+    def passengers(self, transport):
+        """The units aboard a transport."""
+        tid = transport if isinstance(transport, int) else transport.id
+        return [u for u in self.units.values() if u.carrier == tid]
 
 
 class Reply:
@@ -380,12 +429,21 @@ class Bot:
     # Orders. Each returns a Reply and updates self.state on success.
 
     def move(self, unit, dirs):
+        """Moves a unit along dirs. A land unit whose path ends on one of your
+        transports boards it, and a unit aboard lands with a one-step move."""
         unit = self._unit(unit)
         reply = self._order("M %d %s" % (unit.id, dirs))
         if reply.ok:
             q, r = int(reply.values[0]), int(reply.values[1])
             if (q, r) != unit.hex:
                 unit.moved, unit.fort = True, 0
+                if unit.carrier:
+                    unit.carrier = 0
+                elif not self.unit_type(unit).naval and not self.map.passable((q, r)):
+                    boarded = self.transport_with_room((q, r))
+                    unit.carrier = boarded.id if boarded else unit.carrier
+                for p in self.state.passengers(unit):
+                    p.q, p.r = q, r
             unit.q, unit.r = q, r
             unit.mp = int(reply.values[2]) if reply.kind == "OK" else 0
         return reply
@@ -398,6 +456,9 @@ class Bot:
             unit.acted, unit.attacked, unit.mp = True, True, 0
             for u in (target, unit):
                 if u.hp <= 0:
+                    # A transport sinks with everything aboard.
+                    for p in self.state.passengers(u):
+                        self.state.units.pop(p.id, None)
                     self.state.units.pop(u.id, None)
         return reply
 
@@ -417,13 +478,15 @@ class Bot:
         return reply
 
     def build(self, city, code):
-        """Builds a unit, paid with gold, or with supply on, the city's own bread."""
+        """Builds a unit, paid with gold, or with supply on, the city's own
+        bread. A port puts a ship on its launch_hex()."""
         city = city if isinstance(city, City) else self.state.cities[city]
+        utype = self.rules.unit_types.get(code)
+        at = (self.launch_hex(city) if utype and utype.naval else None) or city.hex
         reply = self._order("B %d %s" % (city.id, code))
         if reply.ok:
-            utype = self.rules.unit_types[code]
             rations = self.rules.constants.get("ration_max", 0) if self.rules.supply else 0
-            unit = Unit(int(reply.values[0]), self.player, code, city.q, city.r, utype.max_hp, rations=rations)
+            unit = Unit(int(reply.values[0]), self.player, code, at[0], at[1], utype.max_hp, rations=rations)
             unit.fresh = True
             self.state.units[unit.id] = unit
             if self.rules.supply:
@@ -488,8 +551,39 @@ class Bot:
         """Whether unit can capture the city or site it stands on right now."""
         unit = self._unit(unit)
         place = self.state.city_at(unit.hex) or self.state.site_at(unit.hex)
-        return (self.can_act(unit) and self.unit_type(unit).capture
+        return (self.can_act(unit) and self.unit_type(unit).capture and not unit.carrier
                 and place is not None and place.owner != self.player)
+
+    # Ship helpers (STRATEGIC.md §6).
+
+    def is_port(self, city):
+        """Whether a city is a port, so it can build ships."""
+        city = city if isinstance(city, City) else self.state.cities[city]
+        return self.map.is_port(city.hex)
+
+    def launch_hex(self, city):
+        """Where a port puts a new ship: the first hex next to it, in direction
+        order, that ships can enter, with room and no visible enemy. None if
+        there's no such hex. A hidden enemy there makes the engine pick the
+        next one."""
+        city = city if isinstance(city, City) else self.state.cities[city]
+        for n in neighbors(city.hex):
+            if (self.map.navigable(n) and not self.state.enemy_at(n)
+                    and self.state.friends_at(n) < self.rules.stack_limit):
+                return n
+        return None
+
+    def transport_with_room(self, h):
+        """Your lowest-numbered transport on h with room for another unit,
+        which is the one a unit boarding on h gets aboard, or None."""
+        most = self.rules.constants.get("passengers_max", 0)
+        mine = sorted((u for u in self.state.units.values()
+                       if u.owner == self.player and u.hex == h and self.unit_type(u).transport),
+                      key=lambda u: u.id)
+        for t in mine:
+            if len(self.state.passengers(t)) < most:
+                return t
+        return None
 
     # Supply helpers, with supply on (STRATEGIC.md §4, §5).
 
@@ -516,17 +610,21 @@ class Bot:
         return self.map.sight(at, self.unit_type(unit).vision + self.map.terrain(at).vision_bonus)
 
     def targets_in_range(self, unit, from_hex=None):
-        """Visible enemy units that unit could attack from from_hex (default: where it is)."""
+        """Visible enemy units that unit could attack from from_hex (default:
+        where it is): in range, not aboard a transport, and hurt by it."""
         unit = self._unit(unit)
         utype = self.unit_type(unit)
         at = from_hex or unit.hex
-        return [e for e in self.state.enemy_units() if utype.in_range(distance(at, e.hex))]
+        hurts = self.rules.damage.get(unit.type, {})
+        return [e for e in self.state.enemy_units()
+                if utype.in_range(distance(at, e.hex)) and not e.carrier and hurts.get(e.type, 1) > 0]
 
     def zoc_hexes(self):
-        """Hexes next to a visible enemy unit that exerts a zone of control."""
+        """Hexes next to a visible enemy unit that exerts a zone of control.
+        Units aboard transports exert none."""
         out = set()
         for e in self.state.enemy_units():
-            if self.rules.unit_types[e.type].zoc:
+            if self.rules.unit_types[e.type].zoc and not e.carrier:
                 out.update(neighbors(e.hex))
         return out
 
@@ -534,24 +632,40 @@ class Bot:
 
     def reachable(self, unit, zoc=None):
         """Where unit can end a move this turn, as {hex: dirs}. Honors move
-        costs, its MP, visible enemies (which block hexes and exert zones of
-        control), and the stack limit on the final hex. Hidden enemies can
-        still cut a move short."""
+        costs (naval ones for ships), its MP, visible enemies (which block
+        hexes and exert zones of control), and the stack limit on the final
+        hex. A land unit can also end its move by boarding one of your
+        transports with room, for 1 MP, and a unit aboard can only land, one
+        step onto land. Hidden enemies can still cut a move short."""
         unit = self._unit(unit)
         if not self.can_act(unit) or unit.mp <= 0:
             return {}
         utype = self.unit_type(unit)
+        naval = utype.naval
         if zoc is None:
             zoc = self.zoc_hexes()
         start = unit.hex
         stack_limit = self.rules.stack_limit
         # Who stands where, counted once: asking the state per hex is slow.
-        friends, foes = {}, set()
+        friends, foes, ships = {}, set(), set()
         for u in self.state.units.values():
             if u.owner != self.player:
                 foes.add(u.hex)
-            elif u is not unit:
+            elif u is not unit and not u.carrier:
                 friends[u.hex] = friends.get(u.hex, 0) + 1
+        if unit.carrier:
+            out = {}
+            for d in range(6):
+                n = step(start, d)
+                t = self.map.terrain(n)
+                if (t is not None and t.passable and n not in foes and t.move_cost <= unit.mp
+                        and friends.get(n, 0) < stack_limit):
+                    out[n] = str(d)
+            return out
+        if not naval and self.rules.naval:
+            ships = {u.hex for u in self.state.units.values()
+                     if u.owner == self.player and self.unit_type(u).transport} - {start}
+            ships = {h for h in ships if self.transport_with_room(h)}
         best = {start: 0}
         paths = {start: ""}
         heap = [(0, start)]
@@ -568,25 +682,33 @@ class Bot:
             for d in range(6):
                 n = step(h, d)
                 t = self.map.terrain(n)
-                if t is None or not t.passable or n in foes:
+                if t is None or n in foes:
                     continue
-                c = cost + t.move_cost
+                enter = t.cost_for(naval)
+                if enter == 0:
+                    # Boarding: the last step of a move, for 1 MP.
+                    if n in ships and cost + 1 <= unit.mp and (n not in result or cost + 1 < best[n]):
+                        best[n] = cost + 1
+                        result[n] = paths[h] + str(d)
+                    continue
+                c = cost + enter
                 if c <= unit.mp and c < best.get(n, c + 1):
                     best[n] = c
                     paths[n] = paths[h] + str(d)
                     heapq.heappush(heap, (c, n))
         return result
 
-    def distance_field(self, goals, blocked=None):
-        """Move cost from every hex to the nearest goal, as {hex: cost}.
-        Costs count the terrain of each hex entered, ignoring MP and zones
-        of control. Hexes in blocked (default: visible enemies that aren't
-        goals) can't be passed through."""
+    def distance_field(self, goals, blocked=None, naval=False):
+        """Move cost from every hex to the nearest goal, as {hex: cost}, for
+        land units, or with naval for ships. Costs count the terrain of each
+        hex entered, ignoring MP and zones of control. Hexes in blocked
+        (default: visible enemies that aren't goals) can't be passed through."""
         goals = set(goals)
         if blocked is None:
             blocked = {e.hex for e in self.state.enemy_units()} - goals
+        can_enter = self.map.navigable if naval else self.map.passable
         dist = {}
-        heap = [(0, g) for g in sorted(goals) if self.map.passable(g)]
+        heap = [(0, g) for g in sorted(goals) if can_enter(g)]
         for _, g in heap:
             dist[g] = 0
         heapq.heapify(heap)
@@ -594,9 +716,9 @@ class Bot:
             cost, h = heapq.heappop(heap)
             if cost > dist[h] or (h in blocked and h not in goals):
                 continue
-            enter = self.map.terrain(h).move_cost
+            enter = self.map.terrain(h).cost_for(naval)
             for n in neighbors(h):
-                if n in blocked or not self.map.passable(n):
+                if n in blocked or not can_enter(n):
                     continue
                 c = cost + enter
                 if c < dist.get(n, c + 1):
@@ -710,7 +832,7 @@ def _parse_init(bot, read=_read_line):
         elif kw == "SITE":
             sites.append((int(t[1]), (int(t[2]), int(t[3])), int(t[4]), int(t[5]), int(t[6])))
         elif kw == "TERRAIN":
-            rules.terrains[t[1]] = Terrain(t[1], t[2], *[int(x) for x in t[3:7]])
+            rules.terrains[t[1]] = Terrain(t[1], t[2], *[int(x) for x in t[3:8]])
         elif kw == "UNITTYPE":
             rules.unit_types[t[1]] = UnitType(t[1], t[2], *[int(x) for x in t[3:9]], t[9])
         elif kw == "DAMAGE":

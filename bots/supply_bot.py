@@ -402,6 +402,9 @@ class SupplyBot(vb.VanguardBot):
         scores = self.unit_scores()
         if self.wagon:
             scores.pop(self.wagon, None)    # wagons are built by need, not to fight
+        for code, t in types.items():
+            if t.naval:
+                scores.pop(code, None)      # ships need a port, and a plan for them
         top = max(scores.values()) or 1
         share = {code: (score / top) ** vb.SHARE_POWER for code, score in scores.items()}
         count = dict.fromkeys(types, 0)
