@@ -384,6 +384,17 @@ On two of the maps (seeds 3 and 6) the homes are on separate landmasses, and on 
 
 So with these bots, ships decide a war across water, and islands are easy prizes. Coastal archers, not galleys, are what stops an invasion. Bombardment doesn't need toning down.
 
+**Small islands, at 45% water.** After the preset moved to 45% (§14), a check on seed 90, which starts each home on an island with one other city, found the naval bot stuck there.
+
+- **Why:** with its island taken, its army filled what its bread income could feed, so it built no ships. That army also stood on its home city, the only one with bread to spare, so its wagon could never get in to load bread for the port. Both games against supply were draws at round 400, with 2 cities each and over 9,000 bread unspent.
+- **The fix:**
+  - Ships can now live on the bread stocked in the ports too, one more ship for every 600.
+  - A wagon that comes to load or unload at a city full of its own units first moves one of them aside.
+  - A wagon stocks a port only from a city that can spare 800 bread beyond what it keeps. Ports keep extra bread for their ships, so before, a wagon could stand at such a port for good, sending invalid orders.
+- **On small islands:** 6 of the first 100 maps start each home on an island of 4 cities or fewer. On those, the fixed bot beat supply in all 12 games: 8 by elimination, between rounds 149 and 363, and the other 4 by 44 or 45 cities to 3 or 4. It took its first city across the water between rounds 24 and 126.
+- **On ordinary maps** the fix changes little. On 6 of them, the fixed bot beat the bot from before it 7–5, and sent no invalid orders, where the old one sent 48.
+- **Still to fix:** on seed 5, the second player's ships starved by the dozen with either version, up to 24 in a game. And in 24 games between the naval bots on those maps, player 2 won 21, so the side still decides many of them.
+
 ### Work
 
 Done in phase 1:

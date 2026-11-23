@@ -60,8 +60,12 @@ ODDS = 1.5
 # A port keeps this much more bread for each ship near it, and ships dock
 # where there's at least this much to eat.
 PORT_KEEP = 150
+# Each this much bread in the ports on seas that go somewhere feeds one more
+# transport, and one more ship beyond what the bread income can feed.
+SHIP_BREAD = 600
 # A wagon stocks a port on a sea that goes somewhere when the port holds less
-# bread than this, from a city that holds at least STOCK_FROM.
+# bread than this, from a city that can spare at least STOCK_FROM beyond
+# what it keeps.
 PORT_STOCK, STOCK_FROM = 1000, 800
 # A transport that gives up waiting rests this many rounds before it takes
 # on a new crew.
@@ -175,7 +179,7 @@ class NavalBot(sb.SupplyBot):
                  and c.id not in self.stock.values()]
         for port in needy:
             rich = [c for c in s.my_cities()
-                    if c.bread >= STOCK_FROM and self.land.get(c.hex) == self.land.get(port.hex)]
+                    if c.bread - self.keep(c) >= STOCK_FROM and self.land.get(c.hex) == self.land.get(port.hex)]
             if not rich:
                 continue
             wagons = [w for w in s.my_units() if self.types[w.type].carry and not w.fresh and w.id not in self.stock
@@ -192,20 +196,45 @@ class NavalBot(sb.SupplyBot):
                 continue
             if w.bread >= min(self.cargo_max, 300):
                 if w.hex != port.hex:
+                    if bb.distance(w.hex, port.hex) == 1:
+                        self.make_room(port, self.city_field[port.id])
                     self.walk(w, self.city_field[port.id], sb.WAGON_CAUTION)
                 if w.hex == port.hex:
                     self.unload(w)
                     del self.stock[wid]     # done: a new job next turn
                 continue
-            rich = [c for c in s.my_cities() if c.bread >= STOCK_FROM and self.land.get(c.hex) == self.land.get(w.hex)]
+            rich = [c for c in s.my_cities()
+                    if c.bread - self.keep(c) >= STOCK_FROM and self.land.get(c.hex) == self.land.get(w.hex)]
             if not rich:
                 del self.stock[wid]
                 continue
             src = min(rich, key=lambda c: (self.city_field[c.id].get(w.hex, 1 << 30), c.id))
             if w.hex != src.hex:
+                if bb.distance(w.hex, src.hex) == 1:
+                    self.make_room(src, self.city_field[port.id])
                 self.walk(w, self.city_field[src.id], sb.WAGON_CAUTION)
             if w.hex == src.hex:
-                self.load(w, min(self.cargo_max - w.bread, src.bread - self.keep(src)))
+                amount = min(self.cargo_max - w.bread, src.bread - self.keep(src))
+                if amount > 0:
+                    self.load(w, amount)
+
+    def make_room(self, city, field):
+        """If our units fill the city, moves one that hasn't acted off it, to
+        the hex it can reach nearest the goals of field, so a wagon can come
+        in. Without this, an army with nothing left to do on its island can
+        sit on the city that has the bread, and the port never gets any."""
+        s = self.state
+        if self.occ.get(city.hex, 0) < self.limit:
+            return
+        cities = {c.hex for c in s.cities}
+        for u in sorted(s.my_units(), key=lambda u: u.id):
+            if u.hex != city.hex or u.carrier or self.types[u.type].carry or u.id in self.crew_of:
+                continue
+            options = [(field.get(h, 1 << 30), len(dirs), dirs) for h, dirs in self.reach(u).items()
+                       if dirs and h not in cities]
+            if options:
+                self.go(u, min(options)[2])
+                return
 
     def keep(self, city):
         # A port keeps bread for the ships nearby, which come back hungry.
@@ -742,13 +771,17 @@ class NavalBot(sb.SupplyBot):
         stocked = sum(c.bread for c in self.ports() if self.port_seas[c.id] & useful)
         want_t = 0
         if useful:
-            want_t = min(MAX_TRANSPORTS, max(1, -(-idle // max(1, self.passengers_max))), 1 + stocked // 600)
+            want_t = min(MAX_TRANSPORTS, max(1, -(-idle // max(1, self.passengers_max))), 1 + stocked // SHIP_BREAD)
         want_g = min(MAX_GALLEYS, (want_t + 1) // 2 + (seen + 1) // 2) if self.galley and warlike else 0
         have_t = sum(1 for u in s.my_units() if u.type == self.transport and self.sea.get(u.hex) in useful)
         have_g = self.count(self.galley)
         if have_t >= want_t and have_g >= want_g:
             return
-        room = self.units_fed() - len(s.my_units())
+        # Units beyond what the bread income feeds would starve, but ships can
+        # live on the bread stocked in their ports too. Otherwise a player
+        # that has taken all of a small island fills it with the army its
+        # income feeds, and never builds a ship.
+        room = self.units_fed() - len(s.my_units()) + stocked // SHIP_BREAD
         near = {c.id: sum(1 for u in s.my_units() if not self.types[u.type].naval and bb.distance(u.hex, c.hex) <= 8)
                 for c in self.ports()}
         for c in sorted(self.ports(), key=lambda c: (-near[c.id], c.id)):
