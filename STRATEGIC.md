@@ -60,7 +60,7 @@ The default game stays as it is.
 - **Start:** each player gets `I, I, S` and a wagon on their home city, and `start_bread` in it.
 - **The default game's maps don't change.** The new generator parameters default to today's behavior.
 - **The islands map** is a small map for testing the resources and ships before the large maps, picked with `map_layout = "islands"`. [configs/islands.toml](configs/islands.toml) plays it at 40 × 30 with the strategic preset's rules.
-  - Each home island spreads from the home into its corner of the map, 120 to 150 hexes at 40 × 30. The home has its site next to it, and a neutral port a few hexes away on the coast facing the middle of the map. Taking the port is the opening.
+  - Each home island spreads from the home into its corner of the map and along the map's edges, 135 to 155 hexes at 40 × 30, so it has a long coast to land on. The home has its site next to it, and a neutral port a few hexes away on the coast facing the middle of the map. Taking the port is the opening.
   - The middle of the map is an island with no city, holding the other sites in one patch. The two at the very middle touch: no hex is exactly at the middle, since maps are mirrored by a 180° turn and have an even height. Only wagons carried by transport can bring their wheat home.
   - The sites by the homes get the middle of each range, and the sites in the middle the top of it: 100 wheat a turn each, piling up to 3,000.
   - Everything else is sea. The seed shapes the coasts and terrain, and picks the port and the homes' sites.

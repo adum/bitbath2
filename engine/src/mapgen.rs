@@ -289,24 +289,32 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
     let (mid1, mid2) = (map.hex(mid), map.hex(n - 1 - mid));
     let to_mid = |k: usize| map.hex(k).distance(mid1).min(map.hex(k).distance(mid2));
 
-    // The islands. Each home's spreads from it into its corner of the map:
-    // it's the land as near the corner as the home is, plus home_radius,
-    // measured straight across in the noise's units, 8 to a hex. The middle
-    // one is a disk around the middle pair. Their coasts are pushed in or out
-    // by up to a hex and a half, and homes and the middle pair have land all
-    // around them.
+    // The islands. Each home's spreads from it into its corner of the map,
+    // and along the map's edges, so its coast is long. It's the land within
+    // a reach of the corner that takes it home_radius past the home. Reach
+    // is measured in the noise's units, 8 to a hex, as the average of the
+    // straight-line distance and the distance along the edges, so it goes
+    // about a fifth further along the edges than toward the middle. The
+    // middle island is a disk around the middle pair. Their coasts are
+    // pushed in or out by up to a hex and a half, and homes and the middle
+    // pair have land all around them.
     let (home_radius, mid_radius) = ((w.min(h) / 7).max(3) as i64, (w.min(h) / 10).max(2) as i64);
     let xy = |k: usize| {
         let (col, row) = ((k as i32 % w) as i64, (k as i32 / w) as i64);
         (8 * col + 4 * (row & 1), 7 * row)
     };
-    let apart = |(x1, y1): (i64, i64), (x2, y2): (i64, i64)| (((x1 - x2).pow(2) + (y1 - y2).pow(2)) as u64).isqrt() as i64;
+    let apart = |(x1, y1): (i64, i64), (x2, y2): (i64, i64)| {
+        let (dx, dy) = ((x1 - x2).abs(), (y1 - y2).abs());
+        let straight = ((dx * dx + dy * dy) as u64).isqrt() as i64;
+        (straight, (straight + dx + dy) / 2)
+    };
     let (corner1, corner2) = (xy(0), xy(n - 1));
-    let reach = apart(xy(home), corner1) + 8 * home_radius;
+    let (straight, blend) = apart(xy(home), corner1);
+    let reach = blend * (straight + 8 * home_radius) / straight;
     let mut land: Vec<bool> = (0..n)
         .map(|k| {
             let push = wobble[k] as i64 - 512;
-            let to_corner = apart(xy(k), corner1).min(apart(xy(k), corner2));
+            let to_corner = apart(xy(k), corner1).1.min(apart(xy(k), corner2).1);
             1000 * to_corner <= 1000 * reach + 24 * push || 1000 * to_mid(k) as i64 <= 1000 * mid_radius + 2 * push
         })
         .collect();
