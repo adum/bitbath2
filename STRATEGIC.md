@@ -1,6 +1,6 @@
 # Bitbath: Strategic Ruleset
 
-**Status:** design draft, 2026-11-22. Phase 1 (§12) is built and playable: `bitbath play --config configs/strategic.toml`. Its first tournament results are in §12.
+**Status:** design draft, 2026-11-22. Phases 1 and 2 (§12), supply and ships, are built and playable: `bitbath play --config configs/strategic.toml`. Their tournament results are in §12.
 
 - The choices agreed so far are listed in [§14](#14-agreed-so-far). Everything else is a proposal.
 - All numbers are starting values, to be tuned by tournaments as the default rules were.
@@ -42,6 +42,8 @@ The default game stays as it is.
 
 - **Size:** 80 × 60 with 48 cities, the large preset, to start. Larger maps later.
 - **Water:** about 40% of the map instead of about 6%, which makes seas, coasts, and islands. Maps stay point-symmetric (SPEC §3.9).
+  - At 40%, most maps turn out to be one big continent with lakes and a few islands. Land covering 60% of a map joins up into one mass, while the water stays in separate seas. At 45%, nearly every map has islands, and the homes are on separate landmasses about half the time (§12, §13).
+  - With more water there's less land for the cities, so the least distance between them shrinks with the square root of the land's share. At 40% water, the 48 cities of the large map sit at least 7 hexes apart instead of 10.
 - **Resource sites** are a new terrain, `R`: move cost 1, with no defense, vision bonus, or concealment. The generator places `sites` of them in mirrored pairs:
   - one next to each home city, owned by that player from the start;
   - half of the other pairs, rounded down, next to neutral cities, at most one per city, which makes those cities fortresses worth fighting over;
@@ -50,6 +52,8 @@ The default game stays as it is.
   - The sites next to the homes get the middle of each range. Sites get richer the farther they are from the nearer home, so the best ones are in the middle of the map and on islands. A neutral city next to a rich site is the biggest prize on the map.
   - Output and cap are picked separately, so sites come in kinds. A *fast* site, with high output and a small cap, fills up quickly, so it wants a city next to it or frequent visits. A *deep* site, with low output and a big cap, can be left alone for 50 turns and emptied in one haul, which also makes it a tempting raid.
 - **Validation:** instead of every city being reachable by land (SPEC §3.9), every city and site must be reachable from both homes by land and sea, and each home's landmass must have a port (§6).
+  - A sea counts as reachable once a player can reach a city next to it, which could build the ships.
+  - A home is never a port itself, since the generator clears the impassable hexes around homes, water included. A player's first port has to be taken.
 - **Start:** each player gets `I, I, S` and a wagon on their home city, and `start_bread` in it.
 - **The default game's maps don't change.** The new generator parameters default to today's behavior.
 
@@ -128,18 +132,18 @@ There are two kinds of goods. **Wheat** grows at sites. **Bread** is made from i
 - **Naval move cost:** terrain gets a second move cost, for ships. Water's is 1, and every other terrain's is 0, which means ships can't enter it. Land units still can't enter water.
 - **Naval units** have the `naval` flag and move by the naval move cost. Otherwise ships move as land units do: paths, stacking, zones of control, and ambushes all work the same (SPEC §3.5).
 - **Ports:** a city next to water is a port. Ships don't enter cities.
-  - A port builds a ship onto the first water hex next to it, in direction order (SPEC §3.1), that has room and no enemy units.
+  - A port builds a ship onto the first water hex next to it, in direction order (SPEC §3.1), that has room and no enemy units. A hidden enemy unit counts too: the ship goes to the next such hex.
   - A ship next to one of its player's cities is in port. It heals there by `city_heal` and refills its rations from that city (§5).
 
 ### Transports
 
 - **Capacity:** a transport carries up to `passengers_max` land units, wagons included.
-- **Boarding:** a land unit boards by moving onto the transport. As its last step, a move may enter a water hex that holds one of its player's transports with room. Boarding ends the unit's move.
+- **Boarding:** a land unit boards by moving onto the transport. As its last step, a move may enter a water hex that holds one of its player's transports with room. The boarding step costs 1 MP, and boarding ends the unit's move. If several of the player's transports there have room, the unit boards the lowest-numbered.
 - **Aboard,** a unit moves with the transport.
   - It can't attack, capture, load, or unload, and it can't be attacked. Only the transport can.
-  - It doesn't count toward the hex's stack limit.
+  - It doesn't count toward the hex's stack limit, exerts no zone of control, and doesn't dig in.
   - It still sees from the transport's hex, and still eats. A wagon aboard feeds the units around it, like any wagon.
-- **Landing:** a unit aboard gets off with a one-step move onto land next to the transport, which can be a city.
+- **Landing:** a unit aboard gets off with a one-step move onto land next to the transport, which can be a city. That's the only move it can make: it can't step across to another transport.
   - Landing ends the unit's move but leaves its action, so it can attack or capture where it lands, as after a move that ends in a zone of control.
   - Passengers can land after their transport moves in the same turn, so a transport can sail and unload in one turn.
   - A unit can't board and land in the same turn.
@@ -153,6 +157,7 @@ There are two kinds of goods. **Wheat** grows at sites. **Bread** is made from i
 - **Blockades** need no rule of their own. Galleys off a port sink the transports that come out, and their zones of control stop transports from slipping past.
 - **Fleets eat too.** A ship that sails every turn runs out after 30 turns away from port, so a longer voyage needs a wagon of bread aboard a transport nearby.
 - **From land,** only archers can hurt ships (§7).
+- **Ships need supply.** Naval unit types and naval move costs are allowed only with `supply` on, so there's one switch for the strategic ruleset's protocol. Units start on the home city, so start units must be land units.
 
 ## 7. Unit types
 
@@ -187,7 +192,7 @@ The five land units of the default game are unchanged (SPEC §3.3), except that 
 
 - **Wagons** are easy prey, for cavalry most of all. That gives cavalry a strategic job: raiding supply. Killing a wagon of wheat cuts its owner's income, and killing one of bread starves an army.
 - **Transports and galleys** can be hurt only by galleys and archers.
-- **Bombardment,** the galley row's first five entries, stays (§14), but its numbers are the riskiest guess. No land unit strikes back at a galley, and only archers can shoot at one on their own turn, so bombardment could make coastal cities too hard to hold. If it does, those entries come down.
+- **Bombardment,** the galley row's first five entries, stays (§14), but its numbers are the riskiest guess. No land unit strikes back at a galley, and only archers can shoot at one on their own turn, so bombardment could make coastal cities too hard to hold. If it does, those entries come down. The first naval tournament found it weak instead: the bot that bombarded did only about 3% of its damage to land units that way (§12).
 
 ## 8. Fog of war
 
@@ -208,7 +213,7 @@ New keys, with their values in the strategic preset and in the default game:
 
 | key | strategic | default | meaning |
 |---|---|---|---|
-| `supply` | 1 | 0 | 1 turns on wheat, bread, and rations (§4, §5), in place of gold |
+| `supply` | 1 | 0 | 1 turns on wheat, bread, and rations (§4, §5), in place of gold, and allows ships (§6) |
 | `sites` | 32 | 0 | resource sites on generated maps, including the two next to the homes; must be even |
 | `water_pct` | 40 | 6 | how much of a generated map is water |
 | `start_bread` | 300 | – | bread in each home city at the start |
@@ -235,7 +240,7 @@ The additions follow the pattern fortification set: new fields go at the end of 
 **Init:**
 
 ```
-> TERRAIN ~ water 0 0 0 0 1            ... conceal naval_move_cost (0 = ships can't enter)
+> TERRAIN ~ water 0 0 0 0 1            ... conceal naval_move_cost (0 = ships can't enter); only with supply on
 > TERRAIN R site 1 0 0 0 0
 > UNITTYPE W wagon 100 100 4 2 1 1 carry
 > SITE 0 15 7 0 30 2400                id q r initial_owner output cap, one per site
@@ -264,10 +269,16 @@ The additions follow the pattern fortification set: new fields go at the end of 
 > OK <wheat> <bread> <left> the wagon's wheat and bread afterward, and what's left at the site or city
 ```
 
-- `M` also boards and lands (§6), and `C` also captures sites.
-- `B` pays in bread from the city's stockpile, and puts ships next to the port.
-- New error codes: `no_bread`, for a build the city's stockpile can't pay for; `no_damage`, for an attack whose base damage is 0; and `cannot_carry`, `cannot_load`, and `cannot_unload`, for `L` and `U` orders that can't be carried out. With supply off, `L` and `U` are unknown orders, as before.
-- The golden test vectors in [tests/vectors/supply.json](tests/vectors/supply.json) pin the cases down, as orders.json does for the default rules.
+- `M` also boards and lands (§6), and `C` also captures sites. A boarding move's `OK` gives the transport's hex and 0 MP left, and a landing's the hex landed on and 0 MP. A landing cut short by a hidden enemy is `PART` at the transport's hex.
+- `B` pays in bread from the city's stockpile, and puts ships next to the port. Its reply is `OK <id>`, as for any build, without the hex the ship went to.
+- New error codes:
+  - `no_bread`, for a build the city's stockpile can't pay for;
+  - `no_damage`, for an attack whose base damage is 0;
+  - `cannot_carry`, `cannot_load`, and `cannot_unload`, for `L` and `U` orders that can't be carried out;
+  - `aboard`, for an attack, capture, load, or unload by a unit aboard a transport, or an attack on one;
+  - `no_port`, for a ship built by a city that isn't next to water.
+- With supply off, `L` and `U` are unknown orders, as before.
+- The golden test vectors in [tests/vectors/supply.json](tests/vectors/supply.json) and [tests/vectors/ships.json](tests/vectors/ships.json) pin the cases down, as orders.json does for the default rules.
 
 **Example.** A wagon at (12,9) drives onto site 0 at (15,7) and loads the 650 wheat piled there:
 
@@ -343,6 +354,33 @@ The third tournament added Forager, a simpler bot in Rust with a different strat
 - **Forager thinks for about 16 milliseconds a turn,** against about 400 for the reference bot.
 - **Big armies still starve.** The reference bot lost about 141 units a game to hunger and Forager 91, while the bot that doesn't haul, with a smaller army kept near its cities, lost 9.
 
+### Phase 2 results so far
+
+The first naval tournament, on 2026-11-22, played three bots on 4 maps with islands, at 40% water, each map twice with the sides swapped, at most 400 rounds a game:
+
+- **naval,** the naval reference bot (see Work below);
+- **nobombard,** the same bot with `--no-bombard`, so its galleys never attack land units;
+- **supply,** the phase 1 reference bot, which builds no ships.
+
+On two of the maps (seeds 3 and 6) the homes are on separate landmasses, and on the other two (seeds 5 and 11) they share one, with islands offshore. All 24 games reached the round limit. Cities decided 22 of them, and army value the 2 that tied on cities.
+
+| | homes apart | homes together |
+|---|---|---|
+| a bot with ships against supply | 7–1 | 2–6 |
+| naval against nobombard | 2–2 | 2–2 |
+
+- **Islands fall early.** The bots with ships took their first city across the water between rounds 19 and 52, and about 11 such cities a game in all.
+- **Invading the enemy's own landmass works, slowly.** Against supply, with the homes apart, the bots with ships landed about 125 units a game away from home and took 7 or 8 cities on the enemy's home landmass. None came close to eliminating the enemy in 400 rounds.
+- **A navy pays across water and costs on land.** On seed 6, with the homes apart, the bots with ships beat supply in all 4 games, from either side. On seed 5, with the homes together, supply beat them in all 4, by as much as 34 cities to 9. They spent bread, units, and wagons on islands and ships, while supply put everything into the war on land. On the other two maps the side mostly decided. A better bot would build a navy only where its war needs one.
+- **Archers rule the shore.** A transport has to come next to a coast to land its units, and archers there can shoot it from 2 hexes away, where nothing on it can strike back. On the maps with the homes apart, supply's archers sank about 18 transports a game, with 37 units aboard, and 13 to 22 galleys. Between the two naval bots, galleys sank only 1 to 3 transports a game.
+- **Blockades barely bite.** A port had an enemy ship next to it 3% to 7% of the time. That cost its owner 800 to 2,500 bread a game, well under 1% of the 350,000 to 580,000 bread a player made.
+- **Bombardment is weak, not too strong.** Naval's galleys did about 3% of the damage it dealt to land units, and killed fewer than 3 a game. Naval and nobombard split their 8 games 4–4, and on each map the same side won both. Bombarding cost naval more galleys: it lost 5.0 a game to nobombard's 1.4.
+- **Ships starve without a plan for food.** Early versions of the naval bot lost a dozen ships a game to hunger, many with their crews aboard: loaded convoys waiting by a port ate its bread faster than it was made. With wagons stocking the ports, and transports that put their units back ashore when food runs short, about 1 ship a game starved, with almost no one aboard.
+- **Player 1 won 17 of 24 games.** Swapping the sides cancels that in the totals, but on seeds 3 and 11 the side decided nearly every game.
+- **Time:** the bots thought for about 0.28 seconds a turn on average and at most 1.3 seconds, so a 400-round game took about 4 minutes of thinking.
+
+So with these bots, ships decide a war across water, and islands are easy prizes. Coastal archers, not galleys, are what stops an invasion. Bombardment doesn't need toning down.
+
 ### Work
 
 Done in phase 1:
@@ -358,16 +396,27 @@ Done in phase 1:
 - **A reference bot,** [bots/supply_bot.py](bots/supply_bot.py): vanguard's fighting, plus building with each city's bread, taking sites, hauling wheat, and feeding the army. `--no-haul` turns hauling off.
 - **A second, simpler bot,** [bots/forager_bot.rs](bots/forager_bot.rs), in Rust: it spreads out to take ground, raids enemy wagons and sites with cavalry and scouts, holds its frontier cities with pikemen, and thinks for a few milliseconds a turn.
 
+Done in phase 2:
+
+- **Rules:** terrain gets a naval move cost, and unit types the `naval` and `transport` flags, with the constants `passengers_max` and `water_pct`. The preset gives water a naval move cost of 1 and adds transports and galleys (§7).
+- **Engine:** ports, boarding, riding, landing, and sinking. Units aboard stay out of stacks, zones of control, and combat. Ships heal and refill in port, and `UNIT` lines give the carrier. The new error codes are `aboard` and `no_port`.
+- **Maps:** `water_pct`, the land-and-sea check, and a gap between cities that shrinks with the land's share (§3). Maps without transports don't change.
+- **The Python kit:** pathfinding for ships, boarding and landing in `reachable()`, passengers that ride and sink with their transport, and helpers for ports.
+- **Golden test vectors** in tests/vectors/ships.json, and random self-play that boards, lands, and sinks.
+- **The viewer** draws ships, shows how many units a transport carries, and describes ships in its rules panel.
+- **A naval reference bot,** [bots/naval_bot.py](bots/naval_bot.py): the supply bot, plus convoys of transports that carry the idle part of its army overseas, galleys that sink transports, bombard the coast, escort, and blockade, and wagons that stock its ports with bread for the ships. `--no-bombard` keeps its galleys off land units. Vanguard and the supply bot now cope with enemy ships.
+
 Still to do:
 
-- **Ships** (phase 2): the naval move cost, ports, transports, galleys, the carrier field, `water_pct`, and the generator's land-and-sea check.
-- **The JavaScript kit and the play page:** the kit already skips the new lines and fields safely, but can't play supply games yet.
-- **Viewer:** boarding and landing, and staying quick on replays thousands of rounds long, since it re-simulates every turn (SPEC §8).
+- **The JavaScript kit and the play page:** the kit skips the new lines and fields safely, but can't play supply or ship games yet.
+- **Forager** doesn't use ships, so it can't reach other landmasses.
+- **Viewer:** staying quick on replays thousands of rounds long, since it re-simulates every turn (SPEC §8).
 - **The benchmark:** a separate leaderboard. The ruleset also suits mode 3 (SPEC §5). Its big decisions, like which sites to take or where to land, play out over many turns, which is where a supervising LLM could help.
 
 ## 13. Open questions
 
-None right now.
+- **How much water?** At 40%, most maps are one continent with lakes: 16 of 20 put both homes on one landmass, and 7 of 20 have no city that needs a ship. At 45%, 1 map in 20 has no such city, 40% of the cities need ships, and the homes share a landmass on half the maps. At 50%, some homes start on an island with 2 or 3 cities. 45% looks like the best fit for "seas, coasts, and islands" (§3).
+- **Should archers hurt transports less?** In the first naval tournament, on the maps with the homes apart, archers on the shore sank about 18 transports a game, with 37 units aboard (§12). That makes a defended coast very costly to land on. A more careful bot might clear the archers with galleys first, or land out of their reach. If not, archers' damage to transports, now 40, is the knob.
 
 ### Later
 
