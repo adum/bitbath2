@@ -6,7 +6,7 @@ map_width = 80
 map_height = 60            # must be even
 neutral_cities = 46        # must be even
 round_limit = 5000         # only a backstop (STRATEGIC.md §9)
-water_pct = 40             # of a generated map
+water_pct = 45             # of a generated map
 
 # The large preset's clock, for now (STRATEGIC.md §14).
 time_bank_ms = 10000

@@ -41,9 +41,12 @@ The default game stays as it is.
 ## 3. Map
 
 - **Size:** 80 × 60 with 48 cities, the large preset, to start. Larger maps later.
-- **Water:** about 40% of the map instead of about 6%, which makes seas, coasts, and islands. Maps stay point-symmetric (SPEC §3.9).
-  - At 40%, most maps turn out to be one big continent with lakes and a few islands. Land covering 60% of a map joins up into one mass, while the water stays in separate seas. At 45%, nearly every map has islands, and the homes are on separate landmasses about half the time (§12, §13).
-  - With more water there's less land for the cities, so the least distance between them shrinks with the square root of the land's share. At 40% water, the 48 cities of the large map sit at least 7 hexes apart instead of 10.
+- **Water:** about 45% of the map instead of about 6%, which makes seas, coasts, and islands. Maps stay point-symmetric (SPEC §3.9).
+  - Land tends to join up into one mass while the water stays in separate seas, so a few points of water change the maps a lot. Over 100 maps each:
+    - at 40%, two maps in three put both homes on one continent with lakes, 27% of the cities need ships, and one map in five has no city that does;
+    - at 45%, the homes share a landmass on about half the maps, 41% of the cities need ships, and 7 maps in 100 have none that do. 6 maps in 100 start each home on an island of 4 cities or fewer, its home included, so the war starts at sea;
+    - at 50%, 58% of the cities need ships, and 14 maps in 100 start each home on such an island.
+  - With more water there's less land for the cities, so the least distance between them shrinks with the square root of the land's share. At 45% water, the 48 cities of the large map sit at least 7 hexes apart instead of 10.
 - **Resource sites** are a new terrain, `R`: move cost 1, with no defense, vision bonus, or concealment. The generator places `sites` of them in mirrored pairs:
   - one next to each home city, owned by that player from the start;
   - half of the other pairs, rounded down, next to neutral cities, at most one per city, which makes those cities fortresses worth fighting over;
@@ -215,7 +218,7 @@ New keys, with their values in the strategic preset and in the default game:
 |---|---|---|---|
 | `supply` | 1 | 0 | 1 turns on wheat, bread, and rations (§4, §5), in place of gold, and allows ships (§6) |
 | `sites` | 32 | 0 | resource sites on generated maps, including the two next to the homes; must be even |
-| `water_pct` | 40 | 6 | how much of a generated map is water |
+| `water_pct` | 45 | 6 | how much of a generated map is water |
 | `start_bread` | 300 | – | bread in each home city at the start |
 | `city_bread` | 10 | – | bread a city makes per turn, unless an enemy unit is on or next to it |
 | `site_output_min` | 20 | – | the least wheat a site grows per turn |
@@ -356,7 +359,7 @@ The third tournament added Forager, a simpler bot in Rust with a different strat
 
 ### Phase 2 results so far
 
-The first naval tournament, on 2026-11-22, played three bots on 4 maps with islands, at 40% water, each map twice with the sides swapped, at most 400 rounds a game:
+The first naval tournament, on 2026-11-22, played three bots on 4 maps with islands, at 40% water, before the preset moved to 45% (§14), each map twice with the sides swapped, at most 400 rounds a game:
 
 - **naval,** the naval reference bot (see Work below);
 - **nobombard,** the same bot with `--no-bombard`, so its galleys never attack land units;
@@ -415,7 +418,6 @@ Still to do:
 
 ## 13. Open questions
 
-- **How much water?** At 40%, most maps are one continent with lakes: 16 of 20 put both homes on one landmass, and 7 of 20 have no city that needs a ship. At 45%, 1 map in 20 has no such city, 40% of the cities need ships, and the homes share a landmass on half the maps. At 50%, some homes start on an island with 2 or 3 cities. 45% looks like the best fit for "seas, coasts, and islands" (§3).
 - **Should archers hurt transports less?** In the first naval tournament, on the maps with the homes apart, archers on the shore sank about 18 transports a game, with 37 units aboard (§12). That makes a defended coast very costly to land on. A more careful bot might clear the archers with galleys first, or land out of their reach. If not, archers' damage to transports, now 40, is the knob.
 
 ### Later
@@ -457,6 +459,7 @@ Settled on 2026-11-22:
 - **Passengers are shown.** A visible transport shows the units aboard.
   - *Rejected:* hiding them, which would have allowed decoys.
 - **Bombardment stays.** Galleys can hit land units on the coast next to them.
+- **45% water** (§3), after phase 2. At 40%, two maps in three put both homes on one continent with lakes, and one in five needed no ships at all.
 - **Wagons can't be seized,** to start. Destroying a wagon destroys its cargo.
 - **Later:** more warship types, and roads (§13).
 - **Phase 1 keeps the large preset's clock,** 2 seconds a turn, and measures how long games really take. The strategic clock gets set in phase 3 from those numbers.
