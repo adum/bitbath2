@@ -416,6 +416,13 @@ Then the new bot played on 10 islands maps, each twice with the sides swapped, a
 - **Time:** about 27 milliseconds a turn on average, and at most 119.
 - **On the large map, little changes.** On 6 maps, each twice with the sides swapped, at most 400 rounds a game, the new bot and the old one split 6–6, with 286 cities to 290. Earlier versions went 3–5 and 5–7 there: both kept a garrison on every landmass, and one also sent expeditions for sites on the enemy's own landmass.
 
+**Forager at sea**, on 2026-11-23, after the home islands spread into their corners. Until then only the naval bot could leave its island on the islands map, so Forager learned ships in its own way (Work below).
+
+- **Against the naval bot on the islands map, it's even: 8–8,** on 8 maps, each twice with the sides swapped, at most 500 rounds a game. The map mattered more than the side. Each bot won both games on 3 maps, and the other 2 maps split by side. Forager won 4 games by elimination, the earliest in round 43, and 4 at round 500.
+- **On the large map, it beat the old Forager 6–2,** on 4 maps, both sides, at most 400 rounds a game. That includes 40 cities to 8 and 36 to 12 on two of the maps. The old bot won both games on the fourth map, by 2 cities and on army value.
+- **Without ships, it plays as before.** It sent the same orders, move for move, in 3 default games and 3 supply games without ships.
+- **Time:** about 1 millisecond a turn on the islands map and 7 on the large map, and at most 25.
+
 ### Work
 
 Done in phase 1:
@@ -441,11 +448,11 @@ Done in phase 2:
 - **The viewer** draws ships, shows how many units a transport carries, and describes ships in its rules panel.
 - **A naval reference bot,** [bots/naval_bot.py](bots/naval_bot.py): the supply bot, plus convoys of transports that carry the idle part of its army overseas, galleys that sink transports, bombard the coast, escort, and blockade, and wagons that stock its ports with bread for the ships. `--no-bombard` keeps its galleys off land units. Vanguard and the supply bot now cope with enemy ships.
 - **The islands map** (§3), a small map for testing the resources and ships, picked with `map_layout`. For it, the naval bot learned to take sites overseas, to ferry their wheat home, and to leave a garrison behind (results above).
+- **Forager at sea.** Each of its transports fills up with land units that have nothing left to do at home and sails alone for the best city or site overseas, preferring ones no other transport is after. It ferries wheat from sites overseas as the naval bot does. Its galleys raid enemy transports and otherwise lie off enemy ports. Its wagons carry bread to a port that's saving for a ship, and it keeps a garrison on a small home island.
 
 Still to do:
 
 - **The JavaScript kit and the play page:** the kit skips the new lines and fields safely, but can't play supply or ship games yet.
-- **Forager** doesn't use ships, so it can't reach other landmasses.
 - **Viewer:** staying quick on replays thousands of rounds long, since it re-simulates every turn (SPEC §8).
 - **The benchmark:** a separate leaderboard. The ruleset also suits mode 3 (SPEC §5). Its big decisions, like which sites to take or where to land, play out over many turns, which is where a supervising LLM could help.
 
