@@ -62,7 +62,10 @@ ODDS = 1.5
 PORT_KEEP = 150
 # A wagon stocks a port on a sea that goes somewhere when the port holds less
 # bread than this, from a city that holds at least STOCK_FROM.
-PORT_STOCK, STOCK_FROM = 600, 1500
+PORT_STOCK, STOCK_FROM = 1000, 800
+# A transport that gives up waiting rests this many rounds before it takes
+# on a new crew.
+REST = 10
 
 
 class NavalBot(sb.SupplyBot):
@@ -465,7 +468,14 @@ class NavalBot(sb.SupplyBot):
                     v["waited"] += 1 if aboard else 0
                     self.dock(t, v, move=not t.fresh)
             if v["phase"] == "ready":
-                if aboard:
+                port = s.cities[v["port"]] if v["port"] is not None else None
+                hungry = t.rations < self.voyage_rations(t) and (port is None or port.bread < PORT_KEEP)
+                if aboard and (v["waited"] > CONVOY_WAIT + 4 or hungry) and not t.fresh:
+                    # Waiting has cost too much food: everyone back ashore,
+                    # where the cities feed them, and try again later.
+                    self.land_home(t)
+                    v["phase"], v["waited"], v["rest"] = "gather", 0, s.round + REST
+                elif aboard:
                     v["waited"] += 1
                     ready.append(t)
                 else:
@@ -488,7 +498,13 @@ class NavalBot(sb.SupplyBot):
                 self.dock(t, v)
             elif v["phase"] == "sail":
                 cid = self.pick_target(t)
-                if cid is not None:
+                if t.rations < self.trip_home(t) + SEA_SPARE:
+                    # Running out of food: put everyone ashore wherever they
+                    # can get, and go home.
+                    self.land_anywhere(t, cid)
+                    if s.passengers(t) and self.dock(t, v):
+                        self.land_home(t)
+                elif cid is not None:
                     self.voyage(t, cid)
                 elif self.dock(t, v):
                     self.land_home(t)   # nowhere worth going: back to the land army
@@ -522,10 +538,14 @@ class NavalBot(sb.SupplyBot):
         if not ports:
             return False
         if v["port"] is None or v["port"] not in {c.id for c in ports} or s.cities[v["port"]].bread < PORT_KEEP:
-            # The nearest port with plenty of bread, else the nearest.
-            v["port"] = min(ports, key=lambda c: (c.bread < 2 * PORT_KEEP,
-                                                  self.sea_field(self.port_water_of(c, sea)).get(t.hex, 1 << 30),
-                                                  c.id)).id
+            if t.rations < self.ration_max // 3:
+                # Hungry: the port with the most bread.
+                v["port"] = max(ports, key=lambda c: (c.bread, -c.id)).id
+            else:
+                # The nearest port with plenty of bread, else the nearest.
+                v["port"] = min(ports, key=lambda c: (c.bread < 2 * PORT_KEEP,
+                                                      self.sea_field(self.port_water_of(c, sea)).get(t.hex, 1 << 30),
+                                                      c.id)).id
         goals = self.port_water_of(s.cities[v["port"]], sea)
         if t.hex in goals or not move:
             return t.hex in goals
@@ -608,6 +628,21 @@ class NavalBot(sb.SupplyBot):
                 if self.can_capture(u):
                     self.capture(u)
 
+    def land_anywhere(self, t, cid):
+        """Puts the units aboard ashore on any land next to the transport,
+        nearest city cid if it can."""
+        field = self.city_field[cid] if cid is not None else {}
+        for u in self.state.passengers(t):
+            options = self.reachable(u)
+            if options:
+                h = min(options, key=lambda h: (field.get(h, 1 << 30), self.threat.get(h, 0), h))
+                self.go(u, options[h])
+                if not u.carrier:
+                    self.tally["landed"] += 1
+                    self.crew_of.pop(u.id, None)
+                    if self.can_capture(u):
+                        self.capture(u)
+
     def land_home(self, t):
         """Puts the units aboard ashore next to the port, for the land army."""
         for u in self.state.passengers(t):
@@ -624,7 +659,8 @@ class NavalBot(sb.SupplyBot):
         over to board."""
         s = self.state
         gathering = [t for t in s.my_units() if t.type == self.transport
-                     and self.voyages.get(t.id, {}).get("phase") == "gather" and self.voyages[t.id]["port"] is not None]
+                     and self.voyages.get(t.id, {}).get("phase") == "gather" and self.voyages[t.id]["port"] is not None
+                     and self.voyages[t.id].get("rest", 0) <= s.round]
         if gathering and self.dests:
             open_land = self.open_land()
             army = [u for u in s.my_units() if not self.types[u.type].naval and not self.types[u.type].carry]
@@ -702,7 +738,11 @@ class NavalBot(sb.SupplyBot):
         recent = [e for e in s.enemy_units() if self.types[e.type].naval]
         warlike |= {self.sea.get(e.hex) for e in recent}
         seen = sum(1 for r in self.ships_seen.values() if s.round - r <= SHIP_MEMORY)
-        want_t = min(MAX_TRANSPORTS, max(1, -(-idle // max(1, self.passengers_max)))) if useful else 0
+        # No more transports than the ports on those seas can feed.
+        stocked = sum(c.bread for c in self.ports() if self.port_seas[c.id] & useful)
+        want_t = 0
+        if useful:
+            want_t = min(MAX_TRANSPORTS, max(1, -(-idle // max(1, self.passengers_max))), 1 + stocked // 600)
         want_g = min(MAX_GALLEYS, (want_t + 1) // 2 + (seen + 1) // 2) if self.galley and warlike else 0
         have_t = sum(1 for u in s.my_units() if u.type == self.transport and self.sea.get(u.hex) in useful)
         have_g = self.count(self.galley)
