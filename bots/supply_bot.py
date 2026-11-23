@@ -267,9 +267,13 @@ class SupplyBot(vb.VanguardBot):
         eats = c.get("eat_base", 0) + MOVING * c.get("eat_move", 0) + ATTACKING * c.get("eat_attack", 0)
         return int(FED_SHARE * self.income() / max(1e-9, eats * self.ration_cost))
 
+    def supply_wagons(self):
+        """The wagons that haul and feed: all that can move."""
+        return [u for u in self.state.my_units() if self.types[u.type].carry and not u.fresh]
+
     def run_wagons(self):
         s = self.state
-        wagons = [u for u in s.my_units() if self.types[u.type].carry and not u.fresh]
+        wagons = self.supply_wagons()
         if not wagons:
             return
         self.refresh()
@@ -322,7 +326,7 @@ class SupplyBot(vb.VanguardBot):
 
     def nearest_city(self, w, need=0):
         """Our city nearest w that has `need` bread to spare and no enemy on it."""
-        cities = [c for c in self.state.my_cities() if c.hex not in self.enemy_hex and c.bread - KEEP >= need]
+        cities = [c for c in self.state.my_cities() if c.hex not in self.enemy_hex and c.bread - self.keep(c) >= need]
         known = [(self.city_field[c.id].get(w.hex), c.id, c) for c in cities]
         known = [k for k in known if k[0] is not None]
         return min(known)[2] if known else None
@@ -363,7 +367,7 @@ class SupplyBot(vb.VanguardBot):
             if w.hex != city.hex:
                 self.walk(w, self.city_field[city.id], WAGON_CAUTION)
             if w.hex == city.hex:
-                self.load(w, min(self.cargo_max - w.wheat - w.bread, city.bread - KEEP))
+                self.load(w, min(self.cargo_max - w.wheat - w.bread, city.bread - self.keep(city)))
             return
         # The hungriest group not already served by another wagon.
         best = None
@@ -392,6 +396,11 @@ class SupplyBot(vb.VanguardBot):
                             sum(c.bread for c in s.my_cities()), self.income(), self.units_fed()))
 
     # Building.
+
+    def keep(self, city):
+        """Bread a city holds back from building and from wagons, to feed the
+        units around it."""
+        return KEEP
 
     def build_all(self):
         if not self.supply:
@@ -424,7 +433,7 @@ class SupplyBot(vb.VanguardBot):
         for city in cities:
             if room <= 0:
                 break
-            budget = city.bread - KEEP
+            budget = city.bread - self.keep(city)
             if self.wagon and count[self.wagon] < wagons and budget >= types[self.wagon].cost \
                     and not self.threat.get(city.hex, 0):
                 if self.build(city, self.wagon):
