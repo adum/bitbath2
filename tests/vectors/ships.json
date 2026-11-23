@@ -1,0 +1,221 @@
+{
+ "about": "Scripted turns for the strategic ruleset's ships (STRATEGIC.md §6, §11), in the format of supply.json: 'rules' are config lines applied to the default rules in order, then each scenario sets up cities and units as in CITY lines (id owner capturer progress bread) and UNIT lines (id owner type q r hp fort carrier wheat bread rations, plus an optional last field for what the unit did on its last turn: '-', 'M', 'A', or 'MA'). A unit aboard a transport gives the transport's id as its carrier and the transport's hex, and comes after it. Then 'player''s turn in 'round' begins, so production and feeding run. For ERR replies only the code is checked. The map has a strait of water, columns 4 to 7 of every row, between two coasts. Cities 2 and 3 are ports: city 2's only water neighbor is (3,2), and city 3's are (6,3), (5,4), and (5,5), in direction order. Cities 0 and 1 aren't ports.",
+ "rules": [
+  "supply = 1",
+  "start_bread = 0",
+  "ration_max = 30",
+  "passengers_max = 2",
+  "terrain.water.naval_move_cost = 1",
+  "unit.W = wagon 100 100 4 2 1 1 carry",
+  "unit.T = transport 150 100 6 2 1 1 naval,transport",
+  "unit.G = galley 200 100 5 3 1 1 naval,zoc",
+  "damage.I.W = 70",
+  "damage.P.W = 60",
+  "damage.K.W = 90",
+  "damage.A.W = 70",
+  "damage.S.W = 40",
+  "damage.A.T = 40",
+  "damage.A.G = 40",
+  "damage.G.I = 25",
+  "damage.G.P = 25",
+  "damage.G.K = 25",
+  "damage.G.A = 30",
+  "damage.G.S = 35",
+  "damage.G.W = 50",
+  "damage.G.T = 80",
+  "damage.G.G = 55"
+ ],
+ "map": [
+  "MAP 10 8",
+  "ROW C...~~~~..",
+  "ROW ....~~~~..",
+  "ROW ...C~~~~..",
+  "ROW ....~~~~..",
+  "ROW ....~~~~C.",
+  "ROW ....~~~~..",
+  "ROW ....~~~~..",
+  "ROW ....~~~~.C",
+  "CITY 0 0 0 1",
+  "CITY 1 6 7 2",
+  "CITY 2 2 2 1",
+  "CITY 3 6 4 2"
+ ],
+ "scenarios": [
+  {
+   "name": "ports: a city next to water builds ships onto the first water hex next to it with room and no enemy units",
+   "player": 1, "round": 1,
+   "cities": ["0 1 0 0 500", "1 2 0 0 0", "2 1 0 0 500", "3 1 0 0 500"],
+   "units": [
+    "1 2 G 6 3 100 0 0 0 0 30",
+    "2 1 G 3 2 100 0 0 0 0 30", "3 1 G 3 2 100 0 0 0 0 30", "4 1 G 3 2 100 0 0 0 0 30", "5 1 G 3 2 100 0 0 0 0 30"
+   ],
+   "message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 510", "CITY 1 2 0 0 0", "CITY 2 1 0 0 490", "CITY 3 1 0 0 500",
+    "UNIT 2 1 G 3 2 100 0 0 0 0 30", "UNIT 3 1 G 3 2 100 0 0 0 0 30",
+    "UNIT 4 1 G 3 2 100 0 0 0 0 30", "UNIT 5 1 G 3 2 100 0 0 0 0 30",
+    "UNIT 1 2 G 6 3 100 0 0 0 0 30",
+    "GO"
+   ],
+   "steps": [
+    {"order": "B 0 T", "reply": ["ERR no_port"]},
+    {"order": "B 2 T", "reply": ["ERR stack_full"]},
+    {"order": "B 3 T", "reply": ["OK 6"]},
+    {"order": "M 6 3", "reply": ["ERR new_unit"]}
+   ],
+   "next_message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 0", "CITY 1 2 0 0 10", "CITY 2 1 0 0 0", "CITY 3 1 0 0 350",
+    "UNIT 1 2 G 6 3 100 0 0 0 0 29",
+    "UNIT 6 1 T 5 4 100 0 0 0 0 30",
+    "GO"
+   ]
+  },
+  {
+   "name": "boarding: a land unit boards a transport with room as the last step of a move, for 1 MP, which ends its move",
+   "player": 1, "round": 2,
+   "cities": ["0 1 0 0 0", "1 2 0 0 0", "2 1 0 0 0", "3 2 0 0 0"],
+   "units": [
+    "1 1 T 3 2 100 0 0 0 0 30",
+    "2 1 I 3 1 100 0 0 0 0 30",
+    "3 1 I 2 2 100 0 0 0 0 30",
+    "4 1 I 2 3 100 0 0 0 0 30",
+    "5 1 T 3 3 100 0 0 0 0 30",
+    "6 1 K 1 3 100 0 0 0 0 30",
+    "7 2 S 7 2 100 0 0 0 0 30"
+   ],
+   "steps": [
+    {"order": "M 2 5", "reply": ["OK 3 2 0"]},
+    {"order": "M 3 0", "reply": ["OK 3 2 0"]},
+    {"order": "M 4 1", "reply": ["ERR stack_full"]},
+    {"order": "M 4 10", "reply": ["ERR path"]},
+    {"order": "M 2 2", "reply": ["ERR no_mp"]},
+    {"order": "M 6 00", "reply": ["OK 3 3 0"]},
+    {"order": "M 1 0", "reply": ["OK 4 2 5"]}
+   ],
+   "next_message": [
+    "TURN 2", "TIME 0 0",
+    "CITY 0 1 0 0 0", "CITY 1 2 0 0 10", "CITY 2 1 0 0 0", "CITY 3 2 0 0 10",
+    "UNIT 7 2 S 7 2 100 0 0 0 0 29",
+    "UNIT 1 1 T 4 2 100 0 0 0 0 30", "UNIT 2 1 I 4 2 100 0 1 0 0 30", "UNIT 3 1 I 4 2 100 0 1 0 0 29",
+    "UNIT 5 1 T 3 3 100 0 0 0 0 29", "UNIT 6 1 K 3 3 100 0 5 0 0 29",
+    "GO"
+   ]
+  },
+  {
+   "name": "riding and landing: units aboard ride along without eating for it, then land one step onto land and can still capture",
+   "player": 1, "round": 3,
+   "cities": ["0 1 0 0 0", "1 2 0 0 0", "2 1 0 0 0", "3 2 0 0 0"],
+   "units": [
+    "1 1 T 4 2 100 0 0 0 0 30 M",
+    "2 1 I 4 2 100 0 1 0 0 30",
+    "3 1 I 4 2 100 0 1 0 0 30"
+   ],
+   "message": [
+    "TURN 3", "TIME 0 0",
+    "CITY 0 1 0 0 10", "CITY 1 2 0 0 0", "CITY 2 1 0 0 10", "CITY 3 2 0 0 0",
+    "UNIT 1 1 T 4 2 100 0 0 0 0 28", "UNIT 2 1 I 4 2 100 0 1 0 0 29", "UNIT 3 1 I 4 2 100 0 1 0 0 29",
+    "GO"
+   ],
+   "steps": [
+    {"order": "M 1 550", "reply": ["OK 5 4 3"]},
+    {"order": "M 2 00", "reply": ["ERR path"]},
+    {"order": "A 3 1", "reply": ["ERR aboard"]},
+    {"order": "C 3", "reply": ["ERR aboard"]},
+    {"order": "M 3 3", "reply": ["ERR path"]},
+    {"order": "M 2 0", "reply": ["OK 6 4 0"]},
+    {"order": "C 2", "reply": ["OK 100 200"]},
+    {"order": "M 3 0", "reply": ["OK 6 4 0"]},
+    {"order": "C 3", "reply": ["OK captured"]},
+    {"order": "M 1 3", "reply": ["OK 4 4 2"]}
+   ],
+   "next_message": [
+    "TURN 3", "TIME 0 0",
+    "CITY 0 1 0 0 0", "CITY 1 2 0 0 10", "CITY 2 1 0 0 0", "CITY 3 1 0 0 0",
+    "LOG CITY 3 2 1",
+    "GO"
+   ]
+  },
+  {
+   "name": "sinking: a transport sinks with everything aboard; units aboard can't be attacked, land units can't hurt ships, and archers can",
+   "player": 1, "round": 1,
+   "cities": ["0 1 0 0 0", "1 2 0 0 0", "2 1 0 0 0", "3 2 0 0 0"],
+   "units": [
+    "1 1 G 4 2 100 0 0 0 0 30",
+    "2 2 T 5 2 30 0 0 0 0 30",
+    "3 2 I 5 2 100 0 2 0 0 30",
+    "4 2 W 5 2 100 0 2 0 100 30",
+    "5 1 I 2 3 100 0 0 0 0 30",
+    "6 2 G 3 3 100 0 0 0 0 30",
+    "7 1 A 1 3 100 0 0 0 0 30"
+   ],
+   "steps": [
+    {"order": "A 1 3", "reply": ["ERR aboard"]},
+    {"order": "A 5 6", "reply": ["ERR no_damage"]},
+    {"order": "A 7 6", "reply": ["OK 60 100"]},
+    {"order": "A 1 2", "reply": ["OK 0 100"]},
+    {"order": "A 1 6", "reply": ["ERR acted"]}
+   ],
+   "next_message": [
+    "TURN 1", "TIME 0 0",
+    "CITY 0 1 0 0 0", "CITY 1 2 0 0 10", "CITY 2 1 0 0 0", "CITY 3 2 0 0 10",
+    "UNIT 6 2 G 3 3 60 0 0 0 0 29",
+    "UNIT 1 1 G 4 2 100 0 0 0 0 29", "UNIT 5 1 I 2 3 100 0 0 0 0 30", "UNIT 7 1 A 1 3 100 0 0 0 0 30",
+    "LOG HIT 7 A 1 3 6 60 100",
+    "LOG HIT 1 G 4 2 2 0 100",
+    "GO"
+   ]
+  },
+  {
+   "name": "the shore: galleys bombard the coast, and zones of control reach across the shoreline both ways, but not from units aboard",
+   "player": 1, "round": 1,
+   "cities": ["0 1 0 0 0", "1 2 0 0 0", "2 1 0 0 0", "3 2 0 0 0"],
+   "units": [
+    "1 1 G 3 3 100 0 0 0 0 30",
+    "2 2 I 2 3 100 0 0 0 0 30",
+    "3 2 G 2 5 100 0 0 0 0 30",
+    "4 1 I 1 4 100 0 0 0 0 30",
+    "5 2 P 7 2 100 0 0 0 0 30",
+    "6 1 T 6 0 100 0 0 0 0 30",
+    "7 2 T 4 1 100 0 0 0 0 30",
+    "8 2 P 4 1 100 0 7 0 0 30",
+    "9 1 I 2 1 100 0 0 0 0 30"
+   ],
+   "steps": [
+    {"order": "A 1 2", "reply": ["OK 75 100"]},
+    {"order": "M 4 53", "reply": ["ERR zoc"]},
+    {"order": "M 4 5", "reply": ["OK 1 5 0"]},
+    {"order": "M 6 554", "reply": ["SEE 5 2 P 7 2 100 0 0 0 0 30", "PART 6 2 zoc"]},
+    {"order": "M 9 02", "reply": ["OK 3 0 1"]}
+   ]
+  },
+  {
+   "name": "upkeep at sea: ships heal and refill next to their own cities, a wagon aboard feeds the units around it, and a transport that starves to death sinks with everything aboard",
+   "player": 1, "round": 2,
+   "cities": ["0 1 0 0 0", "1 2 0 0 0", "2 1 0 0 100", "3 2 0 0 0"],
+   "units": [
+    "1 1 G 3 2 50 0 0 0 0 10 M",
+    "2 1 T 5 1 10 0 0 0 0 0 M",
+    "3 1 I 5 1 100 0 2 0 0 30",
+    "4 1 W 5 1 100 0 2 0 0 30",
+    "5 1 T 7 0 60 0 0 0 0 5 M",
+    "6 1 I 7 0 50 0 5 0 0 3",
+    "7 1 W 7 0 100 0 5 0 300 30"
+   ],
+   "message": [
+    "TURN 2", "TIME 0 0",
+    "CITY 0 1 0 0 10", "CITY 1 2 0 0 0", "CITY 2 1 0 0 0", "CITY 3 2 0 0 0",
+    "UNIT 1 1 G 3 2 70 0 0 0 0 30",
+    "UNIT 5 1 T 7 0 60 0 0 0 0 30",
+    "UNIT 6 1 I 7 0 50 0 5 0 0 30",
+    "UNIT 7 1 W 7 0 100 0 5 0 20 30",
+    "GO"
+   ],
+   "steps": [
+    {"order": "L 7", "reply": ["ERR aboard"]},
+    {"order": "U 7", "reply": ["ERR aboard"]},
+    {"order": "M 1 3", "reply": ["ERR path"]}
+   ]
+  }
+ ]
+}

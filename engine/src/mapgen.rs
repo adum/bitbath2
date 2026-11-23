@@ -9,9 +9,9 @@ use crate::rules::{Rules, CITY_CHAR, SITE_CHAR};
 /// the generator when there are no sites to place.
 pub const GENERATOR_VERSION: u32 = 1;
 
-/// Generates the map for `seed` using `rules.c` for its size, number of
-/// neutral cities, and, with supply on, number of sites. Rerolls
-/// deterministically until the map is valid.
+/// Generates the map for `seed` using `rules.c` for its size, share of
+/// water, number of neutral cities, and, with supply on, number of sites.
+/// Rerolls deterministically until the map is valid.
 pub fn generate(rules: &Rules, seed: u64) -> Result<Map, String> {
     let w = rules.c.map_width as i32;
     let h = rules.c.map_height as i32;
@@ -111,7 +111,7 @@ fn try_generate(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64
         moisture[m] = wet;
     }
 
-    let water_below = percentile(&elevation, 60);
+    let water_below = percentile(&elevation, rules.c.water_pct as usize * 10);
     let hills_from = percentile(&elevation, 830);
     let mountains_from = percentile(&elevation, 935);
     let forest_from = percentile(&moisture, 760);
@@ -194,21 +194,13 @@ fn try_generate(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64
 
     // Every city and site must be reachable from player 1's home. By
     // symmetry it is then reachable from player 2's home too.
-    let mut seen = vec![false; n];
-    let mut queue = vec![sites[0]];
-    seen[sites[0]] = true;
-    while let Some(k) = queue.pop() {
-        for nb in map.hex(k).neighbors() {
-            if map.contains(nb) {
-                let i = map.index(nb);
-                if !seen[i] && passable(map.tiles[i]) {
-                    seen[i] = true;
-                    queue.push(i);
-                }
-            }
-        }
-    }
-    if sites.iter().chain(resources.iter().map(|(k, _)| k)).any(|&s| !seen[s]) {
+    let targets: Vec<usize> = sites.iter().copied().chain(resources.iter().map(|&(k, _)| k)).collect();
+    let reachable = if rules.naval() {
+        reachable_by_land_and_sea(rules, &map, &sites, &targets)
+    } else {
+        reachable_by_land(rules, &map, sites[0], &targets)
+    };
+    if !reachable {
         return None;
     }
 
@@ -223,6 +215,97 @@ fn try_generate(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64
         .collect();
     map.sites = resources.into_iter().map(|(_, s)| s).collect();
     Some(map)
+}
+
+/// The storage indexes of the hexes next to the one at index `k`.
+fn next_to(map: &Map, k: usize) -> impl Iterator<Item = usize> + '_ {
+    map.hex(k)
+        .neighbors()
+        .into_iter()
+        .filter(|&h| map.contains(h))
+        .map(|h| map.index(h))
+}
+
+/// Whether every hex in `targets` can be reached by land from the hex at
+/// index `home`.
+fn reachable_by_land(rules: &Rules, map: &Map, home: usize, targets: &[usize]) -> bool {
+    let mut seen = vec![false; map.len()];
+    let mut queue = vec![home];
+    seen[home] = true;
+    while let Some(k) = queue.pop() {
+        for i in next_to(map, k) {
+            if !seen[i] && rules.terrains[map.tiles[i] as usize].passable() {
+                seen[i] = true;
+                queue.push(i);
+            }
+        }
+    }
+    targets.iter().all(|&k| seen[k])
+}
+
+/// Labels the connected areas of the hexes `open` accepts: each such hex
+/// gets its area's number, and every other hex `u32::MAX`. Also returns
+/// the number of areas.
+fn areas(map: &Map, open: impl Fn(usize) -> bool) -> (Vec<u32>, usize) {
+    let mut area = vec![u32::MAX; map.len()];
+    let mut count = 0;
+    for start in 0..map.len() {
+        if area[start] != u32::MAX || !open(start) {
+            continue;
+        }
+        area[start] = count as u32;
+        let mut stack = vec![start];
+        while let Some(k) = stack.pop() {
+            for i in next_to(map, k) {
+                if area[i] == u32::MAX && open(i) {
+                    area[i] = count as u32;
+                    stack.push(i);
+                }
+            }
+        }
+        count += 1;
+    }
+    (area, count)
+}
+
+/// Whether every hex in `targets` can be reached from player 1's home, the
+/// first of `cities`, by land and sea, with a port on the home's landmass
+/// (STRATEGIC.md §3). Units walk across land and ride transports across
+/// water. A sea is open to a player once they can reach a city next to it,
+/// which could build the ships, and its coasts are open from then on.
+fn reachable_by_land_and_sea(rules: &Rules, map: &Map, cities: &[usize], targets: &[usize]) -> bool {
+    let terrain = |k: usize| &rules.terrains[map.tiles[k] as usize];
+    let (land, lands) = areas(map, |k| terrain(k).passable());
+    let (sea, seas) = areas(map, |k| terrain(k).naval_move_cost > 0);
+    let home = land[cities[0]];
+    let port = |c: usize| next_to(map, c).any(|i| sea[i] != u32::MAX);
+    if !cities.iter().any(|&c| land[c] == home && port(c)) {
+        return false;
+    }
+    let mut land_open = vec![false; lands];
+    let mut sea_open = vec![false; seas];
+    land_open[home as usize] = true;
+    loop {
+        let mut changed = false;
+        for &c in cities {
+            if land_open[land[c] as usize] {
+                for i in next_to(map, c).filter(|&i| sea[i] != u32::MAX) {
+                    changed |= !std::mem::replace(&mut sea_open[sea[i] as usize], true);
+                }
+            }
+        }
+        for k in (0..map.len()).filter(|&k| sea[k] != u32::MAX && sea_open[sea[k] as usize]) {
+            for i in next_to(map, k).filter(|&i| land[i] != u32::MAX) {
+                changed |= !std::mem::replace(&mut land_open[land[i] as usize], true);
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    targets
+        .iter()
+        .all(|&k| land[k] != u32::MAX && land_open[land[k] as usize])
 }
 
 /// `v` rounded down to a multiple of `step`, but at least `min`.
@@ -357,6 +440,7 @@ fn place_sites(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hex::Hex;
 
     #[test]
     fn deterministic_and_symmetric() {
@@ -423,6 +507,96 @@ mod tests {
         for seed in 0..20 {
             generate(&rules, seed).unwrap().validate(&rules).unwrap();
         }
+    }
+
+    /// The strategic ruleset's ships on a map with `water_pct` water.
+    fn naval_rules(w: u32, h: u32, cities: u32, sites: u32, water_pct: u32) -> Rules {
+        let mut rules = site_rules(w, h, cities, sites);
+        rules.set("water_pct", &water_pct.to_string()).unwrap();
+        rules.set("terrain.water.naval_move_cost", "1").unwrap();
+        rules
+            .set("unit.T", "transport 150 100 6 2 1 1 naval,transport")
+            .unwrap();
+        rules.validate().unwrap();
+        rules
+    }
+
+    #[test]
+    fn naval_maps_have_their_water_and_reach_every_city_by_land_and_sea() {
+        for (rules, seeds) in [
+            (naval_rules(80, 60, 46, 32, 40), 0..3),
+            (naval_rules(24, 18, 6, 4, 40), 0..12),
+        ] {
+            let mut islands = 0;
+            for seed in seeds {
+                let m = generate(&rules, seed).unwrap();
+                assert_eq!(m, generate(&rules, seed).unwrap());
+                m.validate(&rules).unwrap();
+                let n = m.len();
+                assert!((0..n).all(|k| m.tiles[k] == m.tiles[n - 1 - k]), "seed {seed}");
+                let water = m
+                    .tiles
+                    .iter()
+                    .filter(|&&t| rules.terrains[t as usize].ch == '~')
+                    .count();
+                assert!(
+                    (n * 35 / 100..=n * 41 / 100).contains(&water),
+                    "seed {seed}: {water} of {n}"
+                );
+                let cities: Vec<usize> = m.cities.iter().map(|c| m.index(c.hex)).collect();
+                let targets: Vec<usize> = cities
+                    .iter()
+                    .copied()
+                    .chain(m.sites.iter().map(|s| m.index(s.hex)))
+                    .collect();
+                assert!(reachable_by_land_and_sea(&rules, &m, &cities, &targets), "seed {seed}");
+                if !reachable_by_land(&rules, &m, cities[0], &targets) {
+                    islands += 1;
+                }
+            }
+            assert!(islands > 0, "some maps should need ships");
+        }
+    }
+
+    /// A map from rows of terrain characters, with no cities or sites.
+    fn sketch(rules: &Rules, rows: &[&str]) -> Map {
+        let tiles: Vec<u8> = rows
+            .iter()
+            .flat_map(|r| r.chars().map(|c| rules.terrain_index(c).unwrap() as u8))
+            .collect();
+        Map {
+            width: rows[0].len() as i32,
+            height: rows.len() as i32,
+            tiles,
+            cities: Vec::new(),
+            sites: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_sea_check_needs_a_port_at_home_and_a_sea_that_goes_somewhere() {
+        let rules = naval_rules(8, 6, 0, 0, 40);
+        // A sea between two landmasses. The city at (0,1) is a port, and
+        // the one at (7,0) isn't.
+        let m = sketch(
+            &rules,
+            &[".......C", "C.......", "~~~~~~~~", "~~~~~~~~", "........", ".......C"],
+        );
+        let at = |q: i32, r: i32| m.index(Hex::new(q, r));
+        let (port, inland, south) = (at(0, 1), at(7, 0), at(5, 5));
+        assert!(reachable_by_land_and_sea(&rules, &m, &[port, south], &[south]));
+        assert!(!reachable_by_land_and_sea(&rules, &m, &[inland, south], &[south]));
+        assert!(reachable_by_land_and_sea(&rules, &m, &[inland, port, south], &[south]));
+        assert!(!reachable_by_land(&rules, &m, port, &[south]));
+        // A lake that touches only the home landmass leads nowhere.
+        let m = sketch(
+            &rules,
+            &["C..C~...", "........", "^^^^^^^^", "........", "........", ".......C"],
+        );
+        let at = |q: i32, r: i32| m.index(Hex::new(q, r));
+        let cities = [at(0, 0), at(3, 0), at(5, 5)];
+        assert!(!reachable_by_land_and_sea(&rules, &m, &cities, &[cities[2]]));
+        assert!(reachable_by_land_and_sea(&rules, &m, &cities, &[cities[1]]));
     }
 
     #[test]

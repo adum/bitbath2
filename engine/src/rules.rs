@@ -14,19 +14,34 @@ pub struct Terrain {
     /// Hides this hex from observers: it's seen from at most `vision −
     /// conceal` hexes away, though always from next door (SPEC §4).
     pub conceal: u32,
+    /// What entering this hex costs a `naval` unit. 0 means ships can't
+    /// enter it (STRATEGIC.md §6).
+    pub naval_move_cost: u32,
 }
 
 impl Terrain {
+    /// Whether land units can enter this terrain.
     pub fn passable(&self) -> bool {
         self.move_cost > 0
     }
 
+    /// What entering this terrain costs a unit, naval or not. 0 means it
+    /// can't enter.
+    pub fn cost_for(&self, naval: bool) -> u32 {
+        if naval {
+            self.naval_move_cost
+        } else {
+            self.move_cost
+        }
+    }
+
     /// A terrain from the fields after the character in a `TERRAIN` line:
-    /// name, move cost, defense, vision bonus, and conceal. Replays recorded
-    /// before concealment leave out the last one.
+    /// name, move cost, defense, vision bonus, conceal, and naval move cost.
+    /// Replays recorded before concealment leave out the last two, and init
+    /// messages without supply leave out the naval move cost.
     pub fn from_fields(ch: char, t: &[&str]) -> Result<Terrain, String> {
         if t.len() < 4 {
-            return Err("expected: name move_cost defense vision_bonus conceal".into());
+            return Err("expected: name move_cost defense vision_bonus conceal [naval_move_cost]".into());
         }
         let num = |i: usize, what: &str| t[i].parse::<u32>().map_err(|_| format!("bad {what} '{}'", t[i]));
         Ok(Terrain {
@@ -36,6 +51,7 @@ impl Terrain {
             defense: num(2, "defense")?,
             vision_bonus: num(3, "vision bonus")?,
             conceal: if t.len() > 4 { num(4, "conceal")? } else { 0 },
+            naval_move_cost: if t.len() > 5 { num(5, "naval move cost")? } else { 0 },
         })
     }
 }
@@ -58,6 +74,10 @@ pub struct UnitType {
     pub fortify: bool,
     /// Carries wheat and bread, and can load and unload them (STRATEGIC.md §4).
     pub carry: bool,
+    /// Moves on water, by each terrain's naval move cost (STRATEGIC.md §6).
+    pub naval: bool,
+    /// Carries land units (STRATEGIC.md §6).
+    pub transport: bool,
 }
 
 impl UnitType {
@@ -108,6 +128,12 @@ impl UnitType {
         if self.carry {
             f.push("carry");
         }
+        if self.naval {
+            f.push("naval");
+        }
+        if self.transport {
+            f.push("transport");
+        }
         if f.is_empty() {
             "-".into()
         } else {
@@ -122,6 +148,8 @@ impl UnitType {
         self.no_move_attack = false;
         self.fortify = false;
         self.carry = false;
+        self.naval = false;
+        self.transport = false;
         for f in flags.split(',').map(str::trim).filter(|f| !f.is_empty() && *f != "-") {
             match f {
                 "capture" => self.capture = true,
@@ -130,6 +158,8 @@ impl UnitType {
                 "no_move_attack" => self.no_move_attack = true,
                 "fortify" => self.fortify = true,
                 "carry" => self.carry = true,
+                "naval" => self.naval = true,
+                "transport" => self.transport = true,
                 _ => return Err(format!("unknown unit flag '{f}'")),
             }
         }
@@ -199,6 +229,7 @@ constants! {
     // The strategic ruleset (STRATEGIC.md §10). Sent only while supply is on.
     supply = 0,
     sites = 0,
+    water_pct = 6,
     start_bread = 300,
     city_bread = 10,
     site_output_min = 20,
@@ -206,6 +237,7 @@ constants! {
     site_cap_min = 400,
     site_cap_max = 3000,
     cargo_max = 1000,
+    passengers_max = 4,
     ration_max = 60,
     eat_base = 1,
     eat_move = 1,
@@ -214,11 +246,13 @@ constants! {
     starve_hp = 10,
 }
 
-/// Constants that only matter while `supply` is on. `RULE` lines leave them
-/// out otherwise, so the default game's init message doesn't change.
+/// The strategic ruleset's constants. `RULE` lines leave them out while
+/// `supply` is off, so the default game's init message doesn't change.
+/// `water_pct` still shapes generated maps then.
 pub const SUPPLY_CONSTANTS: &[&str] = &[
     "supply",
     "sites",
+    "water_pct",
     "start_bread",
     "city_bread",
     "site_output_min",
@@ -226,6 +260,7 @@ pub const SUPPLY_CONSTANTS: &[&str] = &[
     "site_cap_min",
     "site_cap_max",
     "cargo_max",
+    "passengers_max",
     "ration_max",
     "eat_base",
     "eat_move",
@@ -260,6 +295,7 @@ impl Default for Rules {
             defense,
             vision_bonus,
             conceal,
+            naval_move_cost: 0,
         };
         let unit = |code, name: &str, cost, mv, vision, range_min, range_max, flags: &str| {
             let mut u = UnitType {
@@ -412,6 +448,7 @@ impl Rules {
                     "defense" => t.defense = num()?,
                     "vision_bonus" => t.vision_bonus = num()?,
                     "conceal" => t.conceal = num()?,
+                    "naval_move_cost" => t.naval_move_cost = num()?,
                     _ => return Err(format!("unknown terrain field '{field}'")),
                 }
             }
@@ -448,8 +485,12 @@ impl Rules {
             }
         }
         match self.terrain_index(CITY_CHAR) {
-            Some(i) if self.terrains[i].passable() => {}
-            _ => return Err(format!("terrain '{CITY_CHAR}' (city) must exist and be passable")),
+            Some(i) if self.terrains[i].passable() && self.terrains[i].naval_move_cost == 0 => {}
+            _ => {
+                return Err(format!(
+                    "terrain '{CITY_CHAR}' (city) must exist and be passable, and ships can't enter it"
+                ))
+            }
         }
         if self.units.is_empty() {
             return Err("there must be at least one unit type".into());
@@ -467,6 +508,9 @@ impl Rules {
                     u.name
                 ));
             }
+            if u.transport && !u.naval {
+                return Err(format!("unit type {}: a transport must be naval", u.name));
+            }
         }
         let n = self.units.len();
         if self.damage.len() != n || self.damage.iter().any(|row| row.len() != n) {
@@ -475,11 +519,27 @@ impl Rules {
         if let Some(code) = self.start_units.iter().find(|&&code| self.unit_index(code).is_none()) {
             return Err(format!("start_units: no unit type '{code}'"));
         }
+        if let Some(code) = self
+            .start_units
+            .iter()
+            .find(|&&code| self.units[self.unit_index(code).unwrap()].naval)
+        {
+            return Err(format!(
+                "start_units: '{code}' is a ship, and units start on the home city"
+            ));
+        }
         if c.supply > 1 {
             return Err("supply must be 0 or 1".into());
         }
         if c.supply == 0 && c.sites > 0 {
             return Err("sites needs supply = 1".into());
+        }
+        let ships = self.units.iter().any(|u| u.naval) || self.terrains.iter().any(|t| t.naval_move_cost > 0);
+        if c.supply == 0 && ships {
+            return Err("naval unit types and naval move costs need supply = 1".into());
+        }
+        if c.water_pct > 90 {
+            return Err("water_pct must be at most 90".into());
         }
         if c.supply == 1 {
             if c.site_output_min > c.site_output_max || c.site_cap_min > c.site_cap_max {
@@ -502,16 +562,28 @@ impl Rules {
         self.c.supply != 0
     }
 
+    /// Whether transports can carry land units across water: some unit type
+    /// is a transport, and some terrain lets ships in (STRATEGIC.md §6).
+    pub fn naval(&self) -> bool {
+        self.units.iter().any(|u| u.transport) && self.terrains.iter().any(|t| t.naval_move_cost > 0)
+    }
+
     /// `TERRAIN`, `UNITTYPE`, `DAMAGE`, and `RULE` lines (SPEC §6.2), plus a
     /// `START` line when `with_start` is set. Bots never see `START`; it only
-    /// appears in replay headers.
+    /// appears in replay headers. With supply on, `TERRAIN` lines end with
+    /// the naval move cost.
     pub fn lines(&self, with_start: bool) -> Vec<String> {
         let mut out = Vec::new();
         for t in &self.terrains {
-            out.push(format!(
+            let line = format!(
                 "TERRAIN {} {} {} {} {} {}",
                 t.ch, t.name, t.move_cost, t.defense, t.vision_bonus, t.conceal
-            ));
+            );
+            out.push(if self.supply() {
+                format!("{line} {}", t.naval_move_cost)
+            } else {
+                line
+            });
         }
         for u in &self.units {
             out.push(format!(
@@ -612,5 +684,24 @@ mod tests {
         assert!(r.set("unit.X", "x 1 2").is_err());
         assert!(r.set("terrain.R", "site one 0 0 0").is_err());
         r.validate().unwrap();
+    }
+
+    #[test]
+    fn ships_need_supply_and_transports_must_be_naval() {
+        let mut r = Rules::default();
+        r.set("terrain.water.naval_move_cost", "1").unwrap();
+        r.set("unit.T", "transport 150 100 6 2 1 1 naval,transport").unwrap();
+        assert_eq!(r.units[5].flags(), "naval,transport");
+        assert!(!r.terrains[5].passable() && r.terrains[5].cost_for(true) == 1);
+        assert!(r.validate().is_err());
+        r.set("supply", "1").unwrap();
+        r.validate().unwrap();
+        assert!(r.naval());
+        assert!(r.lines(false).contains(&"TERRAIN ~ water 0 0 0 0 1".to_string()));
+        r.set("unit.T.flags", "transport").unwrap();
+        assert!(r.validate().is_err());
+        r.set("unit.T.flags", "naval,transport").unwrap();
+        r.set("terrain.city.naval_move_cost", "1").unwrap();
+        assert!(r.validate().is_err());
     }
 }

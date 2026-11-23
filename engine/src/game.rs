@@ -31,6 +31,9 @@ pub struct Unit {
     /// Wheat and bread carried by a `carry` unit (STRATEGIC.md §4).
     pub wheat: u32,
     pub bread: u32,
+    /// The transport this unit is aboard, or 0 (STRATEGIC.md §6). A unit
+    /// aboard has its transport's hex.
+    pub carrier: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -262,6 +265,7 @@ impl Game {
             rations: self.rules.c.ration_max,
             wheat: 0,
             bread: 0,
+            carrier: 0,
         });
         let i = self.map.index(hex);
         self.occupants[i].push(id);
@@ -279,8 +283,9 @@ impl Game {
         if ty >= self.rules.units.len() || hp == 0 || hp > self.rules.units[ty].max_hp {
             return Err(format!("unit {id}: bad type or hp"));
         }
-        if !self.map.contains(hex) || !self.rules.terrains[self.map.terrain_at(hex)].passable() {
-            return Err(format!("unit {id}: {hex} isn't a passable hex on the map"));
+        let naval = self.rules.units[ty].naval;
+        if !self.map.contains(hex) || self.rules.terrains[self.map.terrain_at(hex)].cost_for(naval) == 0 {
+            return Err(format!("unit {id}: {hex} isn't a hex on the map it can enter"));
         }
         let i = self.map.index(hex);
         if self.occupants[i].iter().any(|&o| self.owner_of(o) != owner) {
@@ -289,6 +294,28 @@ impl Game {
         self.next_unit_id = id;
         self.spawn(owner, ty, hex, false);
         self.units.last_mut().expect("just spawned").hp = hp;
+        Ok(())
+    }
+
+    /// Adds a land unit aboard transport `carrier`, for scenarios. Ids must
+    /// increase.
+    pub fn place_aboard(&mut self, id: u32, ty: usize, carrier: u32, hp: u32) -> Result<(), String> {
+        let Some(c) = self.unit(carrier).cloned() else {
+            return Err(format!("unit {id}: there is no transport {carrier}"));
+        };
+        if !self.rules.units[c.ty].transport || ty >= self.rules.units.len() || self.rules.units[ty].naval {
+            return Err(format!("unit {id}: only land units can board, and only transports"));
+        }
+        if self.aboard(carrier).len() as u32 >= self.rules.c.passengers_max {
+            return Err(format!("unit {id}: transport {carrier} is full"));
+        }
+        if id < self.next_unit_id || hp == 0 || hp > self.rules.units[ty].max_hp {
+            return Err(format!("unit {id}: ids must increase, and hp must fit the type"));
+        }
+        self.next_unit_id = id;
+        self.spawn(c.owner, ty, c.hex, false);
+        let u = self.units.last_mut().expect("just spawned");
+        (u.hp, u.carrier) = (hp, carrier);
         Ok(())
     }
 
@@ -409,9 +436,17 @@ impl Game {
 
         for i in 0..self.units.len() {
             let u = &self.units[i];
-            let on_own_city =
-                self.city_at[self.map.index(u.hex)].is_some_and(|cid| self.cities[cid as usize].owner == player);
-            if u.owner == player && on_own_city && starved.binary_search(&u.id).is_err() {
+            if u.owner != player || starved.binary_search(&u.id).is_ok() {
+                continue;
+            }
+            // Land units heal on their own cities, and ships next to them
+            // (STRATEGIC.md §6).
+            let heals = if self.rules.units[u.ty].naval {
+                u.hex.neighbors().into_iter().any(|h| self.own_city_at(h, player))
+            } else {
+                self.own_city_at(u.hex, player)
+            };
+            if heals {
                 let max_hp = self.rules.units[u.ty].max_hp;
                 let u = &mut self.units[i];
                 u.hp = (u.hp + self.rules.c.city_heal).min(max_hp);
@@ -503,7 +538,10 @@ impl Game {
         let ids: Vec<u32> = self.units.iter().filter(|u| u.owner == player).map(|u| u.id).collect();
         let mut starved = Vec::new();
         for id in ids {
-            let i = self.unit_idx(id).expect("only the unit being fed can starve");
+            // A transport that starved to death sank with its passengers.
+            let Some(i) = self.unit_idx(id) else {
+                continue;
+            };
             let u = &self.units[i];
             let eaten = eat_base + if u.moved { eat_move } else { 0 } + if u.attacked { eat_attack } else { 0 };
             let mut have = u.rations as i64 - eaten as i64;
@@ -559,7 +597,8 @@ impl Game {
             self.turn_over = true;
             let max = self.rules.c.fortify_max;
             for u in self.units.iter_mut() {
-                if u.owner == self.player && self.rules.units[u.ty].fortify && !(u.moved || u.acted || u.fresh) {
+                let still = !(u.moved || u.acted || u.fresh || u.carrier != 0);
+                if u.owner == self.player && self.rules.units[u.ty].fortify && still {
                     u.fort = (u.fort + 1).min(max);
                 }
             }
@@ -671,8 +710,8 @@ impl Game {
     }
 
     /// A `UNIT` or `SEE` line after its keyword: id, owner, type, q, r, HP,
-    /// and fortification level (SPEC §6.3), then with supply on the carrier
-    /// (always 0 until transports), wheat, bread, and rations.
+    /// and fortification level (SPEC §6.3), then with supply on the carrier,
+    /// wheat, bread, and rations.
     fn unit_fields(&self, u: &Unit) -> String {
         let code = self.rules.units[u.ty].code;
         let base = format!(
@@ -680,7 +719,7 @@ impl Game {
             u.id, u.owner, code, u.hex.q, u.hex.r, u.hp, u.fort
         );
         if self.rules.supply() {
-            format!("{base} 0 {} {} {}", u.wheat, u.bread, u.rations)
+            format!("{base} {} {} {} {}", u.carrier, u.wheat, u.bread, u.rations)
         } else {
             base
         }
@@ -742,25 +781,37 @@ impl Game {
         if mp == 0 {
             return reject("no_mp", format!("unit {id} has no movement points left"));
         }
-        let skirmish = self.rules.units[ty].skirmish;
+        if self.units[ui].carrier != 0 {
+            return self.land(ui, &dirs, out);
+        }
+        let (naval, skirmish) = (self.rules.units[ty].naval, self.rules.units[ty].skirmish);
 
-        // Check the whole path against what the player can see.
+        // Check the whole path against what the player can see. A land unit
+        // may end its path by boarding one of its player's transports, on a
+        // hex it couldn't otherwise enter. The boarding step costs 1 MP.
         let mut pos = start;
         let mut cost = 0;
+        let mut boarding = false;
         for (k, &dir) in dirs.iter().enumerate() {
             let next = pos.step(dir);
             if !self.map.contains(next) {
                 return reject("path", format!("step {} leaves the map at {next}", k + 1));
             }
-            let terrain = &self.rules.terrains[self.map.terrain_at(next)];
-            if !terrain.passable() {
-                return reject("path", format!("{next} is {}", terrain.name));
-            }
             let i = self.map.index(next);
+            let terrain = &self.rules.terrains[self.map.tiles[i] as usize];
+            let mut step = terrain.cost_for(naval);
+            if step == 0 {
+                if naval || k + 1 < dirs.len() || !self.transport_at(i) {
+                    let who = if naval { "ships" } else { "land units" };
+                    return reject("path", format!("{next} is {}, which {who} can't enter", terrain.name));
+                }
+                boarding = true;
+                step = 1;
+            }
             if self.visible[i] && self.enemy_at(i) {
                 return reject("path", format!("{next} holds an enemy unit"));
             }
-            cost += terrain.move_cost;
+            cost += step;
             if k + 1 < dirs.len() && !skirmish && self.in_zoc(next, true) {
                 return reject(
                     "zoc",
@@ -773,13 +824,18 @@ impl Game {
             return reject("no_mp", format!("the path costs {cost} MP but unit {id} has {mp}"));
         }
         let dest = self.map.index(pos);
-        let friends = self.occupants[dest]
-            .iter()
-            .filter(|&&o| o != id && self.owner_of(o) == self.player)
-            .count();
-        if friends as u32 >= self.rules.c.stack_limit {
-            return reject("stack_full", format!("{pos} already holds {friends} units"));
-        }
+        let transport = if boarding {
+            match self.transport_with_room(dest) {
+                Some(t) => t,
+                None => return reject("stack_full", format!("the transports at {pos} are full")),
+            }
+        } else {
+            let friends = self.stacked(dest, id);
+            if friends >= self.rules.c.stack_limit {
+                return reject("stack_full", format!("{pos} already holds {friends} units"));
+            }
+            0
+        };
 
         // Move step by step. Only hidden enemies can cut the move short.
         let mut pos = start;
@@ -792,11 +848,18 @@ impl Game {
                 out.push(format!("PART {} {} ambush", pos.q, pos.r));
                 return Ok(());
             }
-            self.units[ui].mp -= self.rules.terrains[self.map.tiles[i] as usize].move_cost;
+            let u = &mut self.units[ui];
+            if transport != 0 && k + 1 == dirs.len() {
+                // Boarding ends the unit's move.
+                u.mp = 0;
+                u.carrier = transport;
+            } else {
+                u.mp -= self.rules.terrains[self.map.tiles[i] as usize].cost_for(naval);
+            }
+            u.moved = true;
+            u.fort = 0;
             self.relocate(ui, next);
-            self.units[ui].moved = true;
-            self.units[ui].fort = 0;
-            let radius = self.unit_vision(ui);
+            let radius = self.stack_vision(ui);
             self.reveal(next, radius, out);
             if !skirmish && self.in_zoc(next, false) {
                 self.units[ui].mp = 0;
@@ -811,6 +874,57 @@ impl Game {
         Ok(())
     }
 
+    /// A unit aboard a transport lands: a one-step move onto land next to
+    /// it, which ends the unit's move but leaves its action, so it can still
+    /// attack or capture (STRATEGIC.md §6).
+    fn land(&mut self, ui: usize, dirs: &[usize], out: &mut Vec<String>) -> Result<(), Reject> {
+        let (id, from, mp) = (self.units[ui].id, self.units[ui].hex, self.units[ui].mp);
+        if dirs.len() != 1 {
+            return reject(
+                "path",
+                format!("unit {id} is aboard a transport, so it can only land, one step onto land"),
+            );
+        }
+        let next = from.step(dirs[0]);
+        if !self.map.contains(next) {
+            return reject("path", format!("step 1 leaves the map at {next}"));
+        }
+        let i = self.map.index(next);
+        let terrain = &self.rules.terrains[self.map.tiles[i] as usize];
+        if !terrain.passable() {
+            return reject(
+                "path",
+                format!("{next} is {}, which land units can't enter", terrain.name),
+            );
+        }
+        if self.visible[i] && self.enemy_at(i) {
+            return reject("path", format!("{next} holds an enemy unit"));
+        }
+        if terrain.move_cost > mp {
+            return reject(
+                "no_mp",
+                format!("the path costs {} MP but unit {id} has {mp}", terrain.move_cost),
+            );
+        }
+        let friends = self.stacked(i, id);
+        if friends >= self.rules.c.stack_limit {
+            return reject("stack_full", format!("{next} already holds {friends} units"));
+        }
+        if self.enemy_at(i) {
+            self.units[ui].mp = 0;
+            self.reveal(next, 0, out);
+            out.push(format!("PART {} {} ambush", from.q, from.r));
+            return Ok(());
+        }
+        let u = &mut self.units[ui];
+        (u.mp, u.carrier, u.moved, u.fort) = (0, 0, true, 0);
+        self.relocate(ui, next);
+        let radius = self.unit_vision(ui);
+        self.reveal(next, radius, out);
+        out.push(format!("OK {} {} 0", next.q, next.r));
+        Ok(())
+    }
+
     fn order_attack(&mut self, t: &[&str], out: &mut Vec<String>) -> Result<(), Reject> {
         if t.len() != 3 {
             return reject("syntax", "usage: A <unit> <target>");
@@ -819,6 +933,7 @@ impl Game {
         let target = number(t[2], "target id")?;
         let ai = self.own_unit(id)?;
         self.check_ready(ai)?;
+        self.check_ashore(ai, "attack")?;
         let (aty, a_hex, a_hp) = (self.units[ai].ty, self.units[ai].hex, self.units[ai].hp);
         let at = &self.rules.units[aty];
         if at.no_move_attack && self.units[ai].moved {
@@ -832,6 +947,15 @@ impl Game {
             _ => return reject("no_target", format!("there is no visible enemy unit {target}")),
         };
         let (dty, d_hex, d_hp) = (self.units[di].ty, self.units[di].hex, self.units[di].hp);
+        if self.units[di].carrier != 0 {
+            return reject(
+                "aboard",
+                format!(
+                    "unit {target} is aboard transport {}; only the transport can be attacked",
+                    self.units[di].carrier
+                ),
+            );
+        }
         if self.rules.damage[aty][dty] == 0 {
             return reject(
                 "no_damage",
@@ -883,6 +1007,7 @@ impl Game {
         let id = number(t[1], "unit id")?;
         let ui = self.own_unit(id)?;
         self.check_ready(ui)?;
+        self.check_ashore(ui, "capture")?;
         let (hex, hp, ty) = (self.units[ui].hex, self.units[ui].hp, self.units[ui].ty);
         if !self.rules.units[ty].capture {
             return reject(
@@ -1002,10 +1127,15 @@ impl Game {
         if self.enemy_at(i) {
             return reject("city_used", format!("an enemy unit stands on city {ci}"));
         }
-        let here = self.occupants[i].len();
-        if here as u32 >= self.rules.c.stack_limit {
-            return reject("stack_full", format!("city {ci} already holds {here} units"));
-        }
+        let at = if self.rules.units[ty].naval {
+            self.launch_hex(ci)?
+        } else {
+            let here = self.stacked(i, 0);
+            if here >= self.rules.c.stack_limit {
+                return reject("stack_full", format!("city {ci} already holds {here} units"));
+            }
+            hex
+        };
         let (cost, name) = (self.rules.units[ty].cost, &self.rules.units[ty].name);
         let p = self.player as usize;
         if self.rules.supply() {
@@ -1029,11 +1159,39 @@ impl Game {
         }
 
         self.cities[ci].built = true;
-        let id = self.spawn(self.player, ty, hex, true);
+        let id = self.spawn(self.player, ty, at, true);
         let radius = self.unit_vision(self.units.len() - 1);
-        self.reveal(hex, radius, out);
+        self.reveal(at, radius, out);
         out.push(format!("OK {id}"));
         Ok(())
+    }
+
+    /// Where city `ci` puts a new ship: the first hex next to it, in
+    /// direction order, that ships can enter, with room and no enemy units
+    /// (STRATEGIC.md §6). A city with such hexes next to it is a port.
+    fn launch_hex(&self, ci: usize) -> Result<Hex, Reject> {
+        let mut port = false;
+        for h in self.cities[ci].hex.neighbors() {
+            if !self.map.contains(h) {
+                continue;
+            }
+            let i = self.map.index(h);
+            if self.rules.terrains[self.map.tiles[i] as usize].naval_move_cost == 0 {
+                continue;
+            }
+            port = true;
+            if !self.enemy_at(i) && self.stacked(i, 0) < self.rules.c.stack_limit {
+                return Ok(h);
+            }
+        }
+        if port {
+            reject("stack_full", format!("no water next to city {ci} has room for a ship"))
+        } else {
+            reject(
+                "no_port",
+                format!("city {ci} isn't next to water, so it can't build ships"),
+            )
+        }
     }
 
     /// The unit and amount in an `L` or `U` order, after the checks both share.
@@ -1048,6 +1206,7 @@ impl Game {
         };
         let ui = self.own_unit(id)?;
         self.check_ready(ui)?;
+        self.check_ashore(ui, "load or unload")?;
         let ty = &self.rules.units[self.units[ui].ty];
         if !ty.carry {
             return reject("cannot_carry", format!("{}s can't carry goods", ty.name));
@@ -1148,6 +1307,70 @@ impl Game {
         Ok(())
     }
 
+    /// Rejects an order a unit aboard a transport can't carry out.
+    fn check_ashore(&self, i: usize, what: &str) -> Result<(), Reject> {
+        let u = &self.units[i];
+        if u.carrier != 0 {
+            return reject(
+                "aboard",
+                format!("unit {} is aboard transport {} and can't {what}", u.id, u.carrier),
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether `player` owns a city on the map hex `hex`.
+    fn own_city_at(&self, hex: Hex, player: u8) -> bool {
+        self.map.contains(hex)
+            && self.city_at[self.map.index(hex)].is_some_and(|ci| self.cities[ci as usize].owner == player)
+    }
+
+    /// Ids of the units aboard transport `id`, in occupant order.
+    pub fn aboard(&self, id: u32) -> Vec<u32> {
+        let Some(t) = self.unit(id) else {
+            return Vec::new();
+        };
+        self.occupants[self.map.index(t.hex)]
+            .iter()
+            .copied()
+            .filter(|&o| self.units[self.unit_idx(o).expect("occupants are live units")].carrier == id)
+            .collect()
+    }
+
+    /// How many of the current player's units on the hex at storage index
+    /// `i` count toward the stack limit: all but those aboard transports,
+    /// and but unit `except`.
+    fn stacked(&self, i: usize, except: u32) -> u32 {
+        self.occupants[i]
+            .iter()
+            .filter(|&&o| {
+                let u = &self.units[self.unit_idx(o).expect("occupants are live units")];
+                o != except && u.owner == self.player && u.carrier == 0
+            })
+            .count() as u32
+    }
+
+    /// Whether the hex at storage index `i` holds one of the current
+    /// player's transports.
+    fn transport_at(&self, i: usize) -> bool {
+        self.occupants[i].iter().any(|&o| {
+            let u = &self.units[self.unit_idx(o).expect("occupants are live units")];
+            u.owner == self.player && self.rules.units[u.ty].transport
+        })
+    }
+
+    /// The current player's lowest-numbered transport with room on the hex
+    /// at storage index `i`.
+    fn transport_with_room(&self, i: usize) -> Option<u32> {
+        let max = self.rules.c.passengers_max as usize;
+        let mut ids: Vec<u32> = self.occupants[i].clone();
+        ids.sort_unstable();
+        ids.into_iter().find(|&o| {
+            let u = &self.units[self.unit_idx(o).expect("occupants are live units")];
+            u.owner == self.player && self.rules.units[u.ty].transport && self.aboard(o).len() < max
+        })
+    }
+
     fn has_unit_of(&self, hex: Hex, player: u8) -> bool {
         self.occupants[self.map.index(hex)]
             .iter()
@@ -1172,7 +1395,7 @@ impl Game {
             (!visible_only || self.visible[i])
                 && self.occupants[i].iter().any(|&id| {
                     let u = &self.units[self.unit_idx(id).expect("occupants are live units")];
-                    u.owner != self.player && self.rules.units[u.ty].zoc
+                    u.owner != self.player && u.carrier == 0 && self.rules.units[u.ty].zoc
                 })
         })
     }
@@ -1191,6 +1414,16 @@ impl Game {
     fn unit_vision(&self, i: usize) -> u32 {
         let u = &self.units[i];
         self.rules.units[u.ty].vision + self.rules.terrains[self.map.terrain_at(u.hex)].vision_bonus
+    }
+
+    /// The vision of unit `i` together with the units aboard it, which all
+    /// see from the same hex.
+    fn stack_vision(&self, i: usize) -> u32 {
+        let aboard = self.aboard(self.units[i].id);
+        aboard
+            .into_iter()
+            .map(|o| self.unit_vision(self.unit_idx(o).expect("passengers are live units")))
+            .fold(self.unit_vision(i), u32::max)
     }
 
     /// Whether an observer at `from` with vision `radius` sees the map hex
@@ -1225,20 +1458,31 @@ impl Game {
         }
     }
 
+    /// Moves unit `i` to `to`, with everything aboard it.
     fn relocate(&mut self, i: usize, to: Hex) {
         let id = self.units[i].id;
         let from = self.map.index(self.units[i].hex);
-        self.occupants[from].retain(|&o| o != id);
+        let mut moving = self.aboard(id);
+        moving.insert(0, id);
+        self.occupants[from].retain(|o| !moving.contains(o));
         let dest = self.map.index(to);
-        self.occupants[dest].push(id);
-        self.units[i].hex = to;
+        for o in moving {
+            self.occupants[dest].push(o);
+            let k = self.unit_idx(o).expect("moving units are live");
+            self.units[k].hex = to;
+        }
     }
 
+    /// Removes a unit. A transport sinks with everything aboard it.
     fn remove_unit(&mut self, id: u32) {
+        let aboard = self.aboard(id);
         if let Some(i) = self.unit_idx(id) {
             let u = self.units.remove(i);
             let at = self.map.index(u.hex);
             self.occupants[at].retain(|&o| o != id);
+        }
+        for o in aboard {
+            self.remove_unit(o);
         }
     }
 
@@ -1274,6 +1518,20 @@ impl Game {
             let cargo = u.wheat as u64 + u.bread as u64;
             if cargo > if t.carry { self.rules.c.cargo_max as u64 } else { 0 } {
                 return Err(format!("unit {} carries {} wheat and {} bread", u.id, u.wheat, u.bread));
+            }
+            let terrain = &self.rules.terrains[self.map.terrain_at(u.hex)];
+            if u.carrier != 0 {
+                let ok = self.unit(u.carrier).is_some_and(|c| {
+                    c.owner == u.owner && c.hex == u.hex && c.carrier == 0 && self.rules.units[c.ty].transport
+                });
+                if !ok || t.naval {
+                    return Err(format!("unit {} is aboard {}, which can't carry it", u.id, u.carrier));
+                }
+            } else if terrain.cost_for(t.naval) == 0 {
+                return Err(format!("unit {} stands on {}", u.id, terrain.name));
+            }
+            if t.transport && self.aboard(u.id).len() as u32 > self.rules.c.passengers_max {
+                return Err(format!("transport {} carries too many units", u.id));
             }
         }
         for s in &self.sites {

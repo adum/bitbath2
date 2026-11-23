@@ -275,12 +275,25 @@ fn play_scenario(sc: &Value, mut g: Game) {
     }
 }
 
-/// The supply rules of the strategic ruleset (STRATEGIC.md §4, §5). Cities,
-/// sites, and units are given as in `CITY`, `SITE`, and `UNIT` lines, and a
-/// unit may end with what it did on its last turn: `M` moved, `A` attacked.
+/// The supply rules of the strategic ruleset (STRATEGIC.md §4, §5).
 #[test]
 fn supply_vectors() {
-    let v = load("supply.json");
+    strategic_vectors("supply.json");
+}
+
+/// Ships: ports, boarding, landing, sinking, and upkeep at sea
+/// (STRATEGIC.md §6).
+#[test]
+fn ship_vectors() {
+    strategic_vectors("ships.json");
+}
+
+/// Plays a file of strategic scenarios. Cities, sites, and units are given
+/// as in `CITY`, `SITE`, and `UNIT` lines, and a unit may end with what it
+/// did on its last turn: `M` moved, `A` attacked. A unit aboard a transport
+/// comes after it.
+fn strategic_vectors(file: &str) {
+    let v = load(file);
     let map_lines = strings(&v["map"]);
     for sc in list(&v["scenarios"]) {
         let name = sc["name"].as_str().unwrap();
@@ -298,7 +311,7 @@ fn supply_vectors() {
             let city = &mut g.cities[t[0] as usize];
             (city.owner, city.capturer, city.progress, city.bread) = (t[1] as u8, t[2] as u8, t[3], t[4]);
         }
-        for s in strings(&sc["sites"]) {
+        for s in sc.get("sites").map(strings).unwrap_or_default() {
             let t: Vec<u32> = s.split_whitespace().map(|x| x.parse().unwrap()).collect();
             let site = &mut g.sites[t[0] as usize];
             (site.owner, site.capturer, site.progress, site.wheat) = (t[1] as u8, t[2] as u8, t[3], t[4]);
@@ -308,9 +321,18 @@ fn supply_vectors() {
             let num = |i: usize| t[i].parse::<u32>().unwrap();
             let ty = g.rules.unit_index(t[2].chars().next().unwrap()).unwrap();
             let at = Hex::new(t[3].parse().unwrap(), t[4].parse().unwrap());
-            g.place(num(0), num(1) as u8, ty, at, num(5))
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
-            assert_eq!(num(7), 0, "{name}: no unit can be aboard a transport yet");
+            let placed = if num(7) == 0 {
+                g.place(num(0), num(1) as u8, ty, at, num(5))
+            } else {
+                g.place_aboard(num(0), ty, num(7), num(5))
+            };
+            placed.unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(
+                g.units.last().unwrap().hex,
+                at,
+                "{name}: unit {} is aboard elsewhere",
+                num(0)
+            );
             let last = t.get(11).copied().unwrap_or("-");
             let unit = g.units.last_mut().unwrap();
             (unit.fort, unit.wheat, unit.bread, unit.rations) = (num(6), num(8), num(9), num(10));
