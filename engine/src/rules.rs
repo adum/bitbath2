@@ -230,6 +230,7 @@ constants! {
     supply = 0,
     sites = 0,
     water_pct = 6,
+    map_layout = 0,
     start_bread = 300,
     city_bread = 10,
     site_output_min = 20,
@@ -253,6 +254,7 @@ pub const SUPPLY_CONSTANTS: &[&str] = &[
     "supply",
     "sites",
     "water_pct",
+    "map_layout",
     "start_bread",
     "city_bread",
     "site_output_min",
@@ -268,6 +270,14 @@ pub const SUPPLY_CONSTANTS: &[&str] = &[
     "ration_cost",
     "starve_hp",
 ];
+
+/// The names of the `map_layout` values, which pick the map generator
+/// (STRATEGIC.md §3). A config can give either the name or the number.
+pub const MAP_LAYOUTS: &[&str] = &["noise", "islands"];
+
+/// `map_layout` for the islands map: a home island in each corner and an
+/// island in the middle (STRATEGIC.md §3).
+pub const ISLANDS: u32 = 1;
 
 /// The terrain character that marks city hexes.
 pub const CITY_CHAR: char = 'C';
@@ -377,6 +387,15 @@ impl Rules {
                 .parse::<u32>()
                 .map_err(|_| format!("{key}: '{value}' is not a non-negative integer"))
         };
+        if key == "map_layout" {
+            self.c.map_layout = match MAP_LAYOUTS.iter().position(|&name| name == value) {
+                Some(i) => i as u32,
+                None => value
+                    .parse()
+                    .map_err(|_| format!("map_layout: '{value}' is not {}", MAP_LAYOUTS.join(" or ")))?,
+            };
+            return Ok(());
+        }
         if self.c.get(key).is_some() {
             self.c.set(key, num()?);
             return Ok(());
@@ -541,6 +560,12 @@ impl Rules {
         if c.water_pct > 90 {
             return Err("water_pct must be at most 90".into());
         }
+        if c.map_layout as usize >= MAP_LAYOUTS.len() {
+            return Err(format!("map_layout must be below {}", MAP_LAYOUTS.len()));
+        }
+        if c.map_layout == ISLANDS && !self.naval() {
+            return Err("the islands map needs ships: a transport type and a naval move cost".into());
+        }
         if c.supply == 1 {
             if c.site_output_min > c.site_output_max || c.site_cap_min > c.site_cap_max {
                 return Err("each site range needs its min at most its max".into());
@@ -650,6 +675,29 @@ mod tests {
         assert!(r.set("nope", "1").is_err());
         assert!(r.set("round_limit", "-1").is_err());
         r.validate().unwrap();
+    }
+
+    #[test]
+    fn map_layout_takes_a_name_or_a_number_and_islands_need_ships() {
+        let mut r = Rules::default();
+        r.set("map_layout", "islands").unwrap();
+        assert_eq!(r.c.map_layout, ISLANDS);
+        r.set("map_layout", "noise").unwrap();
+        assert_eq!(r.c.map_layout, 0);
+        r.set("map_layout", "1").unwrap();
+        assert_eq!(r.c.map_layout, ISLANDS);
+        assert!(r.set("map_layout", "atolls").is_err());
+        assert!(r.validate().is_err());
+        r.set("supply", "1").unwrap();
+        r.set("terrain.water.naval_move_cost", "1").unwrap();
+        r.set("unit.T", "transport 150 100 6 2 1 1 naval,transport").unwrap();
+        r.validate().unwrap();
+        r.set("map_layout", "2").unwrap();
+        assert!(r.validate().is_err());
+        // Only games with supply on send it.
+        r.set("map_layout", "islands").unwrap();
+        assert!(r.lines(false).contains(&"RULE map_layout 1".to_string()));
+        assert!(!Rules::default().lines(false).iter().any(|l| l.contains("map_layout")));
     }
 
     #[test]

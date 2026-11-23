@@ -1,6 +1,6 @@
 # Bitbath: Strategic Ruleset
 
-**Status:** design draft, 2026-11-22. Phases 1 and 2 (§12), supply and ships, are built and playable: `bitbath play --config configs/strategic.toml`. Their tournament results are in §12.
+**Status:** design draft, 2026-11-22. Phases 1 and 2 (§12), supply and ships, are built and playable: `bitbath play --config configs/strategic.toml`, or on the small islands map (§3) with `configs/islands.toml`. Their tournament results are in §12.
 
 - The choices agreed so far are listed in [§14](#14-agreed-so-far). Everything else is a proposal.
 - All numbers are starting values, to be tuned by tournaments as the default rules were.
@@ -59,6 +59,12 @@ The default game stays as it is.
   - A home is never a port itself, since the generator clears the impassable hexes around homes, water included. A player's first port has to be taken.
 - **Start:** each player gets `I, I, S` and a wagon on their home city, and `start_bread` in it.
 - **The default game's maps don't change.** The new generator parameters default to today's behavior.
+- **The islands map** is a small map for testing the resources and ships before the large maps, picked with `map_layout = "islands"`. [configs/islands.toml](configs/islands.toml) plays it at 40 × 30 with the strategic preset's rules.
+  - Each home stands in the middle of an island in its corner, with its site next to it, and a neutral port on the coast nearest the middle of the map. Taking the port is the opening.
+  - The middle of the map is an island with no city, holding the other sites in one patch. The two at the very middle touch: no hex is exactly at the middle, since maps are mirrored by a 180° turn and have an even height. Only wagons carried by transport can bring their wheat home.
+  - The sites by the homes get the middle of each range, and the sites in the middle the top of it: 100 wheat a turn each, piling up to 3,000.
+  - Everything else is sea. The seed shapes the coasts and terrain, and picks the port and the homes' sites.
+  - It needs `neutral_cities = 2`, `sites` of at least 4, and ships. `water_pct` doesn't apply.
 
 ## 4. Wheat and bread
 
@@ -219,6 +225,7 @@ New keys, with their values in the strategic preset and in the default game:
 | `supply` | 1 | 0 | 1 turns on wheat, bread, and rations (§4, §5), in place of gold, and allows ships (§6) |
 | `sites` | 32 | 0 | resource sites on generated maps, including the two next to the homes; must be even |
 | `water_pct` | 45 | 6 | how much of a generated map is water |
+| `map_layout` | 0 | 0 | the map generator: 0, `noise`, for the maps of SPEC §3.9 and above; 1, `islands`, for the islands map (§3). A config can give the name |
 | `start_bread` | 300 | – | bread in each home city at the start |
 | `city_bread` | 10 | – | bread a city makes per turn, unless an enemy unit is on or next to it |
 | `site_output_min` | 20 | – | the least wheat a site grows per turn |
@@ -395,6 +402,20 @@ So with these bots, ships decide a war across water, and islands are easy prizes
 - **On ordinary maps** the fix changes little. On 6 of them, the fixed bot beat the bot from before it 7–5, and sent no invalid orders, where the old one sent 48.
 - **Still to fix:** on seed 5, the second player's ships starved by the dozen with either version, up to 24 in a game. And in 24 games between the naval bots on those maps, player 2 won 21, so the side still decides many of them.
 
+**The islands map** (§3), on 2026-11-23. The naval bot as it was never went near the middle island, since its expeditions sailed only for cities. In a game between two of them, each took its port, then player 2 landed on player 1's island and won by elimination in round 38. So the bot learned three things:
+
+- **Sites overseas.** Sites it doesn't hold, on landmasses where no one holds a city, are destinations for its expeditions, so that a ferry could haul from them. A site is worth as much as a neutral city for every 100 wheat a turn it grows. Its own sites there count too, once enemy units land.
+- **Ferries.** On such a landmass, the units that took the sites stay by them as guards, and a transport ferries 1 to 4 wagons between the sites and a port. The first wagon of each trip takes bread for the guards, and all of them load wheat at the sites and unload it in the port.
+- **Garrisons.** If its home is on an island of 4 cities or fewer, expeditions leave 2 land units there for each city. Without them, the old bot beat the new one 18–2. While the new bot's army took the middle, the old one landed on its empty home island and won by elimination in about 30 rounds. A larger home landmass has the land army to defend it.
+
+Then the new bot played on 10 islands maps, each twice with the sides swapped, at most 500 rounds a game:
+
+- **Against the old bot it won 18–2.** 17 of its wins came by elimination, in rounds 39 to 391, and 1 at the round limit with 2 cities each, by the sites tiebreak, with the middle in its hands. The old bot's 2 wins were invasions, in rounds 54 and 65.
+- **Between two new bots, the middle decides most games.** On 8 maps, 7 games ended by elimination, in rounds 76 to 186. Each winner had ferried home 7,400 to 18,600 wheat, and in 6 of the 7 the loser had ferried none. The eighth reached round 500 with 2 cities each, and the side holding more sites won, though the other had ferried 8,300 wheat.
+- **The side decides who gets the middle.** Player 2 won 6 of the 8. Both convoys land there in the same round, player 1's first. Then, in 7 of the 8 games, player 2 struck first, 2 to 6 rounds before player 1 attacked at all. It's the same side bias as on the large maps, plainer.
+- **Time:** about 27 milliseconds a turn on average, and at most 119.
+- **On the large map, little changes.** On 6 maps, each twice with the sides swapped, at most 400 rounds a game, the new bot and the old one split 6–6, with 286 cities to 290. Earlier versions went 3–5 and 5–7 there: both kept a garrison on every landmass, and one also sent expeditions for sites on the enemy's own landmass.
+
 ### Work
 
 Done in phase 1:
@@ -419,6 +440,7 @@ Done in phase 2:
 - **Golden test vectors** in tests/vectors/ships.json, and random self-play that boards, lands, and sinks.
 - **The viewer** draws ships, shows how many units a transport carries, and describes ships in its rules panel.
 - **A naval reference bot,** [bots/naval_bot.py](bots/naval_bot.py): the supply bot, plus convoys of transports that carry the idle part of its army overseas, galleys that sink transports, bombard the coast, escort, and blockade, and wagons that stock its ports with bread for the ships. `--no-bombard` keeps its galleys off land units. Vanguard and the supply bot now cope with enemy ships.
+- **The islands map** (§3), a small map for testing the resources and ships, picked with `map_layout`. For it, the naval bot learned to take sites overseas, to ferry their wheat home, and to leave a garrison behind (results above).
 
 Still to do:
 
@@ -475,3 +497,7 @@ Settled on 2026-11-22:
 - **Later:** more warship types, and roads (§13).
 - **Phase 1 keeps the large preset's clock,** 2 seconds a turn, and measures how long games really take. The strategic clock gets set in phase 3 from those numbers.
   - *Why:* long games make the clock matter more than the round count. At 2 seconds a turn, a 2,000-round game can take over 2 hours if both bots use all their time, while bots that answer in a tenth of a second finish one in under 7 minutes. That decides how many tournament games fit in a day.
+
+Settled on 2026-11-23:
+
+- **A small islands map first** (§3), to test the resources and ships before building out much larger maps: two homes on islands in opposite corners, each with a port and a site, and one rich patch of sites on an island in the middle with no city.

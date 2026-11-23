@@ -4,12 +4,22 @@ It plays as the supply bot does on land, and adds a navy:
 
 - Expeditions. Its destinations are the cities on landmasses where it holds
   no city, and its own cities on landmasses where the enemy still holds
-  some, which need reinforcing. Transports wait off its ports while land
-  units walk over and board: first units with nothing left to take on
-  their own landmass, then a share of the rest. Loaded transports wait for
-  each other and sail as a convoy, all for one destination at a time, so
-  that they land together. Units land on the city if they can, or as near
-  it as they can, and take it. The empty transports go back for more.
+  some, which need reinforcing. So are the resource sites on landmasses
+  where it holds no city: those it doesn't hold, and its own where enemy
+  units have landed. Transports wait off its ports while land units walk
+  over and board: first units with nothing left to take on their own
+  landmass, then a share of the rest. Loaded transports wait for each other
+  and sail as a convoy, all for one destination at a time, so that they
+  land together. Units land on the city or site if they can, or as near it
+  as they can, and take it. The empty transports go back for more.
+- Ferries. On each landmass where it holds sites but no city, the units
+  that took them stay by them as guards, and a transport ferries wagons
+  between the sites and a port. The wagons take bread out for the guards,
+  load wheat at the sites, and unload it in the port, where it becomes
+  bread.
+- Garrisons. If its home is on an island of 4 cities or fewer, expeditions
+  leave 2 land units there for each city, so that an enemy landing doesn't
+  find it empty.
 - Galleys. Each turn a galley strikes the best target it can reach: a
   transport above all, since everything aboard sinks with it, then enemy
   galleys it would beat, then enemy units on the coast. With nothing to
@@ -26,6 +36,7 @@ as the supply bot.
 Usage: python bots/naval_bot.py [--no-bombard] [--no-haul]
 """
 
+import math
 import os
 import sys
 import traceback
@@ -70,6 +81,20 @@ PORT_STOCK, STOCK_FROM = 1000, 800
 # A transport that gives up waiting rests this many rounds before it takes
 # on a new crew.
 REST = 10
+# A site that grows this much wheat a turn is worth as much as a neutral
+# city to an expedition.
+SITE_PAR = 100
+# A ferry waits at the island this many turns for its wagons to fill up,
+# and then leaves with those that have some wheat. Each wagon goes back
+# aboard once it has less room left than MIN_ROOM.
+FERRY_WAIT, MIN_ROOM = 6, 150
+# Bread the first wagon of each ferry trip takes for each guard on the
+# island, which the guards eat while it stands by them.
+GUARD_BREAD = 60
+# Expeditions leave GARRISON land units for each city on the home island,
+# if it has HOME_ISLAND cities or fewer, so that an enemy landing doesn't
+# find it empty. A larger home landmass has the land army to defend it.
+GARRISON, HOME_ISLAND = 2, 4
 
 
 class NavalBot(sb.SupplyBot):
@@ -90,17 +115,24 @@ class NavalBot(sb.SupplyBot):
         # Landmasses and seas: each land hex's and water hex's area.
         self.land = self.areas(lambda h: m.passable(h))
         self.sea = self.areas(lambda h: m.navigable(h))
+        # The home island: the landmass the home city starts on, if it's small.
+        homes = {self.land.get(h) for _, h, owner in m.cities if owner == self.player}
+        self.home_island = {land for land in homes
+                            if sum(1 for _, h, _ in m.cities if self.land.get(h) == land) <= HOME_ISLAND}
         # Water next to land, where transports put units ashore.
         self.coast = [h for h in self.sea if any(n in self.land for n in bb.neighbors(h))]
         # The seas next to each port.
         self.port_seas = {cid: {self.sea[n] for n in bb.neighbors(h) if n in self.sea} for cid, h, _ in m.cities}
-        self.landing_cache = {}     # city id -> {water hex: walk from there to the city}
+        self.landing_cache = {}     # destination -> {water hex: walk from there to it}
         self.sea_fields = {}        # frozenset of goal hexes -> distance field over water
         self.voyages = {}           # transport id -> {"phase", "port", "waited"}
         self.crew_of = {}           # land unit id -> the transport it's to board
-        self.campaigns = {}         # sea -> the city convoys on it sail for
+        self.campaigns = {}         # sea -> the destination convoys on it sail for
+        self.ferries = {}           # transport id -> {"isle", "port", "phase", "waited"}
+        self.haulers = {}           # wagon id -> the landmass whose sites it hauls from
+        self.hauls_wanted = 0       # wagons the ferries want, for building
         self.ships_seen = {}        # enemy ship id -> round last seen
-        self.tally = {"landed": 0, "sunk": 0, "bombarded": 0}
+        self.tally = {"landed": 0, "sunk": 0, "bombarded": 0, "ferried": 0}
         self.stock = {}             # wagon id -> the port it carries bread to
         self.useful = set()         # seas with somewhere worth sailing to
 
@@ -155,10 +187,20 @@ class NavalBot(sb.SupplyBot):
 
     def supply_wagons(self):
         wagons = super().supply_wagons()
-        return [w for w in wagons if w.id not in self.stock] if self.naval else wagons
+        if not self.naval:
+            return wagons
+        return [w for w in wagons if w.id not in self.stock and w.id not in self.haulers]
 
     def wagons_wanted(self):
-        return super().wagons_wanted() + (len(self.stock) if self.naval else 0)
+        return super().wagons_wanted() + (len(self.stock) + self.hauls_wanted if self.naval else 0)
+
+    def haul_sites(self):
+        # Sites on landmasses where we hold no city are the ferries' to haul.
+        sites = super().haul_sites()
+        if not self.naval:
+            return sites
+        held = {self.land.get(c.hex) for c in self.state.my_cities()}
+        return [x for x in sites if self.land.get(x.hex) in held]
 
     def advance(self):
         if self.naval:
@@ -169,6 +211,13 @@ class NavalBot(sb.SupplyBot):
             except Exception:
                 traceback.print_exc()
         super().advance()
+        if self.naval:
+            try:
+                self.guard_sites()
+            except bb.GameOver:
+                raise
+            except Exception:
+                traceback.print_exc()
 
     def run_stockers(self):
         """One wagon per port in need carries bread to it from the richest
@@ -183,7 +232,8 @@ class NavalBot(sb.SupplyBot):
             if not rich:
                 continue
             wagons = [w for w in s.my_units() if self.types[w.type].carry and not w.fresh and w.id not in self.stock
-                      and not w.wheat and self.land.get(w.hex) == self.land.get(port.hex)]
+                      and w.id not in self.haulers and not w.wheat
+                      and self.land.get(w.hex) == self.land.get(port.hex)]
             if wagons:
                 w = min(wagons, key=lambda w: (self.city_field[port.id].get(w.hex, 1 << 30), w.id))
                 self.stock[w.id] = port.id
@@ -247,9 +297,11 @@ class NavalBot(sb.SupplyBot):
 
     def hungry_units(self):
         # Units aboard eat once they land. Ships eat in port, and from wagons
-        # on the shore next to them.
+        # on the shore next to them. Guards eat from the ferries' wagons.
         out = [u for u in super().hungry_units() if not u.carrier and not self.types[u.type].naval]
         if self.naval:
+            isles = self.haul_isles()
+            out = [u for u in out if self.land.get(u.hex) not in isles]
             out += [u for u in self.state.my_units() if self.types[u.type].naval
                     and u.rations <= self.ration_max - sb.HUNGRY
                     and any(n in self.defense for n in bb.neighbors(u.hex))]
@@ -262,20 +314,21 @@ class NavalBot(sb.SupplyBot):
         for e in s.enemy_units():
             if self.types[e.type].naval:
                 self.ships_seen[e.id] = s.round
-        self.voyages = {t: v for t, v in self.voyages.items() if t in s.units}
+        self.voyages = {t: v for t, v in self.voyages.items() if t in s.units and t not in self.ferries}
         self.crew_of = {u: t for u, t in self.crew_of.items() if u in s.units and t in s.units}
         self.dests = self.destinations()
-        ids = {c.id for c in self.dests}
-        self.campaigns = {sea: cid for sea, cid in self.campaigns.items() if cid in ids}
+        self.campaigns = {sea: key for sea, key in self.campaigns.items() if key in self.dests}
         self.run_galleys()
         self.run_transports()
+        self.run_ferries()
         self.run_crews()
         self.fleet_report()
         self.debug_text("navy: %d transports, %d galleys, %d destinations, campaigns %s, %d crew; landed %d, "
-                        "sank %d ships, bombarded %d HP" % (
+                        "sank %d ships, bombarded %d HP; %d ferries, %d haulers, %d wheat ferried" % (
                             self.count(self.transport), self.count(self.galley), len(self.dests),
                             sorted(self.campaigns.values()),
-                            len(self.crew_of), self.tally["landed"], self.tally["sunk"], self.tally["bombarded"]))
+                            len(self.crew_of), self.tally["landed"], self.tally["sunk"], self.tally["bombarded"],
+                            len(self.ferries), len(self.haulers), self.tally["ferried"]))
 
     def fleet_report(self):
         """A line in the replay on each ship: its job, the units aboard, where it
@@ -284,8 +337,9 @@ class NavalBot(sb.SupplyBot):
         s = self.state
         parts = []
         for t in sorted((u for u in s.my_units() if self.types[u.type].naval), key=lambda u: u.id):
-            v = self.voyages.get(t.id, {})
-            parts.append("%s%d %s %d@%d,%d %dhp %dr" % (t.type, t.id, v.get("phase", "-"), len(s.passengers(t)),
+            v = self.voyages.get(t.id) or self.ferries.get(t.id) or {}
+            phase = ("ferry " if t.id in self.ferries else "") + v.get("phase", "-")
+            parts.append("%s%d %s %d@%d,%d %dhp %dr" % (t.type, t.id, phase, len(s.passengers(t)),
                                                        t.q, t.r, t.hp, t.rations))
         parts.append("room %d" % (self.units_fed() - len(s.my_units())))
         self.debug_text("fleet: " + "; ".join(parts))
@@ -300,19 +354,30 @@ class NavalBot(sb.SupplyBot):
             self.sea_fields[key] = self.distance_field(goals, blocked=set(), naval=True)
         return self.sea_fields[key]
 
-    def landings(self, cid):
-        """{water hex: walk from the land next to it to city cid}, for the
-        water from which units would land nearest the city."""
-        if cid not in self.landing_cache:
-            field = self.city_field[cid]
+    # Destinations are keys: ("city", id) or ("site", id).
+
+    def goal(self, key):
+        """The city or site a destination key names."""
+        kind, i = key
+        return self.state.cities[i] if kind == "city" else self.state.sites[i]
+
+    def goal_field(self, key):
+        kind, i = key
+        return self.city_field[i] if kind == "city" else self.site_field[i]
+
+    def landings(self, key):
+        """{water hex: walk from the land next to it to the destination}, for
+        the water from which units would land nearest it."""
+        if key not in self.landing_cache:
+            field = self.goal_field(key)
             best = {}
             for w in self.coast:
                 d = min((field[n] for n in bb.neighbors(w) if n in field), default=None)
                 if d is not None:
                     best[w] = d
             low = min(best.values(), default=0)
-            self.landing_cache[cid] = {w: d for w, d in best.items() if d <= low + 2}
-        return self.landing_cache[cid]
+            self.landing_cache[key] = {w: d for w, d in best.items() if d <= low + 2}
+        return self.landing_cache[key]
 
     def open_land(self):
         """Landmasses that hold cities we don't."""
@@ -320,19 +385,25 @@ class NavalBot(sb.SupplyBot):
 
     def destinations(self):
         """Cities we don't hold on landmasses where we hold none, and our
-        cities on landmasses where the enemy still holds some, which a
-        transport from one of our ports could reach."""
+        cities on landmasses where the enemy still holds some. Sites we don't
+        hold on landmasses where no one holds a city, which a ferry could
+        haul from, and our sites on such landmasses where enemy land units
+        stand. Those a transport from one of our ports could reach."""
         s, me = self.state, self.player
         held = {self.land.get(c.hex) for c in s.my_cities()}
         contested = {self.land.get(c.hex) for c in s.cities if c.owner not in (0, me)}
+        invaded = {self.land.get(e.hex) for e in s.enemy_units() if not e.carrier and not self.types[e.type].naval}
         seas = set().union(*[self.port_seas[c.id] for c in s.my_cities()]) if s.my_cities() else set()
         out = []
         for c in s.cities:
             land = self.land.get(c.hex)
             if (c.owner != me and land not in held) or (c.owner == me and land in contested):
-                if any(self.sea[w] in seas for w in self.landings(c.id)):
-                    out.append(c)
-        return out
+                out.append(("city", c.id))
+        for x in s.sites:
+            land = self.land.get(x.hex)
+            if land not in held and land not in contested and (x.owner != me or land in invaded):
+                out.append(("site", x.id))
+        return [key for key in out if any(self.sea[w] in seas for w in self.landings(key))]
 
     def ports(self, sea=None):
         """Our ports, or those on the given sea."""
@@ -461,7 +532,8 @@ class NavalBot(sb.SupplyBot):
         s = self.state
         sea = self.sea.get(g.hex)
         laden = [t for t in s.my_units() if t.type == self.transport and s.passengers(t)
-                 and self.sea.get(t.hex) == sea and self.voyages.get(t.id, {}).get("phase") == "sail"]
+                 and self.sea.get(t.hex) == sea and (self.voyages.get(t.id, {}).get("phase") == "sail"
+                                                     or self.ferries.get(t.id, {}).get("phase") in ("out", "back"))]
         if laden:
             t = min(laden, key=lambda t: (bb.distance(t.hex, g.hex), t.id))
             goals = [n for n in bb.neighbors(t.hex) if n in self.sea]
@@ -482,7 +554,8 @@ class NavalBot(sb.SupplyBot):
 
     def run_transports(self):
         s = self.state
-        transports = sorted((u for u in s.my_units() if u.type == self.transport), key=lambda u: u.id)
+        transports = sorted((u for u in s.my_units() if u.type == self.transport and u.id not in self.ferries),
+                            key=lambda u: u.id)
         ready = []
         for t in transports:
             v = self.voyages.setdefault(t.id, {"phase": "gather", "port": None, "waited": 0})
@@ -526,15 +599,15 @@ class NavalBot(sb.SupplyBot):
             if v["phase"] == "ready":
                 self.dock(t, v)
             elif v["phase"] == "sail":
-                cid = self.pick_target(t)
+                key = self.pick_target(t)
                 if t.rations < self.trip_home(t) + SEA_SPARE:
                     # Running out of food: put everyone ashore wherever they
                     # can get, and go home.
-                    self.land_anywhere(t, cid)
+                    self.land_anywhere(t, key)
                     if s.passengers(t) and self.dock(t, v):
                         self.land_home(t)
-                elif cid is not None:
-                    self.voyage(t, cid)
+                elif key is not None:
+                    self.voyage(t, key)
                 elif self.dock(t, v):
                     self.land_home(t)   # nowhere worth going: back to the land army
                 if t.id in s.units and not s.passengers(t):
@@ -546,14 +619,14 @@ class NavalBot(sb.SupplyBot):
         """Rations a transport needs to sail to its sea's campaign, or the
         best destination it could reach, and back."""
         sea = self.sea.get(t.hex)
-        cid = self.campaigns.get(sea)
-        if cid is None:
+        key = self.campaigns.get(sea)
+        if key is None:
             port = self.voyages[t.id]["port"]
             home = self.land.get(self.state.cities[port].hex) if port is not None else None
-            cid = self.best_destination(t.hex, home, MAX_TRANSPORTS * self.passengers_max * 150)
-        if cid is None:
+            key = self.best_destination(t.hex, home, MAX_TRANSPORTS * self.passengers_max * 150)
+        if key is None:
             return SEA_SPARE
-        d = self.sea_field([w for w in self.landings(cid) if self.sea[w] == sea]).get(t.hex)
+        d = self.sea_field([w for w in self.landings(key) if self.sea[w] == sea]).get(t.hex)
         if d is None:
             return SEA_SPARE
         return 2 * (2 * d // self.types[t.type].move + 2) + SEA_SPARE
@@ -606,42 +679,45 @@ class NavalBot(sb.SupplyBot):
         s = self.state
         sea = self.sea.get(at)
         best = None
-        for c in self.dests:
-            if self.land.get(c.hex) == home:
+        for key in self.dests:
+            x = self.goal(key)
+            if self.land.get(x.hex) == home:
                 continue    # units can walk there
-            spots = [w for w in self.landings(c.id) if self.sea[w] == sea]
+            spots = [w for w in self.landings(key) if self.sea[w] == sea]
             if not spots:
                 continue
-            if c.owner != self.player and self.threat.get(c.hex, 0) > ODDS * strength + 100:
+            if x.owner != self.player and self.threat.get(x.hex, 0) > ODDS * strength + 100:
                 continue
             d = self.sea_field(spots).get(at)
             if d is None:
                 continue
-            if c.owner == self.player:
+            if key[0] == "site":
+                value = sb.vb.NEUTRAL_VALUE * x.output / SITE_PAR
+            elif x.owner == self.player:
                 value = sb.vb.ENEMY_VALUE   # reinforcing the fight for the enemy's land
             else:
-                value = sb.vb.NEUTRAL_VALUE if c.owner == 0 else sb.vb.ENEMY_VALUE
-                if any(bb.distance(x.hex, c.hex) == 1 for x in s.sites):
+                value = sb.vb.NEUTRAL_VALUE if x.owner == 0 else sb.vb.ENEMY_VALUE
+                if any(bb.distance(y.hex, x.hex) == 1 for y in s.sites):
                     value *= 1.5
-            key = (value / (d / self.types[self.transport].move + 2), -c.id)
-            if best is None or key > best[0]:
-                best = (key, c.id)
+            rank = (value / (d / self.types[self.transport].move + 2), key)
+            if best is None or rank > best[0]:
+                best = (rank, key)
         return best and best[1]
 
-    def voyage(self, t, cid):
-        """Sails a loaded transport toward city cid's coast, and puts its
+    def voyage(self, t, key):
+        """Sails a loaded transport toward a destination's coast, and puts its
         units ashore once it's there."""
-        spots = self.landings(cid)
+        spots = self.landings(key)
         if t.hex not in spots:
             self.sail(t, self.sea_field([w for w in spots if self.sea[w] == self.sea[t.hex]]), self.danger())
         if t.id in self.state.units and t.hex in spots:
-            self.land_all(t, cid)
+            self.land_all(t, key)
 
-    def land_all(self, t, cid):
-        """Puts the units aboard ashore, as near city cid as they can get,
-        capturers first, and takes what they land on."""
+    def land_all(self, t, key):
+        """Puts the units aboard ashore, as near the destination as they can
+        get, capturers first, and takes what they land on."""
         s = self.state
-        field = self.city_field[cid]
+        field = self.goal_field(key)
         aboard = sorted(s.passengers(t), key=lambda u: (not self.types[u.type].capture, -u.hp, u.id))
         for u in aboard:
             if self.out_of_time():
@@ -657,10 +733,10 @@ class NavalBot(sb.SupplyBot):
                 if self.can_capture(u):
                     self.capture(u)
 
-    def land_anywhere(self, t, cid):
+    def land_anywhere(self, t, key):
         """Puts the units aboard ashore on any land next to the transport,
-        nearest city cid if it can."""
-        field = self.city_field[cid] if cid is not None else {}
+        nearest the destination if it can."""
+        field = self.goal_field(key) if key is not None else {}
         for u in self.state.passengers(t):
             options = self.reachable(u)
             if options:
@@ -681,6 +757,298 @@ class NavalBot(sb.SupplyBot):
                 if not u.carrier:
                     self.crew_of.pop(u.id, None)
 
+    # Ferries.
+
+    def haul_isles(self):
+        """{landmass: our sites there}, for the landmasses where we hold sites
+        but no city, so only wagons carried by transport can bring their
+        wheat home. Sites with an enemy on them don't count."""
+        s = self.state
+        held = {self.land.get(c.hex) for c in s.my_cities()}
+        out = {}
+        for x in s.my_sites():
+            land = self.land.get(x.hex)
+            if land not in held and x.hex not in self.enemy_hex:
+                out.setdefault(land, []).append(x)
+        return out
+
+    def isle_landings(self, isle):
+        """The water from which wagons land nearest the sites on a landmass."""
+        return self.landings(("site", min(x.id for x in self.state.sites if self.land.get(x.hex) == isle)))
+
+    def haulers_wanted(self, isle, port):
+        """Wagons enough to bring home the wheat of our sites on a landmass,
+        given the trip there from port and back."""
+        sites = self.haul_isles().get(isle, [])
+        field = self.sea_field(list(self.isle_landings(isle)))
+        d = min((field.get(n, 1 << 30) for n in bb.neighbors(port.hex)), default=1 << 30)
+        if not sites or d >= 1 << 30:
+            return 0
+        trip = 2 * (d / self.types[self.transport].move + 1) + 3
+        need = sum(x.output for x in sites) * trip / (0.8 * self.cargo_max)
+        return max(1, min(self.passengers_max, math.ceil(need)))
+
+    def free_transport(self, isle):
+        """A transport in port with no one aboard or coming, on a sea that
+        reaches the landmass, to become its ferry. None if there's none."""
+        s = self.state
+        spots = list(self.isle_landings(isle))
+        seas = {self.sea[w] for w in spots}
+        coming = set(self.crew_of.values())
+        options = []
+        for t in s.my_units():
+            v = self.voyages.get(t.id)
+            if (t.type != self.transport or v is None or v["phase"] != "gather" or v["port"] is None
+                    or s.passengers(t) or t.id in coming or self.sea.get(t.hex) not in seas):
+                continue
+            options.append((self.sea_field(spots).get(t.hex, 1 << 30), t.id))
+        return s.units[min(options)[1]] if options else None
+
+    def run_ferries(self):
+        """Gives each landmass where we hold sites but no city a ferry and
+        the wagons it needs, and runs the ferries."""
+        s = self.state
+        isles = self.haul_isles() if self.haul else {}
+        self.ferries = {t: f for t, f in self.ferries.items() if t in s.units}
+        self.haulers = {w: i for w, i in self.haulers.items() if w in s.units}
+        served = {f["isle"] for f in self.ferries.values()}
+        # The haulers of a landmass we've lost go back to the land army, but
+        # any still over there wait for a ferry to fetch them.
+        for wid, isle in list(self.haulers.items()):
+            w = s.units[wid]
+            if isle not in isles and isle not in served and not w.carrier and self.land.get(w.hex) != isle:
+                del self.haulers[wid]
+        for isle in sorted(isles):
+            if isle not in served:
+                t = self.free_transport(isle)
+                if t is not None:
+                    port = self.voyages.pop(t.id)["port"]
+                    self.ferries[t.id] = {"isle": isle, "port": port, "phase": "dock", "waited": 0}
+        self.claims = {}            # site id -> wheat the haulers mean to take this turn
+        self.hauls_wanted = 0
+        for tid in sorted(self.ferries):
+            if self.out_of_time():
+                return
+            t, f = s.units[tid], self.ferries[tid]
+            port = s.cities[f["port"]]
+            if f["isle"] in isles and port.owner == self.player:
+                want = self.haulers_wanted(f["isle"], port)
+                self.hauls_wanted += want
+                self.hire_haulers(f, want)
+            if not t.fresh:
+                self.run_ferry(t, f, isles)
+
+    def hire_haulers(self, f, want):
+        """Gives a ferry's landmass wagons from its port's landmass, up to
+        want in all, nearest the port first."""
+        s = self.state
+        want -= sum(1 for i in self.haulers.values() if i == f["isle"])
+        if want <= 0:
+            return
+        port = s.cities[f["port"]]
+        home = self.land.get(port.hex)
+        free = [w for w in s.my_units() if self.types[w.type].carry and not w.fresh and not w.carrier
+                and w.id not in self.stock and w.id not in self.haulers and not w.wheat
+                and self.land.get(w.hex) == home]
+        free.sort(key=lambda w: (self.city_field[port.id].get(w.hex, 1 << 30), w.id))
+        for w in free[:want]:
+            self.haulers[w.id] = f["isle"]
+            self.jobs.pop(w.id, None)
+
+    def run_ferry(self, t, f, isles):
+        """A ferry's turn. Docked in port, it waits while its wagons unload
+        wheat, take bread for the guards, and board. Then it sails to the
+        landmass and puts them ashore, waits there while they load wheat and
+        come back aboard, and sails home, where they land in the port."""
+        s = self.state
+        isle = f["isle"]
+        lost = isle not in isles
+
+        def mine():
+            return [s.units[w] for w, i in sorted(self.haulers.items()) if i == isle and w in s.units]
+
+        if f["phase"] == "dock":
+            there = self.dock(t, f)
+            port = s.cities[f["port"]]
+            home = self.land.get(port.hex)
+            if lost:
+                # Nothing to haul: everyone ashore, and the ferry goes back
+                # to carrying expeditions.
+                if there:
+                    self.land_home(t)
+                if not s.passengers(t):
+                    del self.ferries[t.id]
+                    self.voyages[t.id] = {"phase": "gather", "port": f["port"], "waited": 0}
+                return
+            for w in mine():
+                if not w.carrier and self.land.get(w.hex) == home:
+                    self.hauler_home(w, t, port, there)
+            aboard = [w for w in mine() if w.carrier == t.id]
+            behind = [w for w in mine() if not w.carrier and self.land.get(w.hex) == home]
+            if there and aboard and (not behind or f["waited"] >= WAIT):
+                f["phase"], f["waited"] = "out", 0
+            elif aboard:
+                f["waited"] += 1
+        if f["phase"] == "out":
+            if lost:
+                f["phase"] = "back"
+            else:
+                spots = self.isle_landings(isle)
+                goals = [w for w in spots if self.sea[w] == self.sea.get(t.hex)]
+                if t.hex not in spots and goals:
+                    self.sail(t, self.sea_field(goals), self.danger())
+                if t.id in s.units and t.hex in spots:
+                    for w in sorted(s.passengers(t), key=lambda u: u.id):
+                        self.hauler_land(w, isle)
+                    f["phase"], f["waited"] = "wait", 0
+        if f["phase"] == "wait" and t.id in s.units:
+            f["waited"] += 1
+            for w in mine():
+                if not w.carrier and self.land.get(w.hex) == isle:
+                    self.hauler_island(w, t, f, lost)
+            ashore = [w for w in mine() if not w.carrier and self.land.get(w.hex) == isle]
+            if not ashore or f["waited"] > 2 * FERRY_WAIT or (lost and f["waited"] > 2):
+                f["phase"] = "back"
+        if f["phase"] == "back" and t.id in s.units:
+            if self.dock(t, f):
+                port = s.cities[f["port"]]
+                for w in sorted(s.passengers(t), key=lambda u: u.id):
+                    self.hauler_ashore(w, port)
+                if not s.passengers(t):
+                    f["phase"], f["waited"] = "dock", 0
+
+    def richest(self, isle, w):
+        """Our site on the landmass with the most wheat not yet claimed this
+        turn, the nearest to w on ties. Claims what w has room for there."""
+        sites = self.haul_isles().get(isle)
+        if not sites:
+            return None
+        claims = self.claims
+        site = max(sites, key=lambda x: (x.wheat - claims.get(x.id, 0), -bb.distance(w.hex, x.hex), -x.id))
+        claims[site.id] = claims.get(site.id, 0) + self.cargo_max - w.wheat - w.bread
+        return site
+
+    def load_site(self, w, site):
+        if self.cargo_max - w.wheat - w.bread > 0 and site.wheat > 0 and site.owner == self.player:
+            self.load(w)
+
+    def guard_need(self, w):
+        """Bread a hauler takes out: the first hauler of each landmass takes
+        enough for the guards there, and the others take none."""
+        isle = self.haulers.get(w.id)
+        if w.id != min((wid for wid, i in self.haulers.items() if i == isle), default=None):
+            return 0
+        guards = sum(1 for u in self.state.my_units() if self.land.get(u.hex) == isle and not u.carrier
+                     and not self.types[u.type].carry and not self.types[u.type].naval)
+        return min(self.cargo_max // 2, GUARD_BREAD * guards)
+
+    def take_bread(self, w, port):
+        """Loads the bread a hauler in port should take out, if the port can
+        spare enough to be worth it."""
+        amount = min(self.guard_need(w) - w.bread, port.bread - self.keep(port),
+                     self.cargo_max - w.wheat - w.bread)
+        if amount >= 50:
+            self.load(w, amount)
+
+    def unload_wheat(self, w):
+        if w.wheat:
+            self.tally["ferried"] += w.wheat
+            self.unload(w, w.wheat)
+
+    def hauler_home(self, w, t, port, there):
+        """A hauler on the port's landmass unloads any wheat in the port,
+        takes bread for the guards, and boards the ferry once it's in port."""
+        if w.fresh or w.mp <= 0:
+            return
+        if w.wheat or (self.guard_need(w) - w.bread >= 50 and port.bread - self.keep(port) >= 50):
+            if w.hex != port.hex:
+                if bb.distance(w.hex, port.hex) == 1:
+                    self.make_room(port, self.city_field[port.id])
+                self.walk(w, self.city_field[port.id], sb.WAGON_CAUTION)
+            if w.hex == port.hex:
+                self.unload_wheat(w)
+                self.take_bread(w, port)
+            return
+        if there:
+            reach = self.reachable(w)
+            if t.hex in reach:
+                self.go(w, reach[t.hex])
+                return
+        goals = [n for n in [port.hex] + bb.neighbors(port.hex) if n in self.defense]
+        if w.hex not in goals:
+            self.walk(w, self.distance_field(goals), sb.WAGON_CAUTION)
+
+    def hauler_land(self, w, isle):
+        """Puts a hauler ashore as near as it can get to the site it'll load
+        at, and loads there if it lands on it."""
+        site = self.richest(isle, w)
+        if site is None:
+            return
+        field = self.site_field[site.id]
+        options = {h: p for h, p in self.reachable(w).items() if h in field}
+        if not options:
+            return
+        h = min(options, key=lambda h: (field[h], h))
+        self.go(w, options[h])
+        if not w.carrier and w.hex == site.hex:
+            self.load_site(w, site)
+
+    def hauler_island(self, w, t, f, lost):
+        """A hauler on the landmass loads wheat at our sites there, and goes
+        back aboard once it's nearly full, or once the ferry has waited long
+        enough and it has some."""
+        if w.fresh or w.mp <= 0:
+            return
+        room = self.cargo_max - w.wheat - w.bread
+        site = None if lost else self.richest(f["isle"], w)
+        if site is not None and room >= MIN_ROOM and not (f["waited"] >= FERRY_WAIT and w.wheat):
+            if w.hex != site.hex:
+                self.walk(w, self.site_field[site.id], sb.WAGON_CAUTION)
+            if w.hex == site.hex:
+                self.load_site(w, site)
+            return
+        reach = self.reachable(w)
+        if t.hex in reach:
+            self.go(w, reach[t.hex])
+            return
+        goals = [n for n in bb.neighbors(t.hex) if n in self.defense]
+        if goals:
+            self.walk(w, self.distance_field(goals), sb.WAGON_CAUTION)
+
+    def hauler_ashore(self, w, port):
+        """Lands a hauler from the ferry in port, where it unloads its wheat
+        and takes bread for the next trip."""
+        if w.fresh:
+            return
+        reach = self.reachable(w)
+        if port.hex not in reach:
+            self.make_room(port, self.city_field[port.id])
+            reach = self.reachable(w)
+        if port.hex in reach:
+            self.go(w, reach[port.hex])
+        elif reach:
+            field = self.city_field[port.id]
+            self.go(w, reach[min(reach, key=lambda h: (field.get(h, 1 << 30), h))])
+        if not w.carrier and w.hex == port.hex:
+            self.unload_wheat(w)
+            self.take_bread(w, port)
+
+    def guard_sites(self):
+        """Units on landmasses where we hold sites but no city stand on or by
+        those sites, where the ferries' wagons feed them."""
+        isles = self.haul_isles()
+        if not isles:
+            return
+        self.refresh()
+        for u in self.ready():
+            if u.mp <= 0 or self.out_of_time():
+                continue
+            sites = isles.get(self.land.get(u.hex))
+            if not sites or any(bb.distance(u.hex, x.hex) <= 1 for x in sites):
+                continue
+            goals = [h for x in sites for h in [x.hex] + bb.neighbors(x.hex) if h in self.defense]
+            self.walk(u, self.distance_field(goals))
+
     # Crews.
 
     def run_crews(self):
@@ -697,6 +1065,15 @@ class NavalBot(sb.SupplyBot):
             # of the rest, only a share.
             budget = int(len(army) * CREW_SHARE) - sum(
                 1 for u in self.crew_of if self.land.get(s.units[u].hex) in open_land)
+            # Units each landmass can spare: on the home island, those beyond
+            # its garrison.
+            spare = {}
+            for u in army:
+                if not u.carrier and u.id not in self.crew_of:
+                    spare[self.land.get(u.hex)] = spare.get(self.land.get(u.hex), 0) + 1
+            for c in s.my_cities():
+                if self.land.get(c.hex) in self.home_island:
+                    spare[self.land.get(c.hex)] = spare.get(self.land.get(c.hex), 0) - GARRISON
             busy = self.busy | set(self.crew_of)
             for t in gathering:
                 port = s.cities[self.voyages[t.id]["port"]]
@@ -717,10 +1094,14 @@ class NavalBot(sb.SupplyBot):
                 for u in free:
                     if want <= 0:
                         break
-                    if self.land.get(u.hex) in open_land:
+                    land = self.land.get(u.hex)
+                    if spare.get(land, 0) <= 0:
+                        continue
+                    if land in open_land:
                         if budget <= 0:
                             break
                         budget -= 1
+                    spare[land] -= 1
                     self.crew_of[u.id] = t.id
                     busy.add(u.id)
                     want -= 1
@@ -752,12 +1133,17 @@ class NavalBot(sb.SupplyBot):
         idle = sum(1 for u in s.my_units() if not self.types[u.type].naval and not self.types[u.type].carry
                    and self.land.get(u.hex) not in open_land)
         strength = MAX_TRANSPORTS * self.passengers_max * self.types[self.transport].cost
-        # Seas with somewhere worth sailing to, from the ports on them.
+        # Seas with somewhere worth sailing to, from the ports on them, and
+        # those that reach the landmasses only ferries can haul from.
         useful = set()
         for c in self.ports():
             for sea in self.port_seas[c.id]:
                 if self.best_destination(self.port_water_of(c, sea)[0], self.land.get(c.hex), strength) is not None:
                     useful.add(sea)
+        isles = self.haul_isles() if self.haul else {}
+        ours = set().union(*[self.port_seas[c.id] for c in self.ports()]) if self.ports() else set()
+        for isle in isles:
+            useful |= {self.sea[w] for w in self.isle_landings(isle)} & ours
         self.useful = useful
         # Seas where galleys have work: those, and those with enemy ports or ships.
         warlike = set(useful)
@@ -772,6 +1158,8 @@ class NavalBot(sb.SupplyBot):
         want_t = 0
         if useful:
             want_t = min(MAX_TRANSPORTS, max(1, -(-idle // max(1, self.passengers_max))), 1 + stocked // SHIP_BREAD)
+        # Each landmass only ferries can haul from wants a ferry of its own.
+        want_t = min(MAX_TRANSPORTS, want_t + len(isles))
         want_g = min(MAX_GALLEYS, (want_t + 1) // 2 + (seen + 1) // 2) if self.galley and warlike else 0
         have_t = sum(1 for u in s.my_units() if u.type == self.transport and self.sea.get(u.hex) in useful)
         have_g = self.count(self.galley)
