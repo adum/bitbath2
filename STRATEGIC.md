@@ -60,7 +60,7 @@ The default game stays as it is.
 - **Start:** each player gets `I, I, S` and a wagon on their home city, and `start_bread` in it.
 - **The default game's maps don't change.** The new generator parameters default to today's behavior.
 - **The islands map** is a small map for testing the resources and ships before the large maps, picked with `map_layout = "islands"`. [configs/islands.toml](configs/islands.toml) plays it at 40 × 30 with the strategic preset's rules.
-  - Each home stands in the middle of an island in its corner, with its site next to it, and a neutral port on the coast nearest the middle of the map. Taking the port is the opening.
+  - Each home island spreads from the home into its corner of the map, 120 to 150 hexes at 40 × 30. The home has its site next to it, and a neutral port a few hexes away on the coast facing the middle of the map. Taking the port is the opening.
   - The middle of the map is an island with no city, holding the other sites in one patch. The two at the very middle touch: no hex is exactly at the middle, since maps are mirrored by a 180° turn and have an even height. Only wagons carried by transport can bring their wheat home.
   - The sites by the homes get the middle of each range, and the sites in the middle the top of it: 100 wheat a turn each, piling up to 3,000.
   - Everything else is sea. The seed shapes the coasts and terrain, and picks the port and the homes' sites.
@@ -402,7 +402,7 @@ So with these bots, ships decide a war across water, and islands are easy prizes
 - **On ordinary maps** the fix changes little. On 6 of them, the fixed bot beat the bot from before it 7–5, and sent no invalid orders, where the old one sent 48.
 - **Still to fix:** on seed 5, the second player's ships starved by the dozen with either version, up to 24 in a game. And in 24 games between the naval bots on those maps, player 2 won 21, so the side still decides many of them.
 
-**The islands map** (§3), on 2026-11-23. The naval bot as it was never went near the middle island, since its expeditions sailed only for cities. In a game between two of them, each took its port, then player 2 landed on player 1's island and won by elimination in round 38. So the bot learned three things:
+**The islands map** (§3), on 2026-11-23. These games were on the map's first version, whose home islands were round, about 40 to 60 hexes, before they spread into their corners. The naval bot as it was never went near the middle island, since its expeditions sailed only for cities. In a game between two of them, each took its port, then player 2 landed on player 1's island and won by elimination in round 38. So the bot learned three things:
 
 - **Sites overseas.** Sites it doesn't hold, on landmasses where no one holds a city, are destinations for its expeditions, so that a ferry could haul from them. A site is worth as much as a neutral city for every 100 wheat a turn it grows. Its own sites there count too, once enemy units land.
 - **Ferries.** On such a landmass, the units that took the sites stay by them as guards, and a transport ferries 1 to 4 wagons between the sites and a port. The first wagon of each trip takes bread for the guards, and all of them load wheat at the sites and unload it in the port.
