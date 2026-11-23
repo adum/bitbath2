@@ -1,11 +1,12 @@
-# The strategic ruleset (STRATEGIC.md), phase 1: wheat, bread, wagons, and
-# rations on the large map, with today's water. Games are meant to last
-# hundreds or thousands of rounds and end by elimination.
+# The strategic ruleset (STRATEGIC.md), phases 1 and 2: wheat, bread,
+# wagons, and rations, and ships on a large map with seas and islands. Games
+# are meant to last hundreds or thousands of rounds and end by elimination.
 
 map_width = 80
 map_height = 60            # must be even
 neutral_cities = 46        # must be even
 round_limit = 5000         # only a backstop (STRATEGIC.md §9)
+water_pct = 40             # of a generated map
 
 # The large preset's clock, for now (STRATEGIC.md §14).
 time_bank_ms = 10000
@@ -22,6 +23,7 @@ site_output_max = 100
 site_cap_min = 400         # the most wheat a site piles up
 site_cap_max = 3000
 cargo_max = 1000           # wheat and bread together, per wagon
+passengers_max = 4         # land units per transport, wagons included
 ration_max = 60
 eat_base = 1               # rations a unit eats each turn,
 eat_move = 1               # plus this if it moved,
@@ -41,3 +43,21 @@ damage.P.W = 60
 damage.K.W = 90
 damage.A.W = 70
 damage.S.W = 40
+
+# Ships (STRATEGIC.md §6, §7) sail on water, which takes them at a move cost
+# of 1. Ports build them. Transports carry land units and can't attack;
+# galleys fight at sea and bombard the coast. From land, only archers can
+# hurt a ship.
+terrain.water.naval_move_cost = 1
+unit.T = "transport 150 100 6 2 1 1 naval,transport"
+unit.G = "galley 200 100 5 3 1 1 naval,zoc"
+damage.A.T = 40
+damage.A.G = 40
+damage.G.I = 25
+damage.G.P = 25
+damage.G.K = 25
+damage.G.A = 30
+damage.G.S = 35
+damage.G.W = 50
+damage.G.T = 80
+damage.G.G = 55

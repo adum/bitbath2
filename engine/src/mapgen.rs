@@ -147,8 +147,12 @@ fn try_generate(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64
     let home = (home_row * w + home_col) as usize;
     let mut sites: Vec<usize> = vec![home, n - 1 - home];
 
-    // Neutral cities in mirrored pairs, placed in the top half.
-    let min_gap = ((w + h) / 14).max(3) as u32;
+    // Neutral cities in mirrored pairs, placed in the top half. The gap
+    // between cities suits the default 6% water. With more water there's
+    // less land to share, so the gap shrinks with the square root of the
+    // land's share, and as many cities still fit.
+    let gap = ((w + h) / 14).max(3) as u32;
+    let min_gap = (gap * gap * (100 - rules.c.water_pct) / 94).isqrt().max(3);
     let far_enough = |map: &Map, sites: &[usize], k: usize| {
         let hx = map.hex(k);
         let mirror = map.hex(n - 1 - k);
