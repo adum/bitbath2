@@ -351,13 +351,14 @@ fn info_json(game: &Game) -> String {
         .iter()
         .map(|t| {
             format!(
-                "{}:{{\"name\":{},\"move_cost\":{},\"defense\":{},\"vision_bonus\":{},\"conceal\":{}}}",
+                "{}:{{\"name\":{},\"move_cost\":{},\"defense\":{},\"vision_bonus\":{},\"conceal\":{},\"naval_move_cost\":{}}}",
                 esc(&t.ch.to_string()),
                 esc(&t.name),
                 t.move_cost,
                 t.defense,
                 t.vision_bonus,
-                t.conceal
+                t.conceal,
+                t.naval_move_cost
             )
         })
         .collect();
@@ -451,8 +452,9 @@ impl Viewer {
             "{{\"step\":{step},\"round\":{},\"player\":{},\"gold\":[{},{}],\"units\":[",
             game.round, game.player, game.gold[1], game.gold[2]
         );
-        // With supply on, units also carry wheat, bread, and rations, cities
-        // their bread, and sites their owner, capture, and wheat.
+        // With supply on, units also carry wheat, bread, rations, and the
+        // transport they're aboard, cities their bread, and sites their owner,
+        // capture, and wheat.
         let supply = game.rules.supply();
         let units: Vec<String> = game
             .units
@@ -460,7 +462,7 @@ impl Viewer {
             .map(|u| {
                 let flags = u.acted as u8 | (u.moved as u8) << 1 | (u.fresh as u8) << 2;
                 let food = if supply {
-                    format!(",{},{},{}", u.wheat, u.bread, u.rations)
+                    format!(",{},{},{},{}", u.wheat, u.bread, u.rations, u.carrier)
                 } else {
                     String::new()
                 };

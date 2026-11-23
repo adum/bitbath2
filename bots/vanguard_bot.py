@@ -100,6 +100,13 @@ class VanguardBot(bb.Bot):
             h: [(d, n, m.terrain(n).move_cost) for d in range(6) for n in [bb.step(h, d)] if n in self.defense]
             for h in self.defense
         }
+        # Water that ships sail, as for nbrs, with the ships' move costs. Empty
+        # without ships, as in the default game.
+        sea = {h for h in m.hexes() if getattr(m.terrain(h), "naval_move_cost", 0) > 0}
+        self.sea_nbrs = {
+            h: [(d, n, m.terrain(n).naval_move_cost) for d in range(6) for n in [bb.step(h, d)] if n in sea]
+            for h in sea
+        }
         # Terrain never changes, so each city's distance field is computed once.
         self.city_field = {cid: self.distance_field([h], blocked=set()) for cid, h, _ in m.cities}
         self.city_at = {h: cid for cid, h, _ in m.cities}
@@ -143,7 +150,7 @@ class VanguardBot(bb.Bot):
                 self.enemies[u.id] = u
                 self.seen[u.id] = u.type
                 self.enemy_hex.add((q, r))
-                if self.types[u.type].zoc:
+                if self.types[u.type].zoc and not u.carrier:   # units aboard exert none
                     self.zoc.update(bb.neighbors((q, r)))
                 table, offsets = self.threat, DISK3
             for dq, dr in offsets:
@@ -162,7 +169,10 @@ class VanguardBot(bb.Bot):
         return t.cost * u.hp / t.max_hp
 
     def ready(self):
-        return [u for u in self.state.my_units() if not u.acted and not u.fresh]
+        """Units that can still move or act. Ships, and units aboard them,
+        aren't vanguard's to move."""
+        return [u for u in self.state.my_units()
+                if not u.acted and not u.fresh and not u.carrier and not self.types[u.type].naval]
 
     def out_of_time(self):
         return self.time_left() < RESERVE_MS
@@ -236,12 +246,17 @@ class VanguardBot(bb.Bot):
         if len(cache) == len(current):
             return cover
         friends = set(self.occ)
-        stops = {h for u in self.state.my_units() if self.types[u.type].zoc for h in bb.neighbors(u.hex)}
-        nbrs = self.nbrs
+        stops = {h for u in self.state.my_units()
+                 if self.types[u.type].zoc and not u.carrier for h in bb.neighbors(u.hex)}
         for eid, e in current.items():
             if eid in cache:
                 continue
             t = self.types[e.type]
+            nbrs = self.sea_nbrs if t.naval else self.nbrs
+            if e.carrier or e.hex not in nbrs or not any(self.rules.damage[e.type].values()):
+                # Units aboard, and units that can't hurt anything, strike nowhere.
+                cache[eid] = ((e.type, e.hex, e.hp), set(), 0, {})
+                continue
             budget = 0 if t.no_move_attack else t.move
             dist = {e.hex: 0}
             heap = [(0, e.hex)]
@@ -352,7 +367,7 @@ class VanguardBot(bb.Bot):
         base = self.rules.damage[att_type][def_type]
         if base == 0:
             return 0
-        defense = min(100, self.defense[def_hex] + def_fort * self.fort_pct)
+        defense = min(100, self.defense.get(def_hex, 0) + def_fort * self.fort_pct)
         return max(1, base * att_hp * (100 - defense) // (self.types[att_type].max_hp * 100))
 
     def trade(self, u, e, h, killable):
@@ -399,7 +414,10 @@ class VanguardBot(bb.Bot):
                 continue
             reach = {u.hex: ""} if t.no_move_attack else self.reach(u)
             found = []
+            hurts = self.rules.damage[u.type]
             for e in near:
+                if e.carrier or not hurts[e.type]:
+                    continue    # it can't be attacked, or this unit can't hurt it
                 best = None
                 for radius in range(t.range_min, t.range_max + 1):
                     for h in bb.ring(e.hex, radius):

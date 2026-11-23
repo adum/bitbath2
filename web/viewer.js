@@ -551,7 +551,8 @@
     /** @type {Map<string, any[]>} */
     const byHex = new Map();
     for (const u of still) {
-      if (hidden(u)) continue;
+      // Units aboard a transport show as a count on it (see drawUnit).
+      if (hidden(u) || u[12]) continue;
       const key = u[3] + "," + u[4];
       if (!byHex.has(key)) byHex.set(key, []);
       /** @type {any[]} */ (byHex.get(key)).push(u);
@@ -580,10 +581,16 @@
       const h = path[Math.round(d)];
       if (persp && u[1] !== persp && !visibleTo(h[0], h[1], persp)) continue;
       // Sized for the stack it ends in, so it doesn't change size on arrival.
-      const n = v.state.units.filter((/** @type {any[]} */ w) => w[3] === u[3] && w[4] === u[4]).length;
+      const n = v.state.units.filter((/** @type {any[]} */ w) => w[3] === u[3] && w[4] === u[4] && !w[12]).length;
       const [x, y] = pointAlong(path, d);
       drawUnit(ctx, u, x, y, stackRadius(n));
     }
+  }
+
+  /** Whether a unit type has a flag, such as "naval". @param {string} code @param {string} flag */
+  function hasFlag(code, flag) {
+    const t = v.info.units[code];
+    return !!t && t.flags.split(",").includes(flag);
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {any[]} u @param {number} x @param {number} y @param {number} rad @param {boolean} [bar] whether to draw its health bar too */
@@ -599,7 +606,9 @@
     const fill = done ? 0.3 : mine && mp === 0 ? 0.55 : 1;
     const ink = done ? 0.55 : 1;
     ctx.beginPath();
-    ctx.arc(x, y, rad, 0, 2 * Math.PI);
+    // Ships are rounded squares, and land units discs.
+    if (hasFlag(code, "naval")) ctx.roundRect(x - rad, y - rad, 2 * rad, 2 * rad, rad * 0.45);
+    else ctx.arc(x, y, rad, 0, 2 * Math.PI);
     if (fill < 1) {
       // Dark under the color, which also hides the move lines under the unit.
       ctx.fillStyle = "#16181c";
@@ -631,6 +640,25 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(code, x, y + rad * 0.06);
+    }
+    // A transport shows how many units are aboard on its upper left corner.
+    const aboard = hasFlag(code, "transport") ? v.state.units.filter((/** @type {any[]} */ w) => w[12] === u[0]).length : 0;
+    if (aboard) {
+      const br = Math.max(4, rad * 0.45);
+      const bx = x - rad * 0.8;
+      const by = y - rad * 0.8;
+      ctx.beginPath();
+      ctx.arc(bx, by, br, 0, 2 * Math.PI);
+      ctx.fillStyle = "#16181c";
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, br * 0.2);
+      ctx.strokeStyle = "#fff";
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold " + Math.round(br * 1.3) + "px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(aboard), bx, by + br * 0.06);
     }
     ctx.globalAlpha = 1;
     if (bar) drawHealth(ctx, u);
@@ -1220,7 +1248,7 @@
     const [q, r] = v.hover;
     const ch = v.info.rows[r][q + Math.floor(r / 2)];
     const t = v.info.terrain[ch];
-    const lines = ["(" + q + "," + r + ") " + (t ? t.name + ", defense " + t.defense + "%, move " + (t.move_cost || "-") : ch)];
+    const lines = ["(" + q + "," + r + ") " + (t ? t.name + ", defense " + t.defense + "%, move " + (t.move_cost || "-") + (t.naval_move_cost ? ", ships " + t.naval_move_cost : "") : ch)];
     // In a game being played, the fog of war hides what is on the hex.
     const fog = fogged();
     const seen = !fog || visibleTo(q, r, fog);
@@ -1250,7 +1278,10 @@
         const type = v.info.units[u[2]];
         // With supply on: wheat, bread, and rations follow the fortification level.
         const food = v.info.supply ? ", " + u[11] + " rations" + (u[9] || u[10] ? ", carrying " + u[9] + " wheat and " + u[10] + " bread" : "") : "";
-        lines.push("unit " + u[0] + " " + playerName(u[1]) + " " + (type ? type.name : u[2]) + " " + u[5] + " hp, " + u[6] + " mp" + (u[7] & 1 ? ", acted" : "") + (u[7] & 4 ? ", new" : "") + (u[8] ? ", dug in to level " + u[8] : "") + food);
+        // Ships: the transport a unit is aboard, and how many a transport carries.
+        const riders = hasFlag(u[2], "transport") ? v.state.units.filter((/** @type {any[]} */ w) => w[12] === u[0]).length : 0;
+        const ship = (u[12] ? ", aboard transport " + u[12] : "") + (riders ? ", carrying " + riders + (riders === 1 ? " unit" : " units") : "");
+        lines.push("unit " + u[0] + " " + playerName(u[1]) + " " + (type ? type.name : u[2]) + " " + u[5] + " hp, " + u[6] + " mp" + (u[7] & 1 ? ", acted" : "") + (u[7] & 4 ? ", new" : "") + (u[8] ? ", dug in to level " + u[8] : "") + food + ship);
       }
     }
     if (fog) lines.push(...v.play.hoverLines(q, r));
@@ -1387,6 +1418,8 @@
     no_move_attack: "can't move and attack in one turn",
     fortify: "digs in when it holds still",
     carry: "carries wheat and bread",
+    naval: "moves on water",
+    transport: "carries land units",
   });
 
   function buildRules() {
@@ -1475,12 +1508,26 @@
     section("Vision", sight);
 
     const blocked = Object.values(v.info.terrain).filter((t) => !t.move_cost).map((t) => t.name);
+    const seas = Object.values(v.info.terrain).filter((t) => t.naval_move_cost);
     section("Moving", [
-      "Each step costs the move cost of the hex entered (see Terrain)." + (blocked.length ? " " + capitalize(join(blocked)) + " can't be entered." : ""),
+      "Each step costs the move cost of the hex entered (see Terrain)." + (blocked.length ? " " + capitalize(join(blocked)) + " can't be entered" + (seas.length ? " by land units" : "") + "." : ""),
       "Units may pass through friendly units but must stop on a hex with fewer than " + c.stack_limit + " units, and can't enter a hex with enemy units.",
       "Zone of control: a unit that steps next to an enemy unit with zone of control must stop there. Units that ignore zones of control are exempt, and leaving costs nothing extra.",
       "Moves are checked against what the player can see. A hidden enemy can cut a move short: walking into one is an ambush.",
     ]);
+
+    if (seas.length) {
+      const ships = units.filter(([, u]) => u.flags.split(",").includes("naval")).map(([, u]) => plural(u.name));
+      section("Ships", [
+        capitalize(join(ships)) + " move only on " + join(seas.map((t) => t.name)) + ", by the ships' move cost (see Terrain), and can't enter land or cities.",
+        "A port is a city next to water. It builds ships onto the first water hex next to it, in direction order, that has room and no enemy units.",
+        "A land unit boards one of its player's transports by moving onto it as the last step of a move, for 1 MP, which ends its move. A transport carries up to " + c.passengers_max + " land units, wagons included.",
+        "Units aboard move with their transport. They can't attack, capture, load, or unload, and can't be attacked. They don't count toward the stack limit and exert no zone of control, but they still see and eat.",
+        "A unit aboard lands with a one-step move onto land next to its transport, which ends its move but leaves its action, so it can attack or capture where it lands.",
+        "When a transport is destroyed, everything aboard is destroyed with it.",
+        "Ships heal " + c.city_heal + " HP next to their own cities. Zones of control reach across the shoreline both ways.",
+      ]);
+    }
 
     const capturers = units.filter(([, u]) => u.flags.split(",").includes("capture"));
     const hp = capturers.length ? capturers[0][1].max_hp : 0;
@@ -1524,14 +1571,15 @@
     body.append(el("h3", "Terrain"));
     const pal = v.dark ? TERRAIN.dark : TERRAIN.light;
     table(
-      ["Terrain", "Move cost", "Defense", "Vision", "Concealment"],
+      ["Terrain", "Move cost", "Defense", "Vision", "Concealment"].concat(seas.length ? ["Ships' move cost"] : []),
       Object.entries(v.info.terrain).map(([ch, t]) => {
         const chip = el("span", "", "chip");
         chip.style.background = /** @type {any} */ (pal)[ch] || "#888";
         const label = document.createElement("span");
         label.append(chip, t.name);
-        if (!t.move_cost) return [label, "can't enter", "–", "–", "–"];
-        return [label, t.move_cost, t.defense + "%", t.vision_bonus ? "+" + t.vision_bonus : "0", t.conceal || 0];
+        const ships = seas.length ? [t.naval_move_cost || "can't enter"] : [];
+        if (!t.move_cost) return [label, "can't enter", "–", "–", "–"].concat(ships);
+        return [label, t.move_cost, t.defense + "%", t.vision_bonus ? "+" + t.vision_bonus : "0", t.conceal || 0].concat(ships);
       }),
     );
 
