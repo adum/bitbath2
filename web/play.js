@@ -505,6 +505,8 @@
       this.sel = sel;
       this.problem = "";
       this.update();
+      // The hover card marks the unit picked.
+      V.refreshHover();
       V.draw();
     }
 
@@ -981,109 +983,171 @@
       this.renderSelection(mine);
     }
 
-    /** What is on the hex picked, and the orders that can be given there. @param {boolean} mine whether the human can give orders */
+    /**
+     * What is on the hex picked, and the orders that can be given there, as
+     * a card of up to four parts: the place, the units on it, what the unit
+     * picked can do, and what the city can build. It is as tall as what it
+     * holds, so nothing in it scrolls.
+     * @param {boolean} mine whether the human can give orders
+     */
     renderSelection(mine) {
       const box = $("selection");
       box.replaceChildren();
+      box.classList.toggle("empty", !this.sel || !this.kit);
       if (!this.sel || !this.kit) {
-        box.append(el("div", "Click one of your units to give it orders, or one of your cities to build.", "muted"));
+        box.append(el("div", "Click one of your units to give it orders, or one of your cities to build."));
         return;
       }
       const kit = this.kit;
       const view = kit.view;
       const world = this.world;
+      const c = world.c;
       const hex = this.sel.hex;
       const city = view.cityAt(hex);
+      const site = view.siteAt(hex);
       const unit = this.unit();
-      const button = (/** @type {string} */ text, /** @type {() => void} */ run, /** @type {string} */ cls) => {
-        const b = el("button", text, cls || "");
+      const supply = world.supply;
+      const seen = V.visibleTo(hex[0], hex[1], this.human);
+      const num = (/** @type {number} */ n) => n.toLocaleString();
+      const whose = (/** @type {number} */ p) => (!p ? "neutral" : p === this.human ? "yours" : this.botName + "'s");
+      /** A part of the card. @param {string} cls @param {...(Node | string)} kids */
+      const part = (cls, ...kids) => {
+        const sec = el("div", "", "sel-sec " + cls);
+        sec.append(...kids);
+        box.append(sec);
+        return sec;
+      };
+      /** A button whose key is shown on it. @param {string} text @param {string} key @param {() => void} run @param {string} cls */
+      const action = (text, key, run, cls) => {
+        const b = el("button", text, cls);
+        b.append(el("kbd", key));
         b.onclick = run;
         return b;
       };
       // Each unit and each thing to build shows its token as on the board, so the symbols explain themselves.
-      const token = (/** @type {any} */ type, /** @type {number} */ owner) => {
+      const token = (/** @type {any} */ type, /** @type {number} */ owner, /** @type {number} */ px) => {
         const info = v.info.units[type.code];
-        return BitbathPieces.icon({ code: type.code, name: type.name, naval: !!info && info.flags.split(",").includes("naval") }, V.playerColor(owner));
+        return BitbathPieces.icon({ code: type.code, name: type.name, naval: !!info && info.flags.split(",").includes("naval") }, V.playerColor(owner), px);
       };
-      const supply = world.supply;
-      const num = (/** @type {number} */ n) => n.toLocaleString();
-      const site = view.siteAt(hex);
-      const seen = V.visibleTo(hex[0], hex[1], this.human);
-      let place = "";
-      if (city) place = " · city " + city.id + (supply && world.isPort(hex) ? ", a port" : "") + (supply && seen ? " · " + num(city.bread) + " bread" : "");
-      else if (site) place = " · site " + site.id + " · grows " + site.output + " wheat a turn" + (seen ? ", holds " + num(site.wheat) + " of " + num(site.cap) : ", up to " + num(site.cap));
-      box.append(el("div", "(" + hex[0] + "," + hex[1] + ") " + world.terrain(hex).name + place, "label"));
-      // Each transport is followed by the units aboard it.
+
+      // The place: its name, whose it is, and what it holds.
+      const terrain = world.terrain(hex);
+      const name = el("div", "", "sel-name");
+      name.append(el("b", city ? "City " + city.id : site ? "Site " + site.id : V.capitalize(terrain.name)));
+      const facts = ["(" + hex[0] + "," + hex[1] + ")"];
+      if (city) facts.push(whose(city.owner));
+      if (city && supply && world.isPort(hex)) facts.push("port");
+      if (site) facts.push(whose(site.owner), "grows " + site.output + " a turn");
+      if (!city && !site) facts.push("defense " + terrain.defense + "%");
+      name.append(el("span", facts.join(" · ")));
+      const head = part("sel-head", name);
+      /** What the place holds, as a number over its unit. @param {number} n @param {string} of */
+      const stock = (n, of) => {
+        const s = el("div", "", "sel-stock");
+        s.append(el("b", num(n)), el("span", of));
+        head.append(s);
+      };
+      if (city && supply && seen) stock(city.bread, "bread");
+      else if (site && seen) stock(site.wheat, "of " + num(site.cap) + " wheat");
+      else if (city && !supply && city.owner === this.human) stock(view.gold, "gold");
+
+      // The units, each transport followed by the units aboard it.
       const here = view.unitsAt(hex);
       const listed = here.filter((/** @type {any} */ u) => !u.carrier).flatMap((/** @type {any} */ u) => [u].concat(here.filter((/** @type {any} */ p) => p.carrier === u.id)));
-      const hungry = HUNGRY_TURNS * ((world.c.eat_base || 0) + (world.c.eat_move || 0) + (world.c.eat_attack || 0));
-      for (const u of listed) {
-        const type = kit.unitType(u);
-        const dug = u.fort ? " · dug in to level " + u.fort : "";
-        // What the strategic rules add: rations, a wagon's cargo, and who is aboard.
-        const more = [];
-        if (u.carrier) more.push("aboard");
-        if (type.transport) more.push(view.passengers(u).length + " of " + (world.c.passengers_max || 0) + " aboard");
-        if (type.carry) more.push(num(u.wheat) + " wheat, " + num(u.bread) + " bread");
-        if (supply) more.push(u.rations + " rations");
-        const extra = el("small", more.join(" · "), "unit-more" + (supply && u.rations < hungry ? " hungry" : ""));
-        if (u.owner !== this.human) {
-          const row = el("div", "Enemy " + type.name + " · " + u.hp + " hp" + dug, "enemy" + (u.carrier ? " aboard" : ""));
-          row.prepend(token(type, u.owner));
-          if (more.length) row.append(extra);
-          box.append(row);
-          continue;
+      const hungry = HUNGRY_TURNS * ((c.eat_base || 0) + (c.eat_move || 0) + (c.eat_attack || 0));
+      if (listed.length) {
+        const list = part("sel-units");
+        for (const u of listed) {
+          const type = kit.unitType(u);
+          const own = u.owner === this.human;
+          const ready = own && this.ready.includes(u.id);
+          const cls = "sel-unit" + (unit && unit.id === u.id ? " chosen" : "") + (own && !ready ? " spent" : "") + (u.carrier ? " aboard" : "");
+          const row = own ? el("button", "", cls) : el("div", "", cls + " enemy");
+          if (own) row.onclick = () => this.select({ hex, unit: u.id });
+          const top = el("div", "", "sel-top");
+          const state = !own ? "enemy" : u.fresh ? "new" : u.acted ? "done" : u.mp + " mp";
+          top.append(el("b", V.capitalize(type.name)), el("span", state, "sel-pill" + (ready ? " ready" : "")));
+          if (own && u.fresh) row.title = "Built this turn: it can move and act from your next turn.";
+          const bar = el("div", "", "sel-bar");
+          const fill = el("span", "");
+          const frac = Math.max(0, Math.min(1, u.hp / type.max_hp));
+          fill.style.width = 100 * frac + "%";
+          fill.style.background = frac > 0.6 ? "#3fb950" : frac > 0.3 ? "#e3b341" : "#f85149";
+          bar.append(fill);
+          // The hit points, and what else there is to know: digging in, and with supply on, food, cargo and who is aboard.
+          const tags = el("div", "", "sel-tags");
+          /** @param {string} text @param {string} [cls] */
+          const tag = (text, cls) => {
+            if (tags.childNodes.length) tags.append(" · ");
+            tags.append(cls ? el("span", text, cls) : text);
+          };
+          tag(u.hp + " hp");
+          if (u.fort) tag("dug in " + u.fort);
+          if (supply) tag(u.rations + " rations", u.rations < hungry ? "hungry" : "");
+          if (type.carry) tag([u.wheat ? num(u.wheat) + " wheat" : "", u.bread ? num(u.bread) + " bread" : ""].filter(Boolean).join(", ") || "empty");
+          if (type.transport) tag(view.passengers(u).length + " of " + (c.passengers_max || 0) + " aboard");
+          if (u.carrier) tag("aboard");
+          const main = el("div", "", "sel-main");
+          main.append(top, bar, tags);
+          row.append(token(type, u.owner, 24), main);
+          list.append(row);
         }
-        const state = u.fresh ? "new, ready next turn" : u.acted ? "done" : u.mp + " mp";
-        const cls = "unit" + (unit && unit.id === u.id ? " chosen" : "") + (this.ready.includes(u.id) ? "" : " spent") + (u.carrier ? " aboard" : "");
-        const pick = button(V.capitalize(type.name) + " · " + u.hp + " hp · " + state + dug, () => this.select({ hex, unit: u.id }), cls);
-        pick.prepend(token(type, u.owner));
-        if (more.length) pick.append(extra);
-        box.append(pick);
       }
+
+      // What the unit picked can do here besides moving and attacking, which are clicks on the map.
       if (unit && mine) {
-        if (kit.canCapture(unit)) {
-          const prize = kit.prize(unit);
-          const progress = (prize.capturer === this.human ? prize.progress : 0) + unit.hp;
-          const what = progress >= world.c.capture_points ? "takes the " + (city ? "city" : "site") : progress + " of " + world.c.capture_points;
-          const row = el("div", "", "row");
-          row.append(button("Capture (C) · " + what, () => this.capture(), "primary"));
-          box.append(row);
-        }
         const [load, unload] = [kit.loadable(unit), kit.unloadable(unit)];
-        if (load || unload) {
+        if (kit.canCapture(unit) || load || unload) {
+          const acts = part("sel-acts");
+          const row = el("div", "", "sel-row");
+          acts.append(row);
+          if (kit.canCapture(unit)) {
+            const prize = kit.prize(unit);
+            const progress = (prize.capturer === this.human ? prize.progress : 0) + unit.hp;
+            const what = progress >= c.capture_points ? "takes the " + (city ? "city" : "site") : progress + " of " + c.capture_points;
+            row.append(action("Capture · " + what, "C", () => this.capture(), "primary"));
+          }
           // A wagon's goods: wheat from a site, bread from a city, and both into a city.
-          const row = el("div", "", "row");
-          if (load) row.append(button("Load (L) · " + num(load) + (city ? " bread" : " wheat"), () => this.carry("L", amountAsked()), "primary"));
-          if (unload) row.append(button("Unload (U) · " + num(unload), () => this.carry("U", amountAsked()), city && !load ? "primary" : ""));
-          const amount = /** @type {HTMLInputElement} */ (el("input", "", ""));
-          amount.id = "carry-amount";
-          amount.type = "number";
-          amount.min = "1";
-          amount.placeholder = "all";
-          amount.title = "The most to load or unload. Empty moves all of it.";
-          amount.value = carryAmount;
-          amount.oninput = () => (carryAmount = amount.value);
-          row.append(amount);
-          box.append(row);
-          box.append(el("div", "A wagon can't move after loading or unloading.", "muted"));
+          if (load) row.append(action("Load " + num(load) + (city ? " bread" : " wheat"), "L", () => this.carry("L", amountAsked()), "primary"));
+          if (unload) row.append(action("Unload " + num(unload), "U", () => this.carry("U", amountAsked()), load ? "" : "primary"));
+          if (load || unload) {
+            const amount = /** @type {HTMLInputElement} */ (el("input", "", ""));
+            amount.id = "carry-amount";
+            amount.type = "number";
+            amount.min = "1";
+            amount.placeholder = "all";
+            amount.title = "The most to load or unload. Empty moves all of it.";
+            amount.value = carryAmount;
+            amount.oninput = () => (carryAmount = amount.value);
+            const most = el("label", "at most ", "sel-amount");
+            most.append(amount);
+            row.append(most);
+            if (unit.mp > 0) acts.append(el("div", "Loading or unloading ends the wagon's move.", "sel-hint"));
+          }
         }
       }
+
+      // What the city can build: a tile for each unit type, with its key.
       if (city && city.owner === this.human && mine) {
         const types = /** @type {any[]} */ (Object.values(world.unitTypes));
         const whys = types.map((type) => this.cantBuild(city, type));
-        box.append(el("div", supply ? "Build · " + num(city.bread) + " bread in this city" : "Build · " + view.gold + " gold", "label"));
-        const row = el("div", "", "row");
+        const build = part("sel-build");
+        const title = el("div", "", "sel-title");
+        title.append(el("b", "Build"), el("span", city.built ? "done for this turn" : "one unit a turn"));
+        const grid = el("div", "", "sel-grid");
+        // The default game's five types fit one row.
+        if (types.length <= 5) grid.style.gridTemplateColumns = "repeat(" + types.length + ", minmax(0, 1fr))";
         types.forEach((type, i) => {
-          const b = button(V.capitalize(type.name) + " " + type.cost, () => this.build(city, type.code), "");
-          b.prepend(token(type, this.human));
+          const b = el("button", "", "sel-tile");
+          b.onclick = () => this.build(city, type.code);
           b.disabled = !!whys[i];
-          b.title = (whys[i] ? whys[i] + " " : "") + "Key " + type.code + " · move " + type.move + ", vision " + type.vision + ", range " + (type.range_min === type.range_max ? type.range_min : type.range_min + "–" + type.range_max);
-          row.append(b);
+          b.title = (whys[i] ? whys[i] + " " : "") + V.capitalize(type.name) + ": move " + type.move + ", vision " + type.vision + ", range " + (type.range_min === type.range_max ? type.range_min : type.range_min + "–" + type.range_max) + ". Key " + type.code + ".";
+          b.append(el("kbd", type.code), token(type, this.human, 24), el("span", V.capitalize(type.name)), el("b", String(type.cost)));
+          grid.append(b);
         });
-        box.append(row);
+        build.append(title, grid);
         // When nothing can be built, the reason the cheapest unit can't.
-        if (whys.every(Boolean)) box.append(el("div", whys[types.indexOf(types.reduce((a, b) => (b.cost < a.cost ? b : a)))], "muted"));
+        if (whys.every(Boolean)) build.append(el("div", whys[types.indexOf(types.reduce((a, b) => (b.cost < a.cost ? b : a)))], "sel-hint"));
       }
     }
   }

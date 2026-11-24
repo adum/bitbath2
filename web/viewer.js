@@ -1322,14 +1322,18 @@
     const listed = here.filter((/** @type {any[]} */ u) => !u[12]).flatMap((/** @type {any[]} */ u) => [u].concat(here.filter((/** @type {any[]} */ p) => p[12] === u[0])));
     if (listed.length) {
       const sec = el("div", "", "hc-sec");
+      // The unit picked in a game is marked, since on a transport it can't be told from the board.
+      const picked = fog && v.play.sel ? v.play.sel.unit : null;
       for (const u of listed) {
         const type = v.info.units[u[2]];
         const name = type ? type.name : u[2];
         const frac = Math.max(0, Math.min(1, u[5] / (type ? type.max_hp : 100)));
-        const row = el("div", "", "hc-unit" + (u[12] ? " aboard" : ""));
+        const row = el("div", "", "hc-unit" + (u[12] ? " aboard" : "") + (u[0] === picked ? " picked" : ""));
         const main = el("div", "", "hc-main");
         const top = el("div", "", "hc-top");
-        top.append(el("b", capitalize(name)), el("span", "#" + u[0], "hc-id"), el("span", u[5] + " hp", "hc-hp"));
+        top.append(el("b", capitalize(name)), el("span", "#" + u[0], "hc-id"));
+        if (u[0] === picked) top.append(el("span", "selected", "hc-picked"));
+        top.append(el("span", u[5] + " hp", "hc-hp"));
         const bar = el("div", "", "hc-bar");
         const fill = el("span", "");
         fill.style.width = 100 * frac + "%";
@@ -2211,6 +2215,7 @@
 
   // For play.js, tests and embedding: window.bitbathViewer.open(text).
   /** @type {any} */ (window).bitbathViewer = {
+    refreshHover: updateHover,
     open: openText, state: v, setPos, $, el, engine, openLive, append, finishLive, animateTo, draw, updateSide, STEP_MS,
     center, hexPath, polyline, arrow, centers, playerColor, cssVar, visibleTo, shown, capitalize,
   };

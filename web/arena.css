@@ -118,7 +118,6 @@ body { margin: 0; }
   .piece-style-row span { display: flex; }
   /* Not laid over its box, as the board's canvas is. */
   .piece-icon { position: static; flex: none; vertical-align: -4px; }
-  #selection .piece-icon { margin-right: 6px; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button:disabled { opacity: .5; cursor: default; }
   button:disabled:hover { border-color: var(--border); }
@@ -217,18 +216,52 @@ body { margin: 0; }
   #play-note { color: var(--muted); font-size: 13px; height: 1.4em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #play-note.warn { color: var(--p1); }
   #play-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-  #selection { height: 16em; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
-  #selection .row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
-  #selection .label { color: var(--muted); font-size: 12px; margin-top: 6px; }
-  #selection button { text-align: left; }
-  #selection button.unit { display: block; width: 100%; margin: 2px 0; }
-  #selection button.chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-  #selection button.spent { color: var(--muted); }
-  #selection .aboard { margin-left: 16px; }
-  #selection button.unit.aboard { width: calc(100% - 16px); }
-  #selection .unit-more { display: block; margin-left: 24px; color: var(--muted); font-size: 12px; }
-  #selection .unit-more.hungry { color: #e8590c; }
-  #carry-amount { width: 5.5em; }
+  /* What is on the hex picked, as a card: the place, the units, what the
+     picked unit can do, and what the city builds. It is as tall as what it
+     holds, and never shorter than its empty state, so a pick of one unit
+     doesn't move what is under it. */
+  #selection { min-height: 7.6em; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); font-size: 13px; line-height: 1.35; overflow: hidden; }
+  #selection.empty { display: grid; place-items: center; padding: 10px 18px; border-style: dashed; background: none; color: var(--muted); text-align: center; }
+  #selection .sel-sec { padding: 8px 10px; }
+  #selection .sel-sec + .sel-sec { border-top: 1px solid var(--border); }
+  #selection .sel-head { display: flex; align-items: center; gap: 10px; }
+  #selection .sel-name b { display: block; font-size: 14px; }
+  #selection .sel-name span, #selection .sel-title span, #selection .sel-hint { color: var(--muted); font-size: 12px; }
+  #selection .sel-stock { margin-left: auto; text-align: right; line-height: 1.15; white-space: nowrap; }
+  #selection .sel-stock b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  #selection .sel-stock span { color: var(--muted); font-size: 11px; }
+  #selection .sel-units { padding: 5px; }
+  #selection .sel-unit {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: start; width: 100%; padding: 5px 6px 6px;
+    border: 1px solid transparent; border-radius: 7px; background: none; color: inherit; font: inherit; text-align: left;
+  }
+  #selection .sel-unit + .sel-unit { margin-top: 2px; }
+  #selection button.sel-unit:hover { border-color: var(--border); background: var(--bg); }
+  #selection button.sel-unit.chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }
+  #selection .sel-unit.aboard { width: calc(100% - 18px); margin-left: 18px; }
+  #selection .sel-unit .piece-icon { margin-top: 1px; }
+  #selection .sel-top { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
+  #selection .sel-unit.spent .sel-top b { color: var(--muted); font-weight: 500; }
+  #selection .sel-pill { margin-left: auto; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #selection .sel-pill.ready { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); color: var(--accent); }
+  #selection .sel-bar { height: 4px; border-radius: 2px; overflow: hidden; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
+  #selection .sel-bar span { display: block; height: 100%; }
+  #selection .sel-tags { margin-top: 3px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  #selection .hungry { color: #e8590c; }
+  #selection .sel-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  #selection .sel-row button { display: flex; align-items: center; gap: 8px; }
+  #selection kbd { padding: 0 4px; font-size: 10px; line-height: 1.5; }
+  #selection button.primary kbd { border-color: rgba(255, 255, 255, .45); background: rgba(255, 255, 255, .16); color: #fff; }
+  #selection .sel-amount { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  #carry-amount { width: 5em; padding: 3px 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
+  #selection .sel-hint { margin-top: 6px; }
+  #selection .sel-title { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  #selection .sel-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+  #selection .sel-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 2px 5px; font-size: 11px; line-height: 1.25; }
+  #selection .sel-tile span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #selection .sel-tile b { font-size: 12px; font-variant-numeric: tabular-nums; }
+  #selection .sel-tile kbd { position: absolute; top: 2px; right: 2px; padding: 0 3px; font-size: 9px; opacity: .8; }
+  #selection .sel-tile .piece-icon { margin-bottom: 2px; }
   #play-tally { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 6px; text-align: center; }
   #play-tally div { padding: 3px 0; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
   #play-tally b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
@@ -279,6 +312,12 @@ body { margin: 0; }
   #hover-card .hc-unit { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: start; }
   #hover-card .hc-unit + .hc-unit { margin-top: 8px; }
   #hover-card .hc-unit.aboard { margin-left: 16px; }
+  /* The unit picked in a game: a tinted frame around its row, which takes no room. */
+  #hover-card .hc-unit.picked {
+    border-radius: 3px; background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, var(--panel)), 0 0 0 5.5px var(--accent);
+  }
+  #hover-card .hc-picked { padding: 0 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
   #hover-card .hc-unit .piece-icon { margin-top: 1px; }
   #hover-card .hc-top { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
   #hover-card .hc-id { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
