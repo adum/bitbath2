@@ -454,7 +454,10 @@ impl Bot {
                 _ => {}
             }
         }
-        self.jobs.retain(|id, _| self.units.iter().any(|u| u.id == *id));
+        // Collected first, so the closure doesn't borrow all of self, which
+        // editions before 2021, plain rustc's default, would refuse.
+        let ids: Vec<u32> = self.units.iter().map(|u| u.id).collect();
+        self.jobs.retain(|id, _| ids.contains(id));
         self.mark();
     }
 
@@ -1046,7 +1049,7 @@ impl Bot {
             return false;
         };
         // One stocker per port: the wagon already on it, or the nearest.
-        let stocker = self.jobs.iter().find(|(_, &s)| s == usize::MAX).map(|(&x, _)| x);
+        let stocker = self.jobs.iter().find(|(_, s)| **s == usize::MAX).map(|(&x, _)| x);
         if stocker.is_some_and(|x| x != id) {
             return false;
         }
@@ -1428,7 +1431,7 @@ impl Bot {
         let others: Vec<(bool, usize)> = self
             .ships
             .iter()
-            .filter(|(&id, s)| id != skip && s.phase == Phase::Out)
+            .filter(|(id, s)| **id != skip && s.phase == Phase::Out)
             .filter_map(|(_, s)| s.target)
             .collect();
         let mut cands: Vec<((bool, usize), f64)> = Vec::new();
@@ -1783,7 +1786,7 @@ impl Bot {
                         let gone: Vec<u32> = self
                             .haulers
                             .iter()
-                            .filter(|(_, &i)| i == isle)
+                            .filter(|(_, i)| **i == isle)
                             .map(|(&w, _)| w)
                             .filter(|&w| self.units.iter().any(|x| x.id == w && self.land[x.at] != isle))
                             .collect();
@@ -1974,7 +1977,7 @@ impl Bot {
     /// The crew of transport t walk to its port and board once it's there.
     fn crew_board(&mut self, t: usize, port: usize, there: bool) {
         let id = self.units[t].id;
-        let mut crew: Vec<u32> = self.crew.iter().filter(|(_, &x)| x == id).map(|(&u, _)| u).collect();
+        let mut crew: Vec<u32> = self.crew.iter().filter(|(_, x)| **x == id).map(|(&u, _)| u).collect();
         crew.sort_unstable();
         for uid in crew {
             let Some(u) = (0..self.units.len()).find(|&x| self.units[x].id == uid && self.units[x].alive) else {
