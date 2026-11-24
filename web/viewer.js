@@ -742,7 +742,7 @@
     // A replay's trails are how it shows the turn. The human's own, in a game
     // being played, are only a reminder, and stay well behind the move being
     // planned.
-    ctx.globalAlpha = fogged() === v.state.player ? 0.12 : 0.7;
+    ctx.globalAlpha = fogged() === v.state.player ? 0.12 : 0.35;
     ctx.strokeStyle = playerColor(v.state.player);
     for (const m of v.marks) {
       if (m.ok && !(a && m.step >= a.from) && shown(m, persp)) trail(m);
