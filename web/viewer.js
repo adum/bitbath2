@@ -1348,11 +1348,15 @@
       for (const item of items) list.append(el("li", item));
       body.append(el("h3", title), list);
     };
-    /** @param {string[]} head @param {any[][]} rows @param {number} [textCol] a column of words, aligned left */
+    /** @param {(string | Node)[]} head @param {any[][]} rows @param {number} [textCol] a column of words, aligned left */
     const table = (head, rows, textCol = -1) => {
       const t = document.createElement("table");
       const tr = document.createElement("tr");
-      head.forEach((h, i) => tr.append(el("th", h, i === textCol ? "text" : "")));
+      head.forEach((h, i) => {
+        const th = el("th", "", i === textCol ? "text" : "");
+        th.append(h);
+        tr.append(th);
+      });
       t.append(tr);
       for (const row of rows) {
         const r = document.createElement("tr");
@@ -1366,6 +1370,15 @@
       const wrap = el("div", "", "table-wrap");
       wrap.append(t);
       body.append(wrap);
+    };
+
+    // A unit's name in a table comes with its symbol, whatever marks the
+    // board uses, so the rules are also the key to the symbols. The token is
+    // gray: it stands for the type, not for either player's unit.
+    const piece = (/** @type {string} */ code, /** @type {string} */ label) => {
+      const span = document.createElement("span");
+      span.append(BitbathPieces.icon({ code, name: name(code), naval: hasFlag(code, "naval") }, "#5c6672", 18, "symbols"), label);
+      return span;
     };
 
     const neutral = v.info.cities.filter((/** @type {number[]} */ city) => city[2] === 0).length;
@@ -1464,8 +1477,8 @@
     }
     section("Combat", combat);
     table(
-      ["Base damage: attacker ↓ defender →"].concat(units.map(([, u]) => u.name)),
-      units.map(([code, u]) => [u.name].concat(damage.get(code) || [])),
+      [/** @type {string | Node} */ ("Base damage: attacker ↓ defender →")].concat(units.map(([code, u]) => piece(code, u.name))),
+      units.map(([code, u]) => [/** @type {any} */ (piece(code, u.name))].concat(damage.get(code) || [])),
     );
 
     body.append(el("h3", "Units"));
@@ -1475,7 +1488,7 @@
         const abilities = u.flags.split(",").filter((/** @type {string} */ f) => ABILITIES[f]).map((/** @type {string} */ f) => ABILITIES[f]);
         if (u.range[0] > 1) abilities.push("can't attack adjacent units");
         const range = u.range[0] === u.range[1] ? String(u.range[0]) : u.range[0] + "–" + u.range[1];
-        return [u.name + " (" + code + ")", u.cost, u.max_hp, u.move, u.vision, range, abilities.join(", ") || "–"];
+        return [piece(code, u.name + " (" + code + ")"), u.cost, u.max_hp, u.move, u.vision, range, abilities.join(", ") || "–"];
       }),
       6,
     );
