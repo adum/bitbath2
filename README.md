@@ -54,6 +54,7 @@ You see the game through your own fog of war:
 - **C** captures the city the unit stands on.
 - **Click one of your cities** to build there, or press a unit's letter, such as **I** for infantry. A gold **+** marks each city that can still build this turn.
 - **N** or **Tab** selects the next unit with something left to do, **Esc** deselects, and **E** or **Enter** ends your turn.
+- **Rest the pointer** on a hex for a card beside it: the ground, the city or site, and each unit there with its hit points and what it carries. Replays show it too.
 
 **Settings**, at the top right, picks how units are drawn: a symbol for each kind (a sword for infantry, pikes, a horse's head, a bow, an eye for the scout), or its letter. The choice is kept in the browser.
 
@@ -61,9 +62,9 @@ A unit that is dug in carries a white block on its top edge for each fortificati
 
 The maps marked **ships and food** play the strategic ruleset ([STRATEGIC.md](STRATEGIC.md)): bread in place of gold, sites, wagons, rations, and ships. Islets is the small one to learn on, Islands is [configs/islands.toml](configs/islands.toml), Seas is a mid-sized map of land and sea, and Strategic is [configs/strategic.toml](configs/strategic.toml) in full. The built-in opponent for them is Naval, which is [bots/naval_bot.py](bots/naval_bot.py) in a browser worker; the bots on disk are offered too. What these rules add to the controls:
 
-- **Bread** is kept by each city. The number at the foot of a city's hex is its bread, and a site's is its wheat. Selecting a city shows what it can build with its own bread; only a port, a city next to water, builds ships.
+- **Bread** is kept by each city. The number at the foot of a city's hex is its bread, and a site's is its wheat, for every city and site you can see. Selecting a city shows what it can build with its own bread; only a port, a city next to water, builds ships.
 - **C** also captures the site a unit stands on.
-- **A wagon** on one of your sites or cities gets **Load (L)** and **Unload (U)**. The field beside them takes an amount, and empty moves everything. A wagon can't move after either.
+- **A wagon** on one of your sites or cities gets **Load (L)** and **Unload (U)**. The field beside them takes an amount, and empty moves everything. A wagon can't move after either. A loaded wagon shows a crate: yellow for wheat, brown for bread.
 - **Boarding:** with a land unit selected, right-click one of your transports next to it. Selecting the transport's hex lists the units aboard; pick one, and the land it can step onto is tinted.
 - **Rations** are listed with each unit. A unit running short gets an amber mark, and a red one when it has none left; the turn's report says which units are starving.
 

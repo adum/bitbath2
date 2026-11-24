@@ -882,37 +882,17 @@
     }
 
     /**
-     * With supply on: the bread in each of the human's cities and the wheat
-     * on each of their sites, as a number at the foot of the hex, and a mark
-     * on each of their units that is short of rations. The mark is amber when
-     * the rations left wouldn't last `HUNGRY_TURNS` turns of marching and
-     * fighting, and red when there are none.
+     * With supply on: a mark on each of the human's units that is short of
+     * rations. It is amber when the rations left wouldn't last
+     * `HUNGRY_TURNS` turns of marching and fighting, and red when there are
+     * none. The viewer draws the bread and wheat on the map.
      * @param {CanvasRenderingContext2D} ctx
      */
     drawSupply(ctx) {
       if (this.over || !this.kit || !this.world.supply) return;
       const view = this.kit.view;
-      const s = v.geo.size;
       const c = this.world.c;
       ctx.save();
-      if (s >= 14) {
-        ctx.font = "600 " + Math.max(9, Math.round(s * 0.3)) + "px system-ui, sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.lineJoin = "round";
-        ctx.lineWidth = Math.max(2, s * 0.09);
-        const label = (/** @type {number[]} */ hex, /** @type {number} */ n, /** @type {string} */ color) => {
-          const [x, y] = V.center(hex[0], hex[1]);
-          const text = n.toLocaleString();
-          ctx.strokeStyle = "rgba(0,0,0,.75)";
-          ctx.strokeText(text, x, y + s * 0.78);
-          ctx.fillStyle = color;
-          ctx.fillText(text, x, y + s * 0.78);
-        };
-        for (const city of view.myCities()) label(city.hex, city.bread, "#fff");
-        // Wheat is the color of the stalks the viewer draws on a site.
-        for (const site of view.mySites()) label(site.hex, site.wheat, "#ffd43b");
-      }
       const low = HUNGRY_TURNS * ((c.eat_base || 0) + (c.eat_move || 0) + (c.eat_attack || 0));
       for (const u of view.myUnits()) {
         const at = u.carrier ? null : v.unitPos.get(u.id);

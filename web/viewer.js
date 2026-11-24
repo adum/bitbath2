@@ -225,6 +225,7 @@
     drawOrder(ctx, persp, true);
     drawUnits(ctx, persp);
     drawOrder(ctx, persp, false);
+    drawStockpiles(ctx, persp);
     if (v.play) v.play.drawOver(ctx);
     drawFloats(ctx);
     if (v.hover) {
@@ -242,6 +243,8 @@
       ctx.setLineDash([]);
       ctx.lineCap = "butt";
     }
+    // The forecast of a fight is placed while drawing, and the hover card goes by it.
+    placeHover();
   }
 
   /** How long a damage number floats over a unit that was hit, in ms. */
@@ -441,7 +444,7 @@
       if (top >= 0) place(list[top], top);
       // The health bars of a stack go over all its units, so none is covered,
       // and so do the marks of the ones dug in.
-      if (n > 1) for (const u of list) drawHealth(ctx, u), drawFort(ctx, u);
+      if (n > 1) for (const u of list) drawHealth(ctx, u), drawFort(ctx, u), drawCargo(ctx, u);
     }
     if (!a) return;
     for (const u of v.state.units) {
@@ -530,7 +533,78 @@
       ctx.fillText(String(aboard), bx, by + br * 0.06);
     }
     ctx.globalAlpha = 1;
-    if (bar) drawHealth(ctx, u), drawFort(ctx, u);
+    if (bar) drawHealth(ctx, u), drawFort(ctx, u), drawCargo(ctx, u);
+  }
+
+  /** The colors of wheat and of bread, wherever the two are told apart. */
+  const WHEAT = "#ffd43b";
+  const BREAD = "#d9822b";
+
+  /**
+   * What a wagon carries, with supply on: a small crate on its lower right,
+   * yellow for wheat and brown for bread, half and half for both. An empty
+   * wagon has none. Drawn where the unit was last drawn.
+   * @param {CanvasRenderingContext2D} ctx @param {any[]} u
+   */
+  function drawCargo(ctx, u) {
+    const at = v.unitPos.get(u[0]);
+    const [wheat, bread] = [u[9] || 0, u[10] || 0];
+    if (!at || (!wheat && !bread)) return;
+    const [x, y, rad] = at;
+    const side = Math.max(5, rad * 0.62);
+    const [bx, by] = [x + rad * 0.82 - side / 2, y + rad * 0.42 - side / 2];
+    // Dimmed with the rest of a unit whose turn is over.
+    ctx.globalAlpha = u[1] === v.state.player && u[7] & 1 ? 0.55 : 1;
+    ctx.fillStyle = wheat ? WHEAT : BREAD;
+    ctx.fillRect(bx, by, side, side);
+    if (wheat && bread) {
+      ctx.fillStyle = BREAD;
+      ctx.fillRect(bx + side / 2, by, side / 2, side);
+    }
+    ctx.lineWidth = Math.max(1, side * 0.16);
+    ctx.strokeStyle = "rgba(0,0,0,.8)";
+    ctx.strokeRect(bx, by, side, side);
+    // The crate's band.
+    ctx.beginPath();
+    ctx.moveTo(bx, by + side / 2);
+    ctx.lineTo(bx + side, by + side / 2);
+    ctx.lineWidth = Math.max(1, side * 0.1);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  /**
+   * With supply on: the bread in each city and the wheat on each site, as a
+   * number at the foot of its hex. Through a player's fog, only the ones
+   * that player sees, as for capture progress (STRATEGIC.md §8).
+   * @param {CanvasRenderingContext2D} ctx @param {number} persp
+   */
+  function drawStockpiles(ctx, persp) {
+    const s = v.geo.size;
+    if (!v.info.supply || !v.state.sites || s < 14) return;
+    ctx.save();
+    ctx.font = "600 " + Math.max(9, Math.round(s * 0.3)) + "px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(2, s * 0.09);
+    const label = (/** @type {number} */ q, /** @type {number} */ r, /** @type {number} */ n, /** @type {string} */ color) => {
+      if (persp && !visibleTo(q, r, persp)) return;
+      const [x, y] = center(q, r);
+      const text = n.toLocaleString();
+      ctx.strokeStyle = "rgba(0,0,0,.75)";
+      ctx.strokeText(text, x, y + s * 0.78);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, y + s * 0.78);
+    };
+    v.info.cities.forEach((/** @type {number[]} */ c, /** @type {number} */ i) => {
+      // A neutral city holds nothing until someone takes it.
+      if (v.state.cities[i][0]) label(c[0], c[1], v.state.cities[i][4] || 0, "#fff");
+    });
+    v.info.sites.forEach((/** @type {number[]} */ site, /** @type {number} */ i) => {
+      if (v.state.sites[i][0]) label(site[0], site[1], v.state.sites[i][3], WHEAT);
+    });
+    ctx.restore();
   }
 
   /**
@@ -1151,53 +1225,186 @@
     updateHover();
   }
 
+  // The hover card: what is on the hex under the pointer, shown beside it.
+
+  /** How long the pointer rests on the board before the card shows, in ms. Once it shows, it keeps up with the pointer. */
+  const HOVER_DELAY = 160;
+  const hoverCard = el("div", "", "");
+  hoverCard.id = "hover-card";
+  hoverCard.hidden = true;
+  $("board").append(hoverCard);
+  /** Where the pointer is on the board, in CSS pixels. */
+  let pointer = [0, 0];
+  let hoverTimer = 0;
+
+  function hideHover() {
+    clearTimeout(hoverTimer);
+    hoverTimer = 0;
+    hoverCard.hidden = true;
+  }
+
+  /** A labeled bar for the card, `frac` full. @param {string} text @param {number} frac @param {string} color */
+  function meter(text, frac, color) {
+    const box = el("div", "", "hc-meter");
+    const bar = el("div", "", "hc-bar");
+    const fill = el("span", "");
+    fill.style.width = 100 * Math.max(0, Math.min(1, frac)) + "%";
+    fill.style.background = color;
+    bar.append(fill);
+    box.append(el("div", text), bar);
+    return box;
+  }
+
+  /** Fills the hover card for the hex under the pointer, and shows it once the pointer has rested. */
   function updateHover() {
-    const box = $("hover");
-    if (!v.hover || !v.state) {
-      box.textContent = "";
-      return;
-    }
+    const menu = document.getElementById("menu");
+    if (!v.hover || !v.state || (menu && !menu.hidden)) return hideHover();
     const [q, r] = v.hover;
     const ch = v.info.rows[r][q + Math.floor(r / 2)];
     const t = v.info.terrain[ch];
-    const lines = ["(" + q + "," + r + ") " + (t ? t.name + ", defense " + t.defense + "%, move " + (t.move_cost || "-") + (t.naval_move_cost ? ", ships " + t.naval_move_cost : "") : ch)];
     // In a game being played, the fog of war hides what is on the hex.
     const fog = fogged();
     const seen = !fog || visibleTo(q, r, fog);
+    const num = (/** @type {number} */ n) => n.toLocaleString();
+    const who = (/** @type {number} */ p) => (!p ? "neutral" : p === fog ? "yours" : playerName(p));
+    const dot = (/** @type {number} */ p) => {
+      const d = el("span", "", "hc-dot");
+      if (p) d.style.background = d.style.borderColor = playerColor(p);
+      return d;
+    };
+    /** @type {HTMLElement[]} */
+    const parts = [];
+
+    // The ground.
+    const head = el("div", "", "hc-head");
+    const chip = el("span", "", "hc-chip");
+    chip.style.background = /** @type {any} */ (v.dark ? TERRAIN.dark : TERRAIN.light)[ch] || "#888";
+    head.append(chip, el("b", t ? capitalize(t.name) : ch), el("span", q + "," + r, "hc-coord"));
+    parts.push(head);
+    if (t) {
+      const facts = [];
+      if (t.move_cost) facts.push("Move " + t.move_cost, "Defense " + t.defense + "%");
+      if (t.naval_move_cost) facts.push("Ships move " + t.naval_move_cost);
+      if (!t.move_cost && !t.naval_move_cost) facts.push("Can't be entered");
+      if (t.vision_bonus) facts.push("Vision +" + t.vision_bonus);
+      if (t.conceal) facts.push("Conceals units");
+      const row = el("div", "", "hc-facts");
+      for (const f of facts) row.append(el("span", f));
+      parts.push(row);
+    }
+
+    // The city or site on it.
+    const cp = v.info.capture_points;
+    /** @param {string} name @param {number} owner @param {number} capturer @param {number} progress @param {HTMLElement[]} lines */
+    const place = (name, owner, capturer, progress, lines) => {
+      const sec = el("div", "", "hc-sec");
+      const title = el("div", "", "hc-title");
+      title.append(dot(owner), el("b", name), el("span", who(owner), "hc-owner"));
+      sec.append(title, ...lines);
+      if (capturer && seen) sec.append(meter((capturer === fog ? "You are" : playerName(capturer) + " is") + " capturing it · " + progress + " of " + cp, progress / cp, playerColor(capturer)));
+      parts.push(sec);
+    };
     v.info.cities.forEach((/** @type {number[]} */ c, /** @type {number} */ i) => {
-      if (c[0] === q && c[1] === r) {
-        const [owner, capturer, progress, , bread] = v.state.cities[i];
-        let text = "city " + i + ", " + (owner ? "owned by " + playerName(owner) : "neutral");
-        if (capturer && seen) text += ", " + playerName(capturer) + " capturing " + progress + "/" + v.info.capture_points;
-        if (v.info.supply && seen) text += ", " + bread + " bread";
-        lines.push(text);
-      }
+      if (c[0] !== q || c[1] !== r) return;
+      const [owner, capturer, progress, , bread] = v.state.cities[i];
+      place("City " + i, owner, capturer, progress, v.info.supply && seen ? [el("div", num(bread) + " bread", "hc-line")] : []);
     });
-    if (v.state.sites) {
-      v.info.sites.forEach((/** @type {number[]} */ s, /** @type {number} */ i) => {
-        if (s[0] === q && s[1] === r) {
-          const [owner, capturer, progress, wheat] = v.state.sites[i];
-          let text = "site " + i + ", " + (owner ? "owned by " + playerName(owner) : "neutral") + ", grows " + s[3] + " wheat a turn up to " + s[4];
-          if (seen) text += ", holds " + wheat;
-          if (capturer && seen) text += ", " + playerName(capturer) + " capturing " + progress + "/" + v.info.capture_points;
-          lines.push(text);
-        }
-      });
-    }
-    if (fog && !seen) lines.push("out of sight");
-    for (const u of v.state.units) {
-      if (u[3] === q && u[4] === r && (seen || u[1] === fog)) {
+    (v.state.sites ? v.info.sites : []).forEach((/** @type {number[]} */ s, /** @type {number} */ i) => {
+      if (s[0] !== q || s[1] !== r) return;
+      const [owner, capturer, progress, wheat] = v.state.sites[i];
+      const lines = [el("div", "Grows " + s[3] + " wheat a turn" + (seen ? "" : ", up to " + num(s[4])), "hc-line")];
+      if (seen) lines.push(meter(num(wheat) + " of " + num(s[4]) + " wheat", wheat / s[4], WHEAT));
+      place("Site " + i, owner, capturer, progress, lines);
+    });
+
+    // The units on it, each transport followed by the units aboard.
+    const here = v.state.units.filter((/** @type {any[]} */ u) => u[3] === q && u[4] === r && (seen || u[1] === fog));
+    const listed = here.filter((/** @type {any[]} */ u) => !u[12]).flatMap((/** @type {any[]} */ u) => [u].concat(here.filter((/** @type {any[]} */ p) => p[12] === u[0])));
+    if (listed.length) {
+      const sec = el("div", "", "hc-sec");
+      for (const u of listed) {
         const type = v.info.units[u[2]];
-        // With supply on: wheat, bread, and rations follow the fortification level.
-        const food = v.info.supply ? ", " + u[11] + " rations" + (u[9] || u[10] ? ", carrying " + u[9] + " wheat and " + u[10] + " bread" : "") : "";
-        // Ships: the transport a unit is aboard, and how many a transport carries.
-        const riders = hasFlag(u[2], "transport") ? v.state.units.filter((/** @type {any[]} */ w) => w[12] === u[0]).length : 0;
-        const ship = (u[12] ? ", aboard transport " + u[12] : "") + (riders ? ", carrying " + riders + (riders === 1 ? " unit" : " units") : "");
-        lines.push("unit " + u[0] + " " + playerName(u[1]) + " " + (type ? type.name : u[2]) + " " + u[5] + " hp, " + u[6] + " mp" + (u[7] & 1 ? ", acted" : "") + (u[7] & 4 ? ", new" : "") + (u[8] ? ", dug in to level " + u[8] : "") + food + ship);
+        const name = type ? type.name : u[2];
+        const frac = Math.max(0, Math.min(1, u[5] / (type ? type.max_hp : 100)));
+        const row = el("div", "", "hc-unit" + (u[12] ? " aboard" : ""));
+        const main = el("div", "", "hc-main");
+        const top = el("div", "", "hc-top");
+        top.append(el("b", capitalize(name)), el("span", "#" + u[0], "hc-id"), el("span", u[5] + " hp", "hc-hp"));
+        const bar = el("div", "", "hc-bar");
+        const fill = el("span", "");
+        fill.style.width = 100 * frac + "%";
+        fill.style.background = frac > 0.6 ? "#3fb950" : frac > 0.3 ? "#e3b341" : "#f85149";
+        bar.append(fill);
+        const tags = [];
+        // Movement and actions are known for the side whose turn it is.
+        if (u[1] === v.state.player) tags.push(u[7] & 4 ? "new" : u[7] & 1 ? "done" : u[6] + " mp");
+        if (u[8]) tags.push("dug in " + u[8]);
+        if (v.info.supply) tags.push(u[11] + " rations");
+        if (hasFlag(u[2], "carry")) tags.push(u[9] || u[10] ? num(u[9]) + " wheat, " + num(u[10]) + " bread" : "empty");
+        if (hasFlag(u[2], "transport")) {
+          const riders = here.filter((/** @type {any[]} */ p) => p[12] === u[0]).length;
+          tags.push(riders ? riders + " aboard" : "nobody aboard");
+        }
+        if (u[12]) tags.push("aboard");
+        main.append(top, bar, el("div", tags.join(" · "), "hc-tags"));
+        row.append(BitbathPieces.icon({ code: u[2], name, naval: hasFlag(u[2], "naval") }, playerColor(u[1]), 22), main);
+        sec.append(row);
       }
+      parts.push(sec);
     }
-    if (fog) lines.push(...v.play.hoverLines(q, r));
-    box.textContent = lines.join("\n");
+    if (fog && !seen) parts.push(el("div", "Out of sight", "hc-sec hc-fog"));
+
+    // What a click would do, in a game being played. A fight has its own card.
+    const acts = fog ? v.play.hoverLines(q, r).filter((/** @type {string} */ l) => !l.startsWith("attack:")) : [];
+    if (acts.length) {
+      const sec = el("div", "", "hc-sec hc-acts");
+      for (const a of acts) sec.append(el("div", capitalize(a)));
+      parts.push(sec);
+    }
+
+    hoverCard.replaceChildren(...parts);
+    if (hoverCard.hidden && !hoverTimer) {
+      hoverTimer = window.setTimeout(() => {
+        hoverTimer = 0;
+        if (!v.hover) return;
+        hoverCard.hidden = false;
+        placeHover();
+      }, HOVER_DELAY);
+    }
+    placeHover();
+  }
+
+  /**
+   * Puts the hover card beside the pointer: on the side away from the unit
+   * picked in a game, so it doesn't lie over the way there. While a fight is
+   * forecast, it sits under that card instead, so the two read as one.
+   */
+  function placeHover() {
+    if (hoverCard.hidden) return;
+    const menu = document.getElementById("menu");
+    if (menu && !menu.hidden) return hideHover();
+    const board = $("board");
+    const [bw, bh] = [board.clientWidth, board.clientHeight];
+    const [w, h] = [hoverCard.offsetWidth, hoverCard.offsetHeight];
+    const fc = document.getElementById("forecast");
+    let [x, y] = [0, 0];
+    if (fc && !fc.hidden) {
+      x = fc.offsetLeft;
+      y = fc.offsetTop + fc.offsetHeight + 6;
+      if (y + h > bh - 4) y = fc.offsetTop - h - 6;
+    } else {
+      const picked = v.play && v.play.sel && v.play.sel.unit !== null ? v.unitPos.get(v.play.sel.unit) : null;
+      const right = !picked || pointer[0] >= picked[0];
+      const below = !picked || pointer[1] >= picked[1];
+      x = right ? pointer[0] + 18 : pointer[0] - 18 - w;
+      y = below ? pointer[1] + 20 : pointer[1] - 20 - h;
+      if (x + w > bw - 4) x = pointer[0] - 18 - w;
+      if (x < 4) x = pointer[0] + 18;
+      if (y + h > bh - 4) y = pointer[1] - 20 - h;
+      if (y < 4) y = pointer[1] + 20;
+    }
+    hoverCard.style.left = Math.max(4, Math.min(bw - w - 4, x)) + "px";
+    hoverCard.style.top = Math.max(4, Math.min(bh - h - 4, y)) + "px";
   }
 
   // The army chart over the slider: each player's army value at the start
@@ -1906,16 +2113,18 @@
     if (drag && (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3 || drag.moved)) {
       drag.moved = dragged = true;
       v.pan = [drag.pan[0] + e.clientX - drag.x, drag.pan[1] + e.clientY - drag.y];
+      hideHover();
       redrawAll();
       return;
     }
     const rect = canvas.getBoundingClientRect();
-    const h = hexAt(e.clientX - rect.left, e.clientY - rect.top);
+    pointer = [e.clientX - rect.left, e.clientY - rect.top];
+    const h = hexAt(pointer[0], pointer[1]);
     if (String(h) !== String(v.hover)) {
       v.hover = h;
       updateHover();
       draw();
-    }
+    } else placeHover();
   });
   canvas.addEventListener("mouseleave", () => {
     v.hover = null;

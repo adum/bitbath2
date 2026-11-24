@@ -185,7 +185,6 @@ body { margin: 0; }
   #reply { margin-top: 6px; height: 4.2em; overflow-y: auto; }
   pre { white-space: pre-wrap; word-break: break-word; margin: 0; max-height: 200px; overflow-y: auto; }
   details summary { cursor: pointer; color: var(--muted); }
-  #hover { color: var(--muted); height: 8.4em; overflow-y: auto; white-space: pre-wrap; }
   button, select, input[type=file]::file-selector-button {
     font: inherit;
     color: var(--text);
@@ -259,6 +258,35 @@ body { margin: 0; }
   #forecast .fc-delta { font-weight: 700; color: #f03e3e; font-variant-numeric: tabular-nums; }
   #forecast .fc-delta.none { font-weight: 400; color: var(--muted); }
   #forecast .fc-hint { margin-top: 6px; color: var(--muted); font-size: 12px; }
+  /* What is on the hex under the pointer. It goes with the pointer, which
+     passes through it. */
+  #hover-card {
+    position: absolute; z-index: 2; pointer-events: none; width: max-content; min-width: 168px; max-width: 280px; font-size: 13px; line-height: 1.35;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, .28); overflow: hidden;
+  }
+  #hover-card .hc-head { display: flex; align-items: center; gap: 8px; padding: 8px 11px 2px; }
+  #hover-card .hc-chip { width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25); }
+  #hover-card .hc-coord { margin-left: auto; padding-left: 12px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  #hover-card .hc-facts { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 0 11px 8px; color: var(--muted); font-size: 12px; }
+  #hover-card .hc-sec { padding: 7px 11px 8px; border-top: 1px solid var(--border); }
+  #hover-card .hc-title { display: flex; align-items: center; gap: 7px; }
+  #hover-card .hc-dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--muted); box-sizing: border-box; }
+  #hover-card .hc-owner { margin-left: auto; padding-left: 12px; color: var(--muted); font-size: 12px; }
+  #hover-card .hc-line, #hover-card .hc-meter { margin-top: 4px; font-variant-numeric: tabular-nums; }
+  #hover-card .hc-meter > div:first-child { color: var(--muted); font-size: 12px; margin-bottom: 3px; }
+  #hover-card .hc-bar { height: 5px; border-radius: 3px; overflow: hidden; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
+  #hover-card .hc-bar span { display: block; height: 100%; }
+  #hover-card .hc-unit { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: start; }
+  #hover-card .hc-unit + .hc-unit { margin-top: 8px; }
+  #hover-card .hc-unit.aboard { margin-left: 16px; }
+  #hover-card .hc-unit .piece-icon { margin-top: 1px; }
+  #hover-card .hc-top { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
+  #hover-card .hc-id { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  #hover-card .hc-hp { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
+  #hover-card .hc-tags { margin-top: 3px; color: var(--muted); font-size: 12px; }
+  #hover-card .hc-fog { color: var(--muted); font-style: italic; }
+  #hover-card .hc-acts { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); font-weight: 500; }
+  #hover-card .hc-acts div + div { margin-top: 2px; font-weight: 400; color: var(--muted); }
   #error { color: var(--p1); white-space: pre-wrap; }
   @media (max-width: 800px) {
     .game-layout { flex-direction: column; }
