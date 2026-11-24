@@ -191,16 +191,34 @@
           ctx.quadraticCurveTo(x + s * 0.2, y + s * 0.2, x + s * 0.4, y);
           ctx.stroke();
         } else if (ch === "R") {
-          // A resource site: three stalks of wheat.
-          for (const dx of [-0.25, 0, 0.25]) {
+          // A resource site: an ear of wheat. Its grains sit in pairs up the
+          // stalk, leaning outward, with one at the tip and awns above them.
+          // It is drawn in a wheat color, warmer than the other terrain marks.
+          ctx.strokeStyle = ctx.fillStyle = v.dark ? "rgba(255,221,128,.6)" : "rgba(112,74,0,.55)";
+          ctx.lineCap = "round";
+          ctx.lineWidth = Math.max(1, s * 0.06);
+          ctx.beginPath();
+          ctx.moveTo(x, y + s * 0.46);
+          ctx.lineTo(x, y - s * 0.3);
+          ctx.stroke();
+          const grain = (/** @type {number} */ gx, /** @type {number} */ gy, /** @type {number} */ turn) => {
             ctx.beginPath();
-            ctx.moveTo(x + dx * s, y + s * 0.32);
-            ctx.lineTo(x + dx * s, y - s * 0.1);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.ellipse(x + dx * s, y - s * 0.22, s * 0.06, s * 0.14, 0, 0, 2 * Math.PI);
+            ctx.ellipse(x + gx * s, y + gy * s, s * 0.072, s * 0.135, turn, 0, 2 * Math.PI);
             ctx.fill();
+          };
+          for (const gy of [0.12, -0.05, -0.22]) {
+            grain(-0.115, gy, -0.5);
+            grain(0.115, gy, 0.5);
           }
+          grain(0, -0.4, 0);
+          ctx.lineWidth = Math.max(0.75, s * 0.03);
+          ctx.beginPath();
+          for (const [ax, ay, bx, by] of [[0, -0.5, 0, -0.68], [-0.17, -0.31, -0.27, -0.5], [0.17, -0.31, 0.27, -0.5]]) {
+            ctx.moveTo(x + ax * s, y + ay * s);
+            ctx.lineTo(x + bx * s, y + by * s);
+          }
+          ctx.stroke();
+          ctx.lineCap = "butt";
         }
       }
     }
