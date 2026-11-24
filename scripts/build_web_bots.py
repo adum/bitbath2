@@ -36,7 +36,8 @@ def build(root):
     shutil.copyfile(root / "scripts" / "pyodide-LICENSE.txt", runtime / "LICENSE.txt")
 
     sources = [root / "kits/python/bitbath.py", root / "scripts/browser_bot.py"]
-    sources.extend(root / "bots" / f"{name}_bot.py" for name in ("bastion", "smart", "vanguard"))
+    # Supply and Naval play the strategic ruleset, and build on Vanguard.
+    sources.extend(root / "bots" / f"{name}_bot.py" for name in ("bastion", "smart", "vanguard", "supply", "naval"))
     with zipfile.ZipFile(web / "reference-bots.zip", "w") as bundle:
         for source in sources:
             bundle.writestr(zipfile.ZipInfo(source.name), source.read_bytes(), compress_type=zipfile.ZIP_DEFLATED)

@@ -14,12 +14,62 @@
   const $ = V.$;
   const el = V.el;
 
-  /** Map sizes a game can be played on, as config lines like those in configs/. Small is configs/small.toml. */
+  /**
+   * The strategic ruleset (STRATEGIC.md): bread in place of gold, sites,
+   * wagons, rations, and ships. These are the rules of
+   * configs/strategic.toml, without its map.
+   */
+  const STRATEGIC = [
+    "time_bank_ms = 10000", "time_increment_ms = 2000", "time_bank_cap_ms = 20000",
+    "supply = 1", "start_bread = 300", "city_bread = 10",
+    "site_output_min = 20", "site_output_max = 100", "site_cap_min = 400", "site_cap_max = 3000",
+    "cargo_max = 1000", "passengers_max = 4",
+    "ration_max = 60", "eat_base = 1", "eat_move = 1", "eat_attack = 1", "ration_cost = 5", "starve_hp = 10",
+    'start_units = "I,I,S,W"',
+    'terrain.R = "site 1 0 0 0"',
+    'unit.W = "wagon 100 100 4 2 1 1 carry"',
+    "damage.I.W = 70", "damage.P.W = 60", "damage.K.W = 90", "damage.A.W = 70", "damage.S.W = 40",
+    "terrain.water.naval_move_cost = 1",
+    'unit.T = "transport 150 100 6 2 1 1 naval,transport"',
+    'unit.G = "galley 200 100 5 3 1 1 naval,zoc"',
+    "damage.A.T = 40", "damage.A.G = 40",
+    "damage.G.I = 25", "damage.G.P = 25", "damage.G.K = 25", "damage.G.A = 30", "damage.G.S = 35", "damage.G.W = 50", "damage.G.T = 80", "damage.G.G = 55",
+  ].join("\n");
+
+  /** A map under the strategic rules. @param {string} map its own config lines */
+  const strategic = (map) => STRATEGIC + "\n" + map;
+
+  /**
+   * The maps a game can be played on, as config lines like those in configs/.
+   * Small is configs/small.toml. The ones with `rules: "strategic"` play the
+   * strategic ruleset, and need an opponent that knows it. Islands is
+   * configs/islands.toml, and Strategic is configs/strategic.toml.
+   */
   const MAPS = [
     { id: "micro", name: "Micro", about: "12 × 8 hexes, 2 neutral cities, 80 rounds: a quick skirmish.", config: "map_width = 12\nmap_height = 8\nneutral_cities = 2\nround_limit = 80" },
     { id: "small", name: "Small", about: "20 × 14 hexes, 4 neutral cities, 80 rounds.", config: "map_width = 20\nmap_height = 14\nneutral_cities = 4\nround_limit = 80" },
     { id: "medium", name: "Medium", about: "28 × 20 hexes, 6 neutral cities, 120 rounds.", config: "map_width = 28\nmap_height = 20\nneutral_cities = 6\nround_limit = 120" },
     { id: "standard", name: "Standard", about: "40 × 30 hexes, 10 neutral cities, 200 rounds: what bots play, and a lot to run by hand.", config: "" },
+    {
+      id: "islets", name: "Islets", label: "Islets · ships and food", rules: "strategic",
+      about: "The strategic rules on 24 × 18 hexes: bread instead of gold, wagons, rations, and ships. Each side has a home island with a port to take, and the richest sites are on the island between. 300 rounds.",
+      config: strategic('map_layout = "islands"\nmap_width = 24\nmap_height = 18\nneutral_cities = 2\nsites = 4\nround_limit = 300'),
+    },
+    {
+      id: "islands", name: "Islands", label: "Islands · ships and food", rules: "strategic",
+      about: "The same islands at 40 × 30 hexes, with longer coasts and more sea to cross. 500 rounds.",
+      config: strategic('map_layout = "islands"\nmap_width = 40\nmap_height = 30\nneutral_cities = 2\nsites = 4\nround_limit = 500'),
+    },
+    {
+      id: "seas", name: "Seas", label: "Seas · ships and food", rules: "strategic",
+      about: "The strategic rules on 30 × 22 hexes of land and sea: 8 neutral cities and 8 sites, some of them across the water. 400 rounds.",
+      config: strategic("map_width = 30\nmap_height = 22\nneutral_cities = 8\nsites = 8\nwater_pct = 45\nround_limit = 400"),
+    },
+    {
+      id: "strategic", name: "Strategic", label: "Strategic · ships and food", rules: "strategic",
+      about: "The strategic ruleset in full: 80 × 60 hexes, 46 neutral cities, 32 sites, and up to 5,000 rounds. A very long game by hand.",
+      config: strategic("map_width = 80\nmap_height = 60\nneutral_cities = 46\nsites = 32\nwater_pct = 45\nround_limit = 5000"),
+    },
   ];
 
   /**
@@ -147,6 +197,12 @@
   /** How long the opponent's turn takes to play out on the map, in ms. */
   const TURN_MS = 700;
 
+  /**
+   * With supply on, a unit is marked as short of rations when what it
+   * carries wouldn't last this many turns of marching and fighting.
+   */
+  const HUNGRY_TURNS = 4;
+
   /** @param {number} ms */
   const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -186,6 +242,7 @@
       this.turnStart = 0;
       this.stats = [newStats(), newStats()];
       /** The types of the human's units, to name the ones the opponent destroys. @type {Map<number, string>} */ this.types = new Map();
+      /** The transports the human's units were aboard as the opponent's turn began, by id. @type {Map<number, number>} */ this.carriers = new Map();
     }
 
     // Turns.
@@ -241,9 +298,11 @@
       this.sel = null;
       this.problem = "";
       this.hps.clear();
+      this.carriers.clear();
       for (const u of this.kit ? this.kit.view.myUnits() : []) {
         this.types.set(u.id, u.type);
         this.hps.set(u.id, u.hp);
+        if (u.carrier) this.carriers.set(u.id, u.carrier);
       }
       const lines = this.begin(3 - this.human, this.bot.clock);
       const turn = this.turn;
@@ -291,8 +350,9 @@
 
     humanTurn() {
       const lines = this.begin(this.human);
-      const logs = Kit.View.fromTurn(this.world, this.human, lines).logs;
-      this.log = this.describe(logs);
+      const view = Kit.View.fromTurn(this.world, this.human, lines);
+      const logs = view.logs;
+      this.log = this.describe(logs).concat(this.hunger(view, logs));
       this.tally = this.count(logs);
       this.busy = false;
       // As a step of playback, so the damage numbers of the opponent's
@@ -312,8 +372,35 @@
           return hit + (t[7] === "0" ? ", and died doing it." : ".");
         }
         if (t[0] === "CITY") return t[2] === String(this.human) ? "You lost city " + t[1] + "." : this.botName + " took city " + t[1] + ".";
+        if (t[0] === "SITE") return t[2] === String(this.human) ? "You lost site " + t[1] + "." : this.botName + " took site " + t[1] + ".";
         return t.join(" ");
       });
+    }
+
+    /**
+     * What the turn's log doesn't say, with supply on: the human's units
+     * that went down with a transport, the ones that starved to death as
+     * this turn began, and the ones now out of rations.
+     * @param {any} view the human's view as the turn begins @param {string[][]} logs @returns {string[]}
+     */
+    hunger(view, logs) {
+      if (!this.world.supply) return [];
+      const name = (/** @type {string} */ code) => (this.world.unitTypes[code] ? this.world.unitTypes[code].name : "unit");
+      const killed = new Set(logs.filter((t) => t[0] === "HIT" && t[6] === "0").map((t) => Number(t[5])));
+      const out = [];
+      for (const id of this.hps.keys()) {
+        if (view.units.has(id) || killed.has(id)) continue;
+        const sunk = killed.has(this.carriers.get(id) || 0);
+        out.push("Your " + name(this.types.get(id) || "") + (sunk ? " went down with its transport." : " starved to death."));
+      }
+      // A unit with no rations left that lost hit points to nobody starved.
+      const hit = new Set(logs.filter((t) => t[0] === "HIT").map((t) => Number(t[5])));
+      for (const u of view.myUnits()) {
+        if (u.rations) continue;
+        const lost = hit.has(u.id) ? 0 : (this.hps.get(u.id) || 0) - u.hp;
+        out.push("Your " + name(u.type) + " at (" + u.q + "," + u.r + ") " + (lost > 0 ? "is starving: it lost " + lost + " hp." : "is out of rations."));
+      }
+      return out;
     }
 
     /** Adds the opponent's last turn up, from the same LOG lines. @param {string[][]} logs @returns {[string, number, boolean][]} */
@@ -390,7 +477,11 @@
     /** Whether a unit of the human's has anything left to do this turn. @param {any} u */
     canDo(u) {
       const kit = this.kit;
-      return kit.canAct(u) && (kit.reachable(u, this.zoc).size > 0 || kit.canCapture(u) || (kit.canAttack(u) && kit.targetsInRange(u).length > 0));
+      if (!kit.canAct(u)) return false;
+      if (kit.reachable(u, this.zoc).size > 0 || kit.canCapture(u) || (kit.canAttack(u) && kit.targetsInRange(u).length > 0)) return true;
+      // A wagon that has stopped still has wheat to turn into bread, or a
+      // site's wheat to take on. A city's bread is no reason: it can stay.
+      return (u.wheat > 0 && kit.unloadable(u) > 0) || (!!kit.view.siteAt(u.hex) && kit.loadable(u) > 0);
     }
 
     /** Gives one of the human's orders, and shows what it did. @param {string} line */
@@ -430,11 +521,30 @@
       if (unit && this.myTurn() && this.kit.canCapture(unit)) this.order("C " + unit.id);
     }
 
+    /**
+     * A wagon's L or U order (STRATEGIC.md §4), for all it can move or at most `amount`.
+     * @param {string} op "L" or "U" @param {number} [amount]
+     */
+    carry(op, amount) {
+      const unit = this.unit();
+      if (!unit || !this.myTurn()) return;
+      if (!(op === "L" ? this.kit.loadable(unit) : this.kit.unloadable(unit))) return;
+      // The amount typed is for this one order.
+      carryAmount = "";
+      this.order(op + " " + unit.id + (amount ? " " + amount : ""));
+    }
+
     /** Why a city of the human's can't build a unit type right now, or "" if it can. @param {any} city @param {any} type */
     cantBuild(city, type) {
       const view = this.kit.view;
       if (city.built) return "This city has built its unit for this turn.";
-      if (view.friendsAt(city.hex) >= this.world.c.stack_limit) return "The city is full: move a unit out to build.";
+      if (type.naval) {
+        // A ship goes onto the water next to a port (STRATEGIC.md §6).
+        if (!this.world.isPort(city.hex)) return "Only a port, a city next to water, builds ships.";
+        if (!this.kit.launchHex(city)) return "The water next to this city has no room for a ship.";
+      } else if (view.friendsAt(city.hex) >= this.world.c.stack_limit) return "The city is full: move a unit out to build.";
+      // With supply on, each city pays from its own bread.
+      if (this.world.supply) return city.bread < type.cost ? V.capitalize(type.name) + " costs " + type.cost + " bread, and this city has " + city.bread + "." : "";
       if (view.gold < type.cost) return V.capitalize(type.name) + " costs " + type.cost + " gold, and you have " + view.gold + ".";
       return "";
     }
@@ -509,6 +619,8 @@
       else if (key === "N" || key === "Tab") this.nextUnit();
       else if (key === "Escape") this.select(null);
       else if (key === "C" && unit && this.kit.canCapture(unit)) this.capture();
+      else if (key === "L" && unit && this.kit.loadable(unit)) this.carry("L", amountAsked());
+      else if (key === "U" && unit && this.kit.unloadable(unit)) this.carry("U", amountAsked());
       else if (this.world.unitTypes[key] && city && city.owner === this.human) this.build(city, key);
       else return;
       e.preventDefault();
@@ -557,10 +669,15 @@
       const i = this.world.index([q, r]);
       const dirs = this.reach.get(i);
       if (dirs !== undefined) {
-        const cost = Kit.walk(unit.hex, dirs).slice(1).reduce((/** @type {number} */ sum, /** @type {number[]} */ h) => sum + this.world.terrain(h).move_cost, 0);
-        const stops = this.zoc.has(i) && !this.kit.unitType(unit).skirmish;
-        out.push("move: " + cost + " of " + unit.mp + " mp" + (stops ? ", and stop in a zone of control" : ""));
-        if (this.kit.view.friendsAt([q, r])) out.push("right-click to move onto your own units");
+        const type = this.kit.unitType(unit);
+        // A hex the unit couldn't otherwise enter is a transport to board, for 1 MP.
+        const boards = !type.naval && !unit.carrier && !this.world.passable([q, r]);
+        const cost = Kit.walk(unit.hex, dirs).slice(1).reduce((/** @type {number} */ sum, /** @type {number[]} */ h) => sum + (this.world.cost(h, type.naval) || 1), 0);
+        const stops = this.zoc.has(i) && !type.skirmish;
+        if (boards) out.push("board the transport: " + cost + " of " + unit.mp + " mp, and it ends the move");
+        else if (unit.carrier) out.push("land: it ends the move, but the unit can still attack or capture");
+        else out.push("move: " + cost + " of " + unit.mp + " mp" + (stops ? ", and stop in a zone of control" : ""));
+        if (this.kit.view.friendsAt([q, r])) out.push(boards ? "right-click to board" : "right-click to move onto your own units");
       }
       return out;
     }
@@ -593,7 +710,7 @@
         for (let dq = -n; dq <= n; dq++) {
           for (let dr = -n; dr <= n; dr++) {
             const h = [target.hex[0] + dq, target.hex[1] + dr];
-            if (!inRange(h) || this.world.index(h) < 0 || !this.world.passable(h)) continue;
+            if (!inRange(h) || this.world.index(h) < 0 || !this.world.cost(h, type.naval)) continue;
             if (!kit.view.unitsAt(h).some((/** @type {any} */ u) => u.owner !== this.human)) spots.push(h);
           }
         }
@@ -618,7 +735,11 @@
       const unit = this.unit();
       const hex = v.hover;
       const can = unit && hex && this.myTurn() && v.state.player === this.human && !v.anim && $("menu").hidden;
-      const plans = can ? this.kit.view.enemyUnits().filter((/** @type {any} */ t) => t.q === hex[0] && t.r === hex[1]).map((/** @type {any} */ t) => ({ t, ...this.attackFrom(unit, t) })) : [];
+      // Not the units aboard a transport, which can't be attacked, nor the
+      // ones this unit can't hurt, nor anything for a unit that is aboard.
+      const hurts = can && !unit.carrier ? this.world.damage[unit.type] || {} : {};
+      const foes = can ? this.kit.view.enemyUnits().filter((/** @type {any} */ t) => t.q === hex[0] && t.r === hex[1] && !t.carrier && hurts[t.type] > 0) : [];
+      const plans = foes.map((/** @type {any} */ t) => ({ t, ...this.attackFrom(unit, t) }));
       const fights = plans.filter((p) => p.when === "now" || p.from);
       if (!unit || !hex || !fights.length) {
         card.hidden = true;
@@ -734,7 +855,6 @@
     drawBuildBadges(ctx) {
       if (this.over || !this.kit || !this.myTurn() || v.state.player !== this.human) return;
       const types = /** @type {any[]} */ (Object.values(this.world.unitTypes));
-      const cheapest = types.reduce((a, b) => (b.cost < a.cost ? b : a));
       const s = v.geo.size;
       // Small and a little see-through: it's a reminder, not a call to act.
       const r = Math.max(3.5, s * 0.14);
@@ -742,7 +862,7 @@
       ctx.globalAlpha = 0.85;
       ctx.lineCap = "round";
       for (const city of this.kit.view.cities.values()) {
-        if (city.owner !== this.human || this.cantBuild(city, cheapest)) continue;
+        if (city.owner !== this.human || types.every((t) => this.cantBuild(city, t))) continue;
         const [cx, cy] = V.center(city.hex[0], city.hex[1]);
         const [x, y] = [cx + s * 0.62, cy - s * 0.52];
         ctx.beginPath();
@@ -761,14 +881,70 @@
       ctx.restore();
     }
 
+    /**
+     * With supply on: the bread in each of the human's cities and the wheat
+     * on each of their sites, as a number at the foot of the hex, and a mark
+     * on each of their units that is short of rations. The mark is amber when
+     * the rations left wouldn't last `HUNGRY_TURNS` turns of marching and
+     * fighting, and red when there are none.
+     * @param {CanvasRenderingContext2D} ctx
+     */
+    drawSupply(ctx) {
+      if (this.over || !this.kit || !this.world.supply) return;
+      const view = this.kit.view;
+      const s = v.geo.size;
+      const c = this.world.c;
+      ctx.save();
+      if (s >= 14) {
+        ctx.font = "600 " + Math.max(9, Math.round(s * 0.3)) + "px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = Math.max(2, s * 0.09);
+        const label = (/** @type {number[]} */ hex, /** @type {number} */ n, /** @type {string} */ color) => {
+          const [x, y] = V.center(hex[0], hex[1]);
+          const text = n.toLocaleString();
+          ctx.strokeStyle = "rgba(0,0,0,.75)";
+          ctx.strokeText(text, x, y + s * 0.78);
+          ctx.fillStyle = color;
+          ctx.fillText(text, x, y + s * 0.78);
+        };
+        for (const city of view.myCities()) label(city.hex, city.bread, "#fff");
+        // Wheat is the color of the stalks the viewer draws on a site.
+        for (const site of view.mySites()) label(site.hex, site.wheat, "#ffd43b");
+      }
+      const low = HUNGRY_TURNS * ((c.eat_base || 0) + (c.eat_move || 0) + (c.eat_attack || 0));
+      for (const u of view.myUnits()) {
+        const at = u.carrier ? null : v.unitPos.get(u.id);
+        if (!at || u.rations >= low) continue;
+        const [x, y, rad] = at;
+        const r = Math.max(3, rad * 0.36);
+        const [bx, by] = [x - rad * 0.8, y + rad * 0.45];
+        ctx.beginPath();
+        ctx.arc(bx, by, r, 0, 2 * Math.PI);
+        ctx.fillStyle = u.rations ? "#fab005" : "#f03e3e";
+        ctx.fill();
+        ctx.lineWidth = Math.max(1, r * 0.25);
+        ctx.strokeStyle = "rgba(0,0,0,.75)";
+        ctx.stroke();
+        // An exclamation mark.
+        ctx.fillStyle = "rgba(0,0,0,.85)";
+        ctx.fillRect(bx - r * 0.14, by - r * 0.6, r * 0.28, r * 0.72);
+        ctx.fillRect(bx - r * 0.14, by + r * 0.3, r * 0.28, r * 0.28);
+      }
+      ctx.restore();
+    }
+
     /** Over the units: a ring on the picked unit or hex, and on each enemy the unit can attack. @param {CanvasRenderingContext2D} ctx */
     drawOver(ctx) {
       this.showForecast();
       this.drawBuildBadges(ctx);
+      this.drawSupply(ctx);
       if (this.over || !this.sel) return;
       const s = v.geo.size;
       const unit = this.unit();
-      const at = unit ? v.unitPos.get(unit.id) : null;
+      // A unit aboard isn't drawn: the ring goes on its transport.
+      const at = unit ? v.unitPos.get(unit.carrier || unit.id) : null;
       ctx.save();
       ctx.strokeStyle = V.cssVar("--text");
       ctx.lineWidth = Math.max(2, s * 0.1);
@@ -849,51 +1025,112 @@
         const info = v.info.units[type.code];
         return BitbathPieces.icon({ code: type.code, name: type.name, naval: !!info && info.flags.split(",").includes("naval") }, V.playerColor(owner));
       };
-      box.append(el("div", "(" + hex[0] + "," + hex[1] + ") " + world.terrain(hex).name + (city ? " · city " + city.id : ""), "label"));
-      for (const u of view.unitsAt(hex)) {
+      const supply = world.supply;
+      const num = (/** @type {number} */ n) => n.toLocaleString();
+      const site = view.siteAt(hex);
+      const seen = V.visibleTo(hex[0], hex[1], this.human);
+      let place = "";
+      if (city) place = " · city " + city.id + (supply && world.isPort(hex) ? ", a port" : "") + (supply && seen ? " · " + num(city.bread) + " bread" : "");
+      else if (site) place = " · site " + site.id + " · grows " + site.output + " wheat a turn" + (seen ? ", holds " + num(site.wheat) + " of " + num(site.cap) : ", up to " + num(site.cap));
+      box.append(el("div", "(" + hex[0] + "," + hex[1] + ") " + world.terrain(hex).name + place, "label"));
+      // Each transport is followed by the units aboard it.
+      const here = view.unitsAt(hex);
+      const listed = here.filter((/** @type {any} */ u) => !u.carrier).flatMap((/** @type {any} */ u) => [u].concat(here.filter((/** @type {any} */ p) => p.carrier === u.id)));
+      const hungry = HUNGRY_TURNS * ((world.c.eat_base || 0) + (world.c.eat_move || 0) + (world.c.eat_attack || 0));
+      for (const u of listed) {
         const type = kit.unitType(u);
         const dug = u.fort ? " · dug in to level " + u.fort : "";
+        // What the strategic rules add: rations, a wagon's cargo, and who is aboard.
+        const more = [];
+        if (u.carrier) more.push("aboard");
+        if (type.transport) more.push(view.passengers(u).length + " of " + (world.c.passengers_max || 0) + " aboard");
+        if (type.carry) more.push(num(u.wheat) + " wheat, " + num(u.bread) + " bread");
+        if (supply) more.push(u.rations + " rations");
+        const extra = el("small", more.join(" · "), "unit-more" + (supply && u.rations < hungry ? " hungry" : ""));
         if (u.owner !== this.human) {
-          const row = el("div", "Enemy " + type.name + " · " + u.hp + " hp" + dug, "enemy");
+          const row = el("div", "Enemy " + type.name + " · " + u.hp + " hp" + dug, "enemy" + (u.carrier ? " aboard" : ""));
           row.prepend(token(type, u.owner));
+          if (more.length) row.append(extra);
           box.append(row);
           continue;
         }
         const state = u.fresh ? "new, ready next turn" : u.acted ? "done" : u.mp + " mp";
-        const cls = "unit" + (unit && unit.id === u.id ? " chosen" : "") + (this.ready.includes(u.id) ? "" : " spent");
+        const cls = "unit" + (unit && unit.id === u.id ? " chosen" : "") + (this.ready.includes(u.id) ? "" : " spent") + (u.carrier ? " aboard" : "");
         const pick = button(V.capitalize(type.name) + " · " + u.hp + " hp · " + state + dug, () => this.select({ hex, unit: u.id }), cls);
         pick.prepend(token(type, u.owner));
+        if (more.length) pick.append(extra);
         box.append(pick);
       }
       if (unit && mine) {
         if (kit.canCapture(unit)) {
-          const progress = (city.capturer === this.human ? city.progress : 0) + unit.hp;
-          const what = progress >= world.c.capture_points ? "takes the city" : progress + " of " + world.c.capture_points;
+          const prize = kit.prize(unit);
+          const progress = (prize.capturer === this.human ? prize.progress : 0) + unit.hp;
+          const what = progress >= world.c.capture_points ? "takes the " + (city ? "city" : "site") : progress + " of " + world.c.capture_points;
           const row = el("div", "", "row");
           row.append(button("Capture (C) · " + what, () => this.capture(), "primary"));
           box.append(row);
         }
+        const [load, unload] = [kit.loadable(unit), kit.unloadable(unit)];
+        if (load || unload) {
+          // A wagon's goods: wheat from a site, bread from a city, and both into a city.
+          const row = el("div", "", "row");
+          if (load) row.append(button("Load (L) · " + num(load) + (city ? " bread" : " wheat"), () => this.carry("L", amountAsked()), "primary"));
+          if (unload) row.append(button("Unload (U) · " + num(unload), () => this.carry("U", amountAsked()), city && !load ? "primary" : ""));
+          const amount = /** @type {HTMLInputElement} */ (el("input", "", ""));
+          amount.id = "carry-amount";
+          amount.type = "number";
+          amount.min = "1";
+          amount.placeholder = "all";
+          amount.title = "The most to load or unload. Empty moves all of it.";
+          amount.value = carryAmount;
+          amount.oninput = () => (carryAmount = amount.value);
+          row.append(amount);
+          box.append(row);
+          box.append(el("div", "A wagon can't move after loading or unloading.", "muted"));
+        }
       }
       if (city && city.owner === this.human && mine) {
-        // A reason that holds for a unit costing nothing holds for them all.
-        const why = this.cantBuild(city, { name: "", cost: 0 });
-        box.append(el("div", "Build · " + view.gold + " gold", "label"));
+        const types = /** @type {any[]} */ (Object.values(world.unitTypes));
+        const whys = types.map((type) => this.cantBuild(city, type));
+        box.append(el("div", supply ? "Build · " + num(city.bread) + " bread in this city" : "Build · " + view.gold + " gold", "label"));
         const row = el("div", "", "row");
-        for (const type of Object.values(world.unitTypes)) {
+        types.forEach((type, i) => {
           const b = button(V.capitalize(type.name) + " " + type.cost, () => this.build(city, type.code), "");
           b.prepend(token(type, this.human));
-          b.disabled = !!this.cantBuild(city, type);
-          b.title = "Key " + type.code + " · move " + type.move + ", vision " + type.vision + ", range " + (type.range_min === type.range_max ? type.range_min : type.range_min + "–" + type.range_max);
+          b.disabled = !!whys[i];
+          b.title = (whys[i] ? whys[i] + " " : "") + "Key " + type.code + " · move " + type.move + ", vision " + type.vision + ", range " + (type.range_min === type.range_max ? type.range_min : type.range_min + "–" + type.range_max);
           row.append(b);
-        }
+        });
         box.append(row);
-        if (why) box.append(el("div", why, "muted"));
+        // When nothing can be built, the reason the cheapest unit can't.
+        if (whys.every(Boolean)) box.append(el("div", whys[types.indexOf(types.reduce((a, b) => (b.cost < a.cost ? b : a)))], "muted"));
       }
     }
   }
 
   // The tokens in the side panel follow the style picked in the settings.
   BitbathPieces.onChange(() => current && current.render());
+
+  /** What is typed in the wagon's amount field, kept while the side panel is redrawn. */
+  let carryAmount = "";
+
+  /** Shows, on the help line under the board, the keys the strategic rules add. @param {boolean} on */
+  function supplyHelp(on) {
+    let extra = document.getElementById("supply-help");
+    if (!extra) {
+      extra = el("span", " With a wagon, ", "");
+      extra.id = "supply-help";
+      extra.append(el("kbd", "L"), " loads and ", el("kbd", "U"), " unloads. Right-click one of your transports to board it; a unit aboard lands on a tinted hex.");
+      $("live-help").append(extra);
+    }
+    extra.hidden = !on;
+  }
+
+  /** The most a wagon should load or unload, as typed, or undefined for all of it. */
+  function amountAsked() {
+    const n = Math.floor(Number(carryAmount));
+    return n > 0 ? n : undefined;
+  }
 
   // The menu for picking one of several targets on a hex.
 
@@ -960,6 +1197,7 @@
       throw new Error($("error").textContent);
     }
     current = game;
+    supplyHelp(game.world.supply);
     game.recording = GameRecording.start({ player: name, opponent: kind.name, map: map.name, seat: human, header });
     try {
       if (bot.initMs) bot.initMs = game.world.c.init_ms || bot.initMs;
@@ -979,7 +1217,9 @@
   /**
    * The bots to play against: the ones built into the page, then the ones
    * `bitbath serve` offers, if that is what serves the page.
-   * @type {{id: string, name: string, label?: string, about: string, command: string, create: (seed: number) => any}[]}
+   * Each built-in bot knows one ruleset, its `rules`: the default game's if
+   * there is none. A bot on disk may know any.
+   * @type {{id: string, name: string, label?: string, about: string, rules?: string, command: string, create: (seed: number) => any}[]}
    */
   const opponents = Bots.list.map((/** @type {any} */ b) => Object.assign({ command: "built-in " + b.id + " bot" }, b));
 
@@ -1001,7 +1241,21 @@
   const query = new URLSearchParams(location.search);
   const mapId = query.get("map");
   if (MAPS.some((m) => m.id === mapId)) $("map-size").value = mapId;
-  abouts.forEach((about) => about());
+
+  /** Offers the opponents that can play the map picked, and picks one of them if the one picked can't. */
+  function offerOpponents() {
+    const map = MAPS.find((m) => m.id === $("map-size").value) || MAPS[0];
+    const select = /** @type {HTMLSelectElement} */ ($("opponent"));
+    const fits = (/** @type {string} */ id) => {
+      const kind = opponents.find((b) => b.id === id);
+      return !!kind && (kind.rules === "any" || (kind.rules || "") === (map.rules || ""));
+    };
+    for (const option of Array.from(select.options)) option.hidden = option.disabled = !fits(option.value);
+    if (!fits(select.value)) select.value = fits("greedy") ? "greedy" : (opponents.find((b) => fits(b.id)) || opponents[0]).id;
+    abouts.forEach((about) => about());
+  }
+  $("map-size").addEventListener("change", offerOpponents);
+  offerOpponents();
 
   // The bots on disk. A page opened as a file, or served by anything but
   // `bitbath serve`, has none.
@@ -1015,6 +1269,7 @@
             name: b.name,
             label: b.name + " (on disk)",
             about: "Runs on this machine: " + b.command,
+            rules: "any",
             command: b.command,
             create: async () => {
               const bot = new RemoteBot(b.name, b.command);

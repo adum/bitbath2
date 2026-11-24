@@ -14,6 +14,13 @@
 //
 // Hexes are [q, r] arrays in axial coordinates (SPEC §3.1). Sets and maps of
 // hexes are keyed by World.index.
+//
+// With the strategic ruleset on (world.supply, STRATEGIC.md) there is no
+// gold: each city keeps its own bread (city.bread), which pays for what it
+// builds. Sites (view.sites) grow wheat, wagons carry it, and units carry
+// rations. Ships sail on water by each terrain's naval_move_cost; a land unit
+// boards a transport by moving onto it, and a unit aboard (unit.carrier)
+// lands with a one-step move.
 "use strict";
 
 var BitbathKit = (function () {
@@ -53,6 +60,8 @@ var BitbathKit = (function () {
       /** @type {string[]} */ this.rows = [];
       /** Cities as they start: id, hex, and owner. @type {{id: number, q: number, r: number, owner: number}[]} */
       this.cities = [];
+      /** Resource sites as they start, with supply on. @type {{id: number, q: number, r: number, owner: number, output: number, cap: number}[]} */
+      this.sites = [];
       /** @type {Record<string, any>} */ this.terrains = {};
       /** Unit types by code, in the engine's order. @type {Record<string, any>} */
       this.unitTypes = {};
@@ -67,8 +76,10 @@ var BitbathKit = (function () {
         else if (t[0] === "MAP") [this.width, this.height] = [n[1], n[2]];
         else if (t[0] === "ROW") this.rows.push(t[1]);
         else if (t[0] === "CITY") this.cities.push({ id: n[1], q: n[2], r: n[3], owner: n[4] });
+        else if (t[0] === "SITE") this.sites.push({ id: n[1], q: n[2], r: n[3], owner: n[4], output: n[5], cap: n[6] });
         else if (t[0] === "TERRAIN") {
-          this.terrains[t[1]] = { ch: t[1], name: t[2], move_cost: n[3], defense: n[4], vision_bonus: n[5], conceal: n[6] || 0 };
+          // naval_move_cost is what entering costs a ship; 0: ships can't.
+          this.terrains[t[1]] = { ch: t[1], name: t[2], move_cost: n[3], defense: n[4], vision_bonus: n[5], conceal: n[6] || 0, naval_move_cost: n[7] || 0 };
         } else if (t[0] === "UNITTYPE") {
           const flags = t[9] === "-" ? [] : t[9].split(",");
           this.unitTypes[t[1]] = {
@@ -76,6 +87,8 @@ var BitbathKit = (function () {
             capture: flags.includes("capture"), zoc: flags.includes("zoc"),
             skirmish: flags.includes("skirmish"), no_move_attack: flags.includes("no_move_attack"),
             fortify: flags.includes("fortify"),
+            // The strategic ruleset's: carries wheat and bread, moves on water, carries land units.
+            carry: flags.includes("carry"), naval: flags.includes("naval"), transport: flags.includes("transport"),
           };
         } else if (t[0] === "DAMAGE") {
           const codes = Object.keys(this.unitTypes);
@@ -103,10 +116,32 @@ var BitbathKit = (function () {
       return i < 0 ? null : this.terrains[this.rows[h[1]][i % this.width]] || null;
     }
 
-    /** @param {number[]} h */
+    /** Whether the strategic ruleset's wheat, bread, and rations are on. */
+    get supply() {
+      return !!this.c.supply;
+    }
+
+    /** Whether land units can enter h. @param {number[]} h */
     passable(h) {
       const t = this.terrain(h);
       return !!t && t.move_cost > 0;
+    }
+
+    /** Whether ships can enter h. @param {number[]} h */
+    navigable(h) {
+      const t = this.terrain(h);
+      return !!t && t.naval_move_cost > 0;
+    }
+
+    /** What entering h costs a ship, or a land unit. 0: it can't. @param {number[]} h @param {boolean} naval */
+    cost(h, naval) {
+      const t = this.terrain(h);
+      return !t ? 0 : naval ? t.naval_move_cost : t.move_cost;
+    }
+
+    /** Whether a city on h would be a port, which builds ships: one next to water. @param {number[]} h */
+    isPort(h) {
+      return neighbors(h).some((n) => this.navigable(n));
     }
 
     /** The hex's image under the map's 180° symmetry. @param {number[]} h */
@@ -125,6 +160,13 @@ var BitbathKit = (function () {
       this.r = r;
       this.hp = hp;
       /** Fortification level; moving resets it to 0. */ this.fort = fort;
+      // With supply on: the transport it is aboard, or 0, the wheat and
+      // bread a wagon carries, and the rations left. A unit aboard has its
+      // transport's hex.
+      this.carrier = 0;
+      this.wheat = 0;
+      this.bread = 0;
+      this.rations = 0;
       // Known for your own units during your turn.
       this.mp = 0;
       this.acted = false;
@@ -147,6 +189,31 @@ var BitbathKit = (function () {
       this.capturer = 0;
       this.progress = 0;
       /** Built a unit or was captured this turn, so it can't build. */ this.built = false;
+      /** With supply on: its stockpile. 0 while the player can't see the city. */ this.bread = 0;
+    }
+
+    get hex() {
+      return [this.q, this.r];
+    }
+  }
+
+  /**
+   * A resource site, with supply on. It grows `output` wheat a turn for its
+   * owner, up to `cap`. Its wheat and capture progress are 0 while the player
+   * can't see it.
+   */
+  class Site {
+    /** @param {number} id @param {number} q @param {number} r @param {number} owner @param {number} output @param {number} cap */
+    constructor(id, q, r, owner, output, cap) {
+      this.id = id;
+      this.q = q;
+      this.r = r;
+      this.owner = owner;
+      this.output = output;
+      this.cap = cap;
+      this.capturer = 0;
+      this.progress = 0;
+      this.wheat = 0;
     }
 
     get hex() {
@@ -163,6 +230,8 @@ var BitbathKit = (function () {
       this.gold = 0;
       /** Indexed by city id. */
       this.cities = world.cities.map((c) => new City(c.id, c.q, c.r, c.owner));
+      /** Indexed by site id; empty without supply. */
+      this.sites = world.sites.map((s) => new Site(s.id, s.q, s.r, s.owner, s.output, s.cap));
       /** @type {Map<number, Unit>} */ this.units = new Map();
       /** LOG lines as token lists, such as ["HIT", "91", "K", ...]. @type {string[][]} */
       this.logs = [];
@@ -179,9 +248,11 @@ var BitbathKit = (function () {
         const n = t.map(Number);
         if (t[0] === "TURN") view.round = n[1];
         else if (t[0] === "GOLD") view.gold = n[1];
-        else if (t[0] === "CITY") Object.assign(view.cities[n[1]], { owner: n[2], capturer: n[3], progress: n[4] });
+        else if (t[0] === "CITY") Object.assign(view.cities[n[1]], { owner: n[2], capturer: n[3], progress: n[4], bread: n[5] || 0 });
+        else if (t[0] === "SITE") Object.assign(view.sites[n[1]], { owner: n[2], capturer: n[3], progress: n[4], wheat: n[5] || 0 });
         else if (t[0] === "UNIT") {
           const u = new Unit(n[1], n[2], t[3], n[4], n[5], n[6], n[7] || 0);
+          Object.assign(u, { carrier: n[8] || 0, wheat: n[9] || 0, bread: n[10] || 0, rations: n[11] || 0 });
           if (u.owner === player) u.mp = world.unitTypes[u.type].move;
           view.units.set(u.id, u);
         } else if (t[0] === "LOG") view.logs.push(t.slice(1));
@@ -202,12 +273,18 @@ var BitbathKit = (function () {
       state.cities.forEach((/** @type {number[]} */ c, /** @type {number} */ i) => {
         const city = view.cities[i];
         city.owner = c[0];
-        if (sees(city.hex)) [city.capturer, city.progress] = [c[1], c[2]];
+        if (sees(city.hex)) [city.capturer, city.progress, city.bread] = [c[1], c[2], c[4] || 0];
         city.built = !!c[3];
       });
-      for (const [id, owner, type, q, r, hp, mp, flags, fort] of state.units) {
+      (state.sites || []).forEach((/** @type {number[]} */ s, /** @type {number} */ i) => {
+        const site = view.sites[i];
+        site.owner = s[0];
+        if (sees(site.hex)) [site.capturer, site.progress, site.wheat] = [s[1], s[2], s[3]];
+      });
+      for (const [id, owner, type, q, r, hp, mp, flags, fort, wheat, bread, rations, carrier] of state.units) {
         if (owner !== player && !sees([q, r])) continue;
         const u = new Unit(id, owner, type, q, r, hp, fort || 0);
+        Object.assign(u, { wheat: wheat || 0, bread: bread || 0, rations: rations || 0, carrier: carrier || 0 });
         if (owner === player) Object.assign(u, { mp, acted: !!(flags & 1), moved: !!(flags & 2), fresh: !!(flags & 4) });
         view.units.set(id, u);
       }
@@ -226,6 +303,20 @@ var BitbathKit = (function () {
       return this.cities.filter((c) => c.owner === this.player);
     }
 
+    mySites() {
+      return this.sites.filter((s) => s.owner === this.player);
+    }
+
+    /** @param {number[]} h */
+    siteAt(h) {
+      return this.sites.find((s) => s.q === h[0] && s.r === h[1]) || null;
+    }
+
+    /** The units aboard a transport. @param {Unit} transport */
+    passengers(transport) {
+      return Array.from(this.units.values()).filter((u) => u.carrier === transport.id);
+    }
+
     /** @param {number[]} h */
     unitsAt(h) {
       return Array.from(this.units.values()).filter((u) => u.q === h[0] && u.r === h[1]);
@@ -241,9 +332,9 @@ var BitbathKit = (function () {
       return this.unitsAt(h).some((u) => u.owner !== this.player);
     }
 
-    /** @param {number[]} h @param {Unit} [excluding] */
+    /** How many of the player's units stand on h, as the stack limit counts them: not those aboard transports. @param {number[]} h @param {Unit} [excluding] */
     friendsAt(h, excluding) {
-      return this.unitsAt(h).filter((u) => u.owner === this.player && u !== excluding).length;
+      return this.unitsAt(h).filter((u) => u.owner === this.player && !u.carrier && u !== excluding).length;
     }
   }
 
@@ -291,42 +382,106 @@ var BitbathKit = (function () {
       return unit.owner === this.player && !unit.fresh && !unit.acted;
     }
 
-    /** Whether unit can capture the city it stands on right now. @param {Unit} unit */
+    /** The city or site unit stands on, if it could be captured: one that isn't the player's. @param {Unit} unit */
+    prize(unit) {
+      const place = this.view.cityAt(unit.hex) || this.view.siteAt(unit.hex);
+      return place && place.owner !== this.player ? place : null;
+    }
+
+    /** Whether unit can capture the city or site it stands on right now. @param {Unit} unit */
     canCapture(unit) {
-      const city = this.view.cityAt(unit.hex);
-      return this.canAct(unit) && this.unitType(unit).capture && !!city && city.owner !== this.player;
+      return this.canAct(unit) && this.unitType(unit).capture && !unit.carrier && !!this.prize(unit);
     }
 
-    /** Whether unit can attack this turn, if a target is in range. @param {Unit} unit */
+    /** Whether unit can attack this turn, if a target is in range. A unit aboard a transport can't. @param {Unit} unit */
     canAttack(unit) {
-      return this.canAct(unit) && !(this.unitType(unit).no_move_attack && unit.moved);
+      return this.canAct(unit) && !unit.carrier && !(this.unitType(unit).no_move_attack && unit.moved);
     }
 
-    /** Visible enemy units that unit could attack from `from` (default: where it is). @param {Unit} unit @param {number[]} [from] */
+    /**
+     * Visible enemy units that unit could attack from `from` (default: where
+     * it is): in range, not aboard a transport, and hurt by it.
+     * @param {Unit} unit @param {number[]} [from]
+     */
     targetsInRange(unit, from) {
       const type = this.unitType(unit);
       const at = from || unit.hex;
+      const hurts = this.world.damage[unit.type] || {};
       return this.view.enemyUnits().filter((e) => {
         const d = distance(at, e.hex);
-        return type.range_min <= d && d <= type.range_max;
+        return type.range_min <= d && d <= type.range_max && !e.carrier && hurts[e.type] > 0;
       });
     }
 
-    /** Hexes next to a visible enemy unit that exerts a zone of control. @returns {Set<number>} */
+    /** Hexes next to a visible enemy unit that exerts a zone of control. Units aboard transports exert none. @returns {Set<number>} */
     zocHexes() {
       const out = new Set();
       for (const e of this.view.enemyUnits()) {
-        if (this.world.unitTypes[e.type].zoc) for (const n of neighbors(e.hex)) out.add(this.world.index(n));
+        if (this.world.unitTypes[e.type].zoc && !e.carrier) for (const n of neighbors(e.hex)) out.add(this.world.index(n));
       }
       out.delete(-1);
       return out;
     }
 
+    // Ships and wagons (STRATEGIC.md §4, §6).
+
+    /**
+     * Where a port puts a new ship: the first hex next to it, in direction
+     * order, that ships can enter, with room and no visible enemy. Null if
+     * there is none. A hidden enemy there makes the engine pick the next.
+     * @param {City} city @returns {number[] | null}
+     */
+    launchHex(city) {
+      for (const n of neighbors(city.hex)) {
+        if (this.world.navigable(n) && !this.view.enemyAt(n) && this.view.friendsAt(n) < this.world.c.stack_limit) return n;
+      }
+      return null;
+    }
+
+    /**
+     * The player's lowest-numbered transport on h with room for another
+     * unit, which is the one a unit boarding on h gets aboard, or null.
+     * @param {number[]} h @returns {Unit | null}
+     */
+    transportWithRoom(h) {
+      const most = this.world.c.passengers_max || 0;
+      const mine = this.view.unitsAt(h).filter((u) => u.owner === this.player && this.unitType(u).transport).sort((a, b) => a.id - b.id);
+      return mine.find((t) => this.view.passengers(t).length < most) || null;
+    }
+
+    /** Whether unit is a wagon that can give L and U orders now: one that may act and isn't aboard a transport. @param {Unit} unit */
+    canCarry(unit) {
+      return this.canAct(unit) && this.unitType(unit).carry && !unit.carrier;
+    }
+
+    /**
+     * What a wagon could load where it stands: the bread of the player's
+     * city, or the wheat of the player's site, as much as fits. 0 if nothing.
+     * @param {Unit} unit
+     */
+    loadable(unit) {
+      if (!this.canCarry(unit)) return 0;
+      const room = Math.max(0, (this.world.c.cargo_max || 0) - unit.wheat - unit.bread);
+      const city = this.view.cityAt(unit.hex);
+      if (city) return city.owner === this.player ? Math.min(city.bread, room) : 0;
+      const site = this.view.siteAt(unit.hex);
+      return site && site.owner === this.player ? Math.min(site.wheat, room) : 0;
+    }
+
+    /** What a wagon could unload where it stands: its wheat and bread, if it is on a city of the player's. @param {Unit} unit */
+    unloadable(unit) {
+      const city = this.view.cityAt(unit.hex);
+      return this.canCarry(unit) && city && city.owner === this.player ? unit.wheat + unit.bread : 0;
+    }
+
     /**
      * Where unit can end a move this turn, as a map from hex index to the
-     * path's direction digits. Honors move costs, its MP, visible enemies
-     * (which block hexes and exert zones of control), and the stack limit
-     * on the final hex. Hidden enemies can still cut a move short.
+     * path's direction digits. Honors move costs (naval ones for ships), its
+     * MP, visible enemies (which block hexes and exert zones of control),
+     * and the stack limit on the final hex. A land unit can also end its move
+     * by boarding one of the player's transports with room, for 1 MP, and a
+     * unit aboard can only land, one step onto land. Hidden enemies can
+     * still cut a move short.
      * @param {Unit} unit @param {Set<number>} [zoc] @returns {Map<number, string>}
      */
     reachable(unit, zoc) {
@@ -334,16 +489,32 @@ var BitbathKit = (function () {
       const result = new Map();
       if (!this.canAct(unit) || unit.mp <= 0) return result;
       const world = this.world;
-      const skirmish = this.unitType(unit).skirmish;
+      const type = this.unitType(unit);
+      const naval = !!type.naval;
+      const skirmish = type.skirmish;
       const zone = zoc || this.zocHexes();
       /** @type {Set<number>} */ const enemies = new Set();
       /** @type {Map<number, number>} */ const friends = new Map();
+      /** The hexes with a transport to board. @type {Set<number>} */ const ships = new Set();
       for (const u of this.view.units.values()) {
         const i = world.index(u.hex);
         if (u.owner !== this.player) enemies.add(i);
-        else if (u !== unit) friends.set(i, (friends.get(i) || 0) + 1);
+        else if (u !== unit && !u.carrier) {
+          friends.set(i, (friends.get(i) || 0) + 1);
+          if (!naval && this.unitType(u).transport && this.transportWithRoom(u.hex)) ships.add(i);
+        }
       }
       const start = world.index(unit.hex);
+      if (unit.carrier) {
+        for (let d = 0; d < 6; d++) {
+          const n = step(unit.hex, d);
+          const ni = world.index(n);
+          const t = world.terrain(n);
+          if (t && t.move_cost > 0 && t.move_cost <= unit.mp && !enemies.has(ni) && (friends.get(ni) || 0) < world.c.stack_limit) result.set(ni, String(d));
+        }
+        return result;
+      }
+      ships.delete(start);
       const best = new Map([[start, 0]]);
       const paths = new Map([[start, ""]]);
       const queue = new Buckets();
@@ -361,8 +532,18 @@ var BitbathKit = (function () {
           const n = step(h, d);
           const ni = world.index(n);
           const t = world.terrain(n);
-          if (!t || !t.move_cost || enemies.has(ni)) continue;
-          const c = cost + t.move_cost;
+          if (!t || enemies.has(ni)) continue;
+          const enter = naval ? t.naval_move_cost : t.move_cost;
+          if (!enter) {
+            // Boarding: the last step of a move, for 1 MP.
+            const was = best.get(ni);
+            if (ships.has(ni) && cost + 1 <= unit.mp && (was === undefined || cost + 1 < was)) {
+              best.set(ni, cost + 1);
+              result.set(ni, path + d);
+            }
+            continue;
+          }
+          const c = cost + enter;
           const old = best.get(ni);
           if (c <= unit.mp && (old === undefined || c < old)) {
             best.set(ni, c);
@@ -511,7 +692,16 @@ var BitbathKit = (function () {
       const reply = this.order("M " + unit.id + " " + dirs);
       if (reply.ok) {
         const [q, r] = [Number(reply.values[0]), Number(reply.values[1])];
-        if (q !== unit.q || r !== unit.r) Object.assign(unit, { moved: true, fort: 0 });
+        if (q !== unit.q || r !== unit.r) {
+          Object.assign(unit, { moved: true, fort: 0 });
+          // A unit aboard has landed; a land unit now on water has boarded.
+          if (unit.carrier) unit.carrier = 0;
+          else if (!this.unitType(unit).naval && !this.world.passable([q, r])) {
+            const boarded = this.transportWithRoom([q, r]);
+            if (boarded) unit.carrier = boarded.id;
+          }
+          for (const p of this.view.passengers(unit)) [p.q, p.r] = [q, r];
+        }
         [unit.q, unit.r] = [q, r];
         unit.mp = reply.kind === "OK" ? Number(reply.values[2]) : 0;
       }
@@ -525,7 +715,12 @@ var BitbathKit = (function () {
         [target.hp, unit.hp] = [Number(reply.values[0]), Number(reply.values[1])];
         unit.acted = true;
         unit.mp = 0;
-        for (const u of [target, unit]) if (u.hp <= 0) this.view.units.delete(u.id);
+        for (const u of [target, unit]) {
+          if (u.hp > 0) continue;
+          // A transport sinks with everything aboard.
+          for (const p of this.view.passengers(u)) this.view.units.delete(p.id);
+          this.view.units.delete(u.id);
+        }
       }
       return reply;
     }
@@ -534,23 +729,31 @@ var BitbathKit = (function () {
     capture(unit) {
       const reply = this.order("C " + unit.id);
       const city = this.view.cityAt(unit.hex);
-      if (reply.ok && city) {
+      const place = city || this.view.siteAt(unit.hex);
+      if (reply.ok && place) {
         unit.acted = true;
-        if (reply.values[0] === "captured") Object.assign(city, { owner: this.player, capturer: 0, progress: 0, built: true });
-        else Object.assign(city, { capturer: this.player, progress: Number(reply.values[0]) });
+        if (reply.values[0] === "captured") {
+          Object.assign(place, { owner: this.player, capturer: 0, progress: 0 });
+          if (city) city.built = true;
+        } else Object.assign(place, { capturer: this.player, progress: Number(reply.values[0]) });
       }
       return reply;
     }
 
     /** @param {City} city @param {string} code */
     build(city, code) {
+      const type = this.world.unitTypes[code];
+      // A port puts a ship on its launch hex.
+      const at = (type && type.naval && this.launchHex(city)) || city.hex;
       const reply = this.order("B " + city.id + " " + code);
       if (reply.ok) {
-        const type = this.world.unitTypes[code];
-        const unit = new Unit(Number(reply.values[0]), this.player, code, city.q, city.r, type.max_hp);
+        const unit = new Unit(Number(reply.values[0]), this.player, code, at[0], at[1], type.max_hp);
         unit.fresh = true;
+        unit.rations = this.world.supply ? this.world.c.ration_max || 0 : 0;
         this.view.units.set(unit.id, unit);
-        this.view.gold -= type.cost;
+        // With supply on the city pays, from its own bread.
+        if (this.world.supply) city.bread -= type.cost;
+        else this.view.gold -= type.cost;
         city.built = true;
       }
       return reply;
@@ -594,7 +797,7 @@ var BitbathKit = (function () {
     }
   }
 
-  return { DIRS, step, neighbors, distance, walk, World, Unit, City, View, Kit, Bot, Reply };
+  return { DIRS, step, neighbors, distance, walk, World, Unit, City, Site, View, Kit, Bot, Reply };
 })();
 
 if (typeof module !== "undefined") module.exports = BitbathKit;

@@ -225,6 +225,11 @@ body { margin: 0; }
   #selection button.unit { display: block; width: 100%; margin: 2px 0; }
   #selection button.chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   #selection button.spent { color: var(--muted); }
+  #selection .aboard { margin-left: 16px; }
+  #selection button.unit.aboard { width: calc(100% - 16px); }
+  #selection .unit-more { display: block; margin-left: 24px; color: var(--muted); font-size: 12px; }
+  #selection .unit-more.hungry { color: #e8590c; }
+  #carry-amount { width: 5.5em; }
   #play-tally { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 6px; text-align: center; }
   #play-tally div { padding: 3px 0; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
   #play-tally b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }

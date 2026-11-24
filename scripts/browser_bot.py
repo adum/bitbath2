@@ -4,13 +4,14 @@ import time
 
 import bitbath as bb
 from bastion_bot import Bastion
+from naval_bot import NavalBot
 from smart_bot import SmartBot
 from vanguard_bot import VanguardBot
 
 
 def initialize(name, message, dispatch):
     global bot
-    bot = {"bastion": Bastion, "smart": SmartBot, "vanguard": VanguardBot}[name]()
+    bot = {"bastion": Bastion, "smart": SmartBot, "vanguard": VanguardBot, "naval": NavalBot}[name]()
 
     def send(line):
         response = dispatch(line)

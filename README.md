@@ -59,6 +59,14 @@ You see the game through your own fog of war:
 
 A unit that is dug in carries a white block on its top edge for each fortification level, yours and the opponent's alike, in games and in replays.
 
+The maps marked **ships and food** play the strategic ruleset ([STRATEGIC.md](STRATEGIC.md)): bread in place of gold, sites, wagons, rations, and ships. Islets is the small one to learn on, Islands is [configs/islands.toml](configs/islands.toml), Seas is a mid-sized map of land and sea, and Strategic is [configs/strategic.toml](configs/strategic.toml) in full. The built-in opponent for them is Naval, which is [bots/naval_bot.py](bots/naval_bot.py) in a browser worker; the bots on disk are offered too. What these rules add to the controls:
+
+- **Bread** is kept by each city. The number at the foot of a city's hex is its bread, and a site's is its wheat. Selecting a city shows what it can build with its own bread; only a port, a city next to water, builds ships.
+- **C** also captures the site a unit stands on.
+- **A wagon** on one of your sites or cities gets **Load (L)** and **Unload (U)**. The field beside them takes an amount, and empty moves everything. A wagon can't move after either.
+- **Boarding:** with a land unit selected, right-click one of your transports next to it. Selecting the transport's hex lists the units aboard; pick one, and the land it can step onto is tinted.
+- **Rations** are listed with each unit. A unit running short gets an amber mark, and a red one when it has none left; the turn's report says which units are starving.
+
 When the game ends, it becomes a replay: you can step through it with both sides in view, and save it as a `.bbr` file.
 
 To play against a bot on disk, let `bitbath serve` serve the page:
