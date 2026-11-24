@@ -735,14 +735,14 @@
     // In a game being played, what the human saw of the opponent's last turn
     // stays on the map through their own.
     if (fogged() && v.state.player === persp) {
-      ctx.globalAlpha = 0.45;
+      ctx.globalAlpha = 0.2;
       ctx.strokeStyle = playerColor(3 - persp);
       for (const m of v.play.seen) trail(m);
     }
     // A replay's trails are how it shows the turn. The human's own, in a game
     // being played, are only a reminder, and stay well behind the move being
     // planned.
-    ctx.globalAlpha = fogged() === v.state.player ? 0.25 : 0.7;
+    ctx.globalAlpha = fogged() === v.state.player ? 0.12 : 0.7;
     ctx.strokeStyle = playerColor(v.state.player);
     for (const m of v.marks) {
       if (m.ok && !(a && m.step >= a.from) && shown(m, persp)) trail(m);
