@@ -15,7 +15,7 @@
     <a class="brand" href="#overview" aria-label="Bitbath home"><img src="mark.svg" width="32" height="32" alt="">Bitbath</a>
     <nav aria-label="Main navigation">
       <a href="#leaderboard" aria-current="page">Leaderboard</a>
-      <a href="#humans">Humans</a>
+      <a href="humans.html">Humans</a>
       <a href="play.html">Play</a>
     </nav>
     <a class="source" href="https://github.com/adum/bitbath2" aria-label="Bitbath source on GitHub">
@@ -50,29 +50,9 @@
     </table>
     <p class="rating-note" id="rating-note"></p>
   </section>
-  <section id="humans" class="site-width" aria-labelledby="humans-title">
-    <h2 id="humans-title">Human scoreboard</h2>
-    <p class="activity-line" id="game-totals" aria-live="polite">Loading game stats…</p>
-    <div class="table-scroll">
-      <table class="human-table" aria-labelledby="humans-title">
-        <thead><tr><th>Rank</th><th>Player</th><th>Games</th><th>Unfinished</th><th>Wins</th><th>Draws</th><th>Losses</th><th>Win rate</th></tr></thead>
-        <tbody id="human-rows"></tbody>
-      </table>
-    </div>
-    <p class="table-note">Ranked by wins, then win rate in finished games. Guest games count toward site stats.</p>
-    <h3 id="recent-title">Recent games</h3>
-    <div class="table-scroll">
-      <table class="human-table recent" aria-labelledby="recent-title">
-        <thead><tr><th>Player</th><th>Opponent</th><th>Map</th><th>Round</th><th>Game state</th><th>Last played</th></tr></thead>
-        <tbody id="recent-games"></tbody>
-      </table>
-    </div>
-    <p id="position-key" class="table-note" hidden>Position totals show the human first and the bot second. Army value accounts for remaining hit points.</p>
-  </section>
 </main>
 <script src="standings.js"></script>
 <script src="home.js"></script>
 <script src="recording.js"></script>
-<script src="scoreboard.js"></script>
 </body>
 </html>

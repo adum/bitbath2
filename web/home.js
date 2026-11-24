@@ -6,6 +6,13 @@
     location.replace("play.html" + location.search);
     return;
   }
+  function openLegacyScoreboard() {
+    if (location.hash !== "#humans") return false;
+    location.replace("humans.html" + location.search);
+    return true;
+  }
+  if (openLegacyScoreboard()) return;
+  window.addEventListener("hashchange", openLegacyScoreboard);
   const $ = (id) => document.getElementById(id);
   const board = MICRO_STANDINGS;
   const models = board.rows.filter((r) => r.kind === "entry");

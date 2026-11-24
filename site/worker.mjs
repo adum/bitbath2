@@ -70,7 +70,7 @@ async function scoreboard(db) {
       ORDER BY (COUNT(outcome) > 0) DESC, wins DESC, 1.0 * COUNT(CASE WHEN outcome = 'win' THEN 1 END)
       / NULLIF(COUNT(outcome), 0) DESC, finished DESC, name COLLATE NOCASE LIMIT 100`),
     db.prepare(`SELECT id, player_name AS player, opponent, human_seat AS seat, map_name AS map, round, outcome, updated_at AS updatedAt
-      FROM games ORDER BY updated_at DESC, id LIMIT 12`),
+      FROM games WHERE round >= 2 ORDER BY updated_at DESC, id LIMIT 12`),
   ]);
   return json({ summary: summary.results[0], players: players.results, recent: recent.results });
 }

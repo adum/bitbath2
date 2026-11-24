@@ -101,7 +101,7 @@
       const partials = new Set(recent.filter(g => !g.outcome).map(g => g.id));
       for (const id of positions.keys()) if (!partials.has(id)) positions.delete(id);
       document.getElementById("position-key").hidden = partials.size === 0;
-      display("recent-games", recent.map(gameRow), 6, "No games recorded yet.");
+      display("recent-games", recent.map(gameRow), 6, "No games have reached round 2 yet.");
     } catch {
       totals.textContent = previous ? previous + " · Update pending" : "Game stats are temporarily unavailable.";
     } finally { loading = false; }
