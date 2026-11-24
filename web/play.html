@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101413">
+<title>Play Bitbath</title>
+<link rel="icon" href="mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="arena.css">
+</head>
+<body>
+<main id="arena" tabindex="-1" aria-label="Game and replay viewer">
+<header>
+  <a class="home-link" href="index.html" aria-label="Back to leaderboard"><img src="mark.svg" alt="" width="22" height="22">Leaderboard</a>
+  <button id="new-game-button" title="Play a game against a built-in bot">New game</button>
+  <label class="file-button" for="file">Open replay</label>
+  <input class="file-input" type="file" id="file" accept=".bbr,.jsonl,.json">
+  <span id="matchup"></span>
+  <small id="recording-status" role="status"></small>
+  <button id="rules-button" title="The rules this game was played under" hidden>Rules</button>
+  <button id="settings-button" title="How the game looks">Settings</button>
+</header>
+<div id="mismatch" role="alert" hidden>
+  <strong>This replay doesn't play back the way it was recorded.</strong>
+  <span id="mismatch-text"></span>
+  The viewer and the game that recorded it come from different versions of bitbath. If the viewer is the older one, rebuild it with <span class="mono">python scripts/build_web.py</span> and reload this page.
+</div>
+<div class="game-layout">
+  <div id="board">
+    <canvas id="canvas" tabindex="0" aria-label="Game board"></canvas>
+    <div id="menu" hidden></div>
+    <div id="forecast" hidden></div>
+    <div id="empty">
+      <div>Play a built-in bot or drop a replay here.</div>
+      <div><button id="play-button" class="primary">Play against a bot</button></div>
+      <div id="error"></div>
+    </div>
+  </div>
+  <aside id="side">
+    <section id="game">
+      <div id="play-status"></div>
+      <div id="play-note"></div>
+      <div id="play-buttons">
+        <button id="end-turn" class="primary" title="End your turn (E or Enter)">End turn</button>
+        <button id="next-unit" title="Select the next unit with something left to do (N or Tab)">Next unit</button>
+        <button id="save-replay" title="Download this game as a replay file">Save replay</button>
+        <button id="play-again">New game</button>
+      </div>
+      <div id="selection"></div>
+      <div id="play-last">
+        <h2>Opponent's last turn</h2>
+        <div id="play-tally"></div>
+        <div id="play-log"></div>
+      </div>
+    </section>
+    <h2 id="turn-title">No replay</h2>
+    <table class="players" id="players"></table>
+    <p id="standing"></p>
+    <h2>This turn</h2>
+    <div id="summary"></div>
+    <details id="orders-box" hidden>
+      <summary id="orders-count">Orders</summary>
+      <div id="orders" class="mono"></div>
+      <div id="reply" class="mono"></div>
+    </details>
+    <h2>Hover</h2>
+    <div id="hover" class="mono"></div>
+    <div id="notes"></div>
+  </aside>
+</div>
+<footer>
+  <div id="live-help">
+    Click a unit, then a tinted hex to move or a ringed enemy to attack. Right-click moves onto your own units.
+    <kbd>C</kbd> captures, <kbd>N</kbd> picks the next unit, <kbd>Esc</kbd> deselects, and <kbd>E</kbd> ends your turn. Scroll to zoom, drag to pan.
+  </div>
+  <div id="army-legend" hidden></div>
+  <div id="chart-box" hidden>
+    <canvas id="chart" role="img" aria-label="Each player's army value after each turn"></canvas>
+    <div id="chart-tip"></div>
+  </div>
+  <div id="transport">
+    <button id="first" title="Start (Home)">⏮</button>
+    <button id="prev-turn" title="Previous turn (↑ or Shift+←)">⏪</button>
+    <button id="prev" title="Previous order (←)">◀</button>
+    <button id="play" title="Play or pause (Space)">▶</button>
+    <button id="next" title="Next order (→)">▶|</button>
+    <button id="next-turn" title="Next turn (↓ or Shift+→)">⏩</button>
+    <button id="last" title="End (End)">⏭</button>
+  </div>
+  <input type="range" id="slider" min="0" max="0" value="0" aria-label="Turn">
+  <div id="settings">
+    <span id="position"></span>
+    <select id="speed" title="Playback speed">
+      <option value="turn:1000">1 turn/s</option>
+      <option value="turn:333" selected>3 turns/s</option>
+      <option value="turn:100">10 turns/s</option>
+      <option value="order:200">5 orders/s</option>
+      <option value="order:50">20 orders/s</option>
+    </select>
+    <select id="view" title="Fog of war">
+      <option value="0">Both players</option>
+      <option value="1">Player 1's view</option>
+      <option value="2">Player 2's view</option>
+    </select>
+    <label><input type="checkbox" id="debug" checked> Debug</label>
+  </div>
+</footer>
+<dialog id="rules" aria-labelledby="rules-title">
+  <form method="dialog" class="dialog-head">
+    <h2 id="rules-title">Rules for this game</h2>
+    <button title="Close (Esc)" aria-label="Close">✕</button>
+  </form>
+  <div id="rules-body" tabindex="-1" autofocus></div>
+</dialog>
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+  <form method="dialog" class="dialog-head">
+    <h2 id="settings-title">Settings</h2>
+    <button title="Close (Esc)" aria-label="Close">✕</button>
+  </form>
+  <div id="settings-body">
+    <h3 id="pieces-title">Pieces</h3>
+    <div id="piece-styles" role="radiogroup" aria-labelledby="pieces-title"></div>
+    <div class="hint">Kept in this browser. Orders and replays always use the letters.</div>
+  </div>
+</dialog>
+<dialog id="new-game" aria-labelledby="new-game-title">
+  <form method="dialog" class="dialog-head">
+    <h2 id="new-game-title">New game</h2>
+    <button title="Close (Esc)" aria-label="Close">✕</button>
+  </form>
+  <div id="new-game-body">
+    <label for="player-name">Player name</label>
+    <input id="player-name" type="text" maxlength="48" placeholder="Guest" autocomplete="off">
+    <div class="hint">Optional. Use the same name to combine your scoreboard results.</div>
+    <label for="opponent">Opponent</label>
+    <select id="opponent"></select>
+    <div class="hint" id="opponent-about"></div>
+    <label for="map-size">Map</label>
+    <select id="map-size"></select>
+    <div class="hint" id="map-about"></div>
+    <label for="side-choice">You play</label>
+    <select id="side-choice">
+      <option value="1">Red, moving first</option>
+      <option value="2">Blue, moving second</option>
+    </select>
+    <label for="seed">Map seed</label>
+    <input id="seed" type="number" min="0" step="1" placeholder="random">
+    <div class="hint">The same seed and map size always give the same map.</div>
+    <div class="wide" id="new-game-error" role="status"></div>
+    <button id="start" class="primary wide">Start</button>
+  </div>
+</dialog>
+</main>
+<script src="bitbath_wasm.js"></script>
+<script src="engine.js"></script>
+<script src="kit.js"></script>
+<script src="reference-opponent.js"></script>
+<script src="bots.js"></script>
+<script src="pieces.js"></script>
+<script src="viewer.js"></script>
+<script src="recording.js"></script>
+<script src="play.js"></script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 // (bots.js). The game runs in the viewer's engine and is shown by the viewer
 // (viewer.js) as a replay that grows, through the human's fog of war. This
 // file runs the turns, and turns clicks and keys into the human's orders.
-/* global BitbathKit, BitbathBots */
+/* global BitbathKit, BitbathBots, BitbathPieces, GameRecording */
 "use strict";
 
 (function () {
@@ -163,6 +163,8 @@
       this.human = human;
       this.bot = bot;
       this.botName = botName;
+      this.recording = null;
+      this.turnNumber = 0;
       /** Set by the viewer when the game has ended. */ this.over = false;
       /** Set when a replay or another game takes this one's place. */ this.closed = false;
       /** Not taking orders: the opponent is moving. */ this.busy = true;
@@ -204,6 +206,8 @@
       this.turn.bank_ms = bank;
       const lines = v.engine.turnMessage(time, bank);
       this.turn.round = Number(lines[0].split(/\s+/)[1]);
+      this.turnNumber++;
+      this.recording?.turn(this.turnNumber, this.turn);
       return lines;
     }
 
@@ -216,6 +220,7 @@
         this.turn.rejected++;
         stats.invalid++;
       }
+      this.recording?.turn(this.turnNumber, this.turn);
       return reply;
     }
 
@@ -227,6 +232,7 @@
       stats.turns++;
       stats.think_ms += turn.used_ms;
       stats.max_think_ms = Math.max(stats.max_think_ms, turn.used_ms);
+      this.recording?.turn(this.turnNumber, turn);
       return v.engine.end();
     }
 
@@ -258,7 +264,7 @@
         // Only taking the last city of a player ends the game mid-turn.
         if (reply[reply.length - 1] === "OK captured" && v.engine.seek(v.steps).outcome) over = true;
         return reply;
-      });
+      }, v.replay.script);
       // A built-in bot has played by now. A bot on disk takes a while, and
       // may fail: then it forfeits, once its turn has been played out.
       try {
@@ -360,6 +366,7 @@
         stats: this.stats,
         stderr: ["", ""],
       }));
+      this.recording?.finish(result);
     }
 
     /** The game as the text of a replay file (SPEC §8). */
@@ -837,17 +844,26 @@
         b.onclick = run;
         return b;
       };
+      // Each unit and each thing to build shows its token as on the board, so the symbols explain themselves.
+      const token = (/** @type {any} */ type, /** @type {number} */ owner) => {
+        const info = v.info.units[type.code];
+        return BitbathPieces.icon({ code: type.code, name: type.name, naval: !!info && info.flags.split(",").includes("naval") }, V.playerColor(owner));
+      };
       box.append(el("div", "(" + hex[0] + "," + hex[1] + ") " + world.terrain(hex).name + (city ? " · city " + city.id : ""), "label"));
       for (const u of view.unitsAt(hex)) {
         const type = kit.unitType(u);
         const dug = u.fort ? " · dug in to level " + u.fort : "";
         if (u.owner !== this.human) {
-          box.append(el("div", "Enemy " + type.name + " · " + u.hp + " hp" + dug));
+          const row = el("div", "Enemy " + type.name + " · " + u.hp + " hp" + dug, "enemy");
+          row.prepend(token(type, u.owner));
+          box.append(row);
           continue;
         }
         const state = u.fresh ? "new, ready next turn" : u.acted ? "done" : u.mp + " mp";
         const cls = "unit" + (unit && unit.id === u.id ? " chosen" : "") + (this.ready.includes(u.id) ? "" : " spent");
-        box.append(button(V.capitalize(type.name) + " · " + u.hp + " hp · " + state + dug, () => this.select({ hex, unit: u.id }), cls));
+        const pick = button(V.capitalize(type.name) + " · " + u.hp + " hp · " + state + dug, () => this.select({ hex, unit: u.id }), cls);
+        pick.prepend(token(type, u.owner));
+        box.append(pick);
       }
       if (unit && mine) {
         if (kit.canCapture(unit)) {
@@ -865,6 +881,7 @@
         const row = el("div", "", "row");
         for (const type of Object.values(world.unitTypes)) {
           const b = button(V.capitalize(type.name) + " " + type.cost, () => this.build(city, type.code), "");
+          b.prepend(token(type, this.human));
           b.disabled = !!this.cantBuild(city, type);
           b.title = "Key " + type.code + " · move " + type.move + ", vision " + type.vision + ", range " + (type.range_min === type.range_max ? type.range_min : type.range_min + "–" + type.range_max);
           row.append(b);
@@ -874,6 +891,9 @@
       }
     }
   }
+
+  // The tokens in the side panel follow the style picked in the settings.
+  BitbathPieces.onChange(() => current && current.render());
 
   // The menu for picking one of several targets on a hex.
 
@@ -915,7 +935,7 @@
 
   /**
    * Starts a game against a bot: one built into the page, or one on disk.
-   * @param {{bot: string, map: string, human: number, seed: number}} options the ids of a bot and a map size, the human's player number, and the map's seed
+   * @param {{bot: string, map: string, human: number, seed: number, name?: string}} options
    */
   async function start(options) {
     const kind = opponents.find((b) => b.id === options.bot) || opponents[0];
@@ -923,11 +943,12 @@
     const human = options.human === 2 ? 2 : 1;
     const engine = await V.engine();
     const setup = engine.setup(map.config + "\nseed = " + options.seed);
-    const names = human === 1 ? ["Human", kind.name] : [kind.name, "Human"];
+    const name = (options.name ?? GameRecording.savedName()).trim().slice(0, 48);
+    const names = human === 1 ? [name || "Human", kind.name] : [kind.name, name || "Human"];
     const header = Object.assign({ type: "header" }, engine.versions(), {
       map: "seed:" + options.seed,
       seed: options.seed,
-      players: names.map((name) => ({ name, command: name === "Human" ? "a person in the browser" : kind.command })),
+      players: names.map((name, index) => ({ name, command: index + 1 === human ? "a person in the browser" : kind.command })),
       setup,
     });
     // A bot on disk that can't start stops the game before it opens.
@@ -939,9 +960,10 @@
       throw new Error($("error").textContent);
     }
     current = game;
+    game.recording = GameRecording.start({ player: name, opponent: kind.name, map: map.name, seat: human, header });
     try {
       if (bot.initMs) bot.initMs = game.world.c.init_ms || bot.initMs;
-      await bot.init(engine.initMessage(3 - human));
+      await bot.init(engine.initMessage(3 - human), setup);
     } catch (e) {
       if (!game.closed) game.finish(e instanceof BotFailure ? e : new BotFailure("crash", String(e)));
       return game;
@@ -975,7 +997,10 @@
   }
 
   const abouts = [fill("opponent", opponents, "opponent-about"), fill("map-size", MAPS, "map-about")];
-  $("opponent").value = opponents[opponents.length - 1].id;
+  $("opponent").value = "greedy";
+  const query = new URLSearchParams(location.search);
+  const mapId = query.get("map");
+  if (MAPS.some((m) => m.id === mapId)) $("map-size").value = mapId;
   abouts.forEach((about) => about());
 
   // The bots on disk. A page opened as a file, or served by anything but
@@ -1008,22 +1033,35 @@
   }
 
   function openDialog() {
+    $("player-name").value = GameRecording.savedName();
     $("new-game-error").textContent = "";
     $("new-game").showModal();
   }
 
   $("new-game-button").onclick = $("play-button").onclick = $("play-again").onclick = openDialog;
+  $("player-name").onchange = () => GameRecording.setName($("player-name").value.trim());
+  if (!query.has("replay")) openDialog();
   $("new-game").addEventListener("click", (/** @type {MouseEvent} */ e) => {
     if (e.target === $("new-game")) $("new-game").close();
   });
   $("start").onclick = async () => {
+    $("start").disabled = true;
+    $("start").textContent = "Starting…";
+    $("new-game-error").textContent = "";
     const typed = $("seed").value.trim();
+    const name = $("player-name").value.trim();
+    GameRecording.setName(name);
     const seed = /^\d{1,15}$/.test(typed) ? Number(typed) : Math.floor(Math.random() * 1e6);
     try {
-      await start({ bot: $("opponent").value, map: $("map-size").value, human: Number($("side-choice").value), seed });
+      await start({ bot: $("opponent").value, map: $("map-size").value, human: Number($("side-choice").value), seed, name });
       $("new-game").close();
+      $("arena").scrollIntoView({ block: "start" });
+      $("arena").focus({ preventScroll: true });
     } catch (e) {
       $("new-game-error").textContent = String(e instanceof Error ? e.message : e);
+    } finally {
+      $("start").disabled = false;
+      $("start").textContent = "Start";
     }
   };
   $("end-turn").onclick = () => current && current.endTurn();

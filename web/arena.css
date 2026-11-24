@@ -1,0 +1,267 @@
+* { box-sizing: border-box; }
+body { margin: 0; }
+#arena { width: 100%; height: 100vh; height: 100dvh; overflow: hidden; }
+#arena:focus { outline: none; }
+#arena:not(.has-match) :is(#side, footer) { display: none; }
+#arena .home-link { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
+#arena .home-link:hover, #arena .file-button:hover { text-decoration: underline; }
+#arena .file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+#arena .file-button { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+#arena header:has(.file-input:focus-visible) .file-button { outline: 2px solid var(--accent); }
+:root {
+    --bg: #f6f5f1;
+    --panel: #ffffff;
+    --text: #1f2328;
+    --muted: #656d76;
+    --border: #d8d6cf;
+    --accent: #2f6fde;
+    --highlight: #fff3c4;
+    --p1: #d64541;
+    --p2: #2f6fde;
+    --neutral: #9a9a9a;
+    --warn-bg: #fdf0c8;
+    --warn-border: #d9a520;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a;
+      --panel: #1d2024;
+      --text: #e6e6e6;
+      --muted: #9aa1a9;
+      --border: #33373d;
+      --accent: #6aa0ff;
+      --highlight: #3a3420;
+      --p1: #e8625c;
+      --p2: #5590f5;
+      --neutral: #8b8f94;
+      --warn-bg: #3d3214;
+      --warn-border: #a07a1a;
+    }
+  }
+@scope (#arena) {
+  :scope {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header, footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  footer {
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+    display: grid;
+    grid-template-columns: auto minmax(120px, 1fr) auto;
+    grid-template-areas: "legend chart ." "transport slider settings";
+    row-gap: 4px;
+  }
+  #transport, #settings { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; }
+  #transport { grid-area: transport; gap: 6px; }
+  #settings { grid-area: settings; }
+  #army-legend {
+    grid-area: legend; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end;
+    gap: 2px 12px; font-size: 12px;
+  }
+  #chart-box { grid-area: chart; position: relative; height: 40px; }
+  #chart { cursor: pointer; touch-action: none; }
+  #chart-tip {
+    position: absolute; bottom: calc(100% + 6px); transform: translateX(-50%); display: none; z-index: 2;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+    font-size: 12px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .15);
+  }
+  .key { display: inline-block; width: 12px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 5px; }
+  .key.p1 { background: var(--p1); }
+  .key.p2 { background: var(--p2); }
+  .muted { color: var(--muted); }
+  [hidden] { display: none !important; }
+  #rules-button, #rules-button[hidden] + #settings-button { margin-left: auto; }
+  dialog {
+    width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; padding: 0;
+    color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .3);
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .4); }
+  #new-game { width: min(440px, calc(100vw - 32px)); }
+  #new-game-body { padding: 12px 16px 16px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 12px; align-items: center; }
+  #new-game-body select, #new-game-body input { width: 100%; }
+  #new-game-body input {
+    font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px;
+  }
+  #new-game-body .wide { grid-column: 1 / -1; }
+  #new-game-body .hint { grid-column: 2; margin-top: -6px; font-size: 12px; color: var(--muted); }
+  #new-game-error { color: var(--p1); }
+  #start { justify-self: end; }
+  #settings-dialog { width: min(480px, calc(100vw - 32px)); }
+  #settings-body { padding: 4px 16px 16px; }
+  #settings-body h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 0 8px; }
+  #settings-body .hint { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  #piece-styles { display: grid; gap: 8px; }
+  .piece-style {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; align-items: center;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+  }
+  .piece-style:hover { border-color: var(--accent); }
+  .piece-style:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .piece-style input { margin: 0; accent-color: var(--accent); }
+  .piece-style-text b { margin-right: 8px; }
+  .piece-style-text span { color: var(--muted); font-size: 13px; }
+  .piece-style-row { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; }
+  .piece-style-row span { display: flex; }
+  /* Not laid over its box, as the board's canvas is. */
+  .piece-icon { position: static; flex: none; vertical-align: -4px; }
+  #selection .piece-icon { margin-right: 6px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  button:disabled:hover { border-color: var(--border); }
+  .dialog-head {
+    position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .dialog-head h2 { font-size: 16px; margin: 0; }
+  #rules-body { padding: 0 16px 16px; outline: none; }
+  #rules-body h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
+  #rules-body ul { margin: 0; padding-left: 18px; }
+  #rules-body li { margin: 3px 0; }
+  #rules-body .table-wrap { overflow-x: auto; margin-top: 8px; }
+  #rules-body table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  #rules-body th, #rules-body td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+  #rules-body th { font-weight: normal; font-size: 12px; color: var(--muted); }
+  #rules-body th:first-child, #rules-body td:first-child, #rules-body .text { text-align: left; }
+  #rules-body td.text { white-space: normal; }
+  .chip { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; border-radius: 3px; border: 1px solid rgba(0, 0, 0, .2); }
+  #mismatch { padding: 8px 16px; background: var(--warn-bg); border-bottom: 1px solid var(--warn-border); border-left: 4px solid var(--warn-border); }
+  #matchup { color: var(--muted); }
+  #recording-status { color: var(--muted); }
+  #recording-status:empty { display: none; }
+  .game-layout { flex: 1; display: flex; min-height: 0; }
+  #board { flex: 1; position: relative; min-width: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #side {
+    width: 340px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding: 12px 16px;
+  }
+  /* The panel's parts have fixed sizes, so they stay put as the game changes. */
+  #turn-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #side h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 16px 0 6px; }
+  #side h2:first-child { margin-top: 0; }
+  .players { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .players th:nth-child(2), .players th:nth-child(3) { width: 46px; }
+  .players th:nth-child(4) { width: 52px; }
+  .players th:nth-child(5) { width: 58px; }
+  .players td, .players th { padding: 2px 4px; }
+  .players th { font-weight: normal; font-size: 12px; color: var(--muted); text-align: right; }
+  .players td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .players td:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+  .players td.mix { color: var(--muted); font-size: 12px; padding: 0 4px 6px 20px; white-space: normal; max-width: none; }
+  .players td.mix div { height: 2.8em; overflow: hidden; }
+  #standing, #summary { font-size: 13px; }
+  #standing { margin: 6px 0 0; height: 2.8em; overflow: hidden; }
+  #summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; }
+  #summary .label { color: var(--muted); }
+  #summary .value { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #orders-box { margin-top: 8px; }
+  #orders-box summary { margin-bottom: 4px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+  #orders { height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  #orders div { padding: 1px 8px; cursor: pointer; white-space: nowrap; }
+  #orders div:hover { background: var(--bg); }
+  #orders div.current { background: var(--highlight); }
+  #orders div.err { color: var(--p1); }
+  #reply { margin-top: 6px; height: 4.2em; overflow-y: auto; }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 0; max-height: 200px; overflow-y: auto; }
+  details summary { cursor: pointer; color: var(--muted); }
+  #hover { color: var(--muted); height: 8.4em; overflow-y: auto; white-space: pre-wrap; }
+  button, select, input[type=file]::file-selector-button {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  #slider { grid-area: slider; width: 100%; margin: 0; accent-color: var(--accent); }
+  #position { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 9em; }
+  #empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 8px; color: var(--muted); text-align: center; padding: 16px;
+  }
+  #board.dragging { outline: 3px dashed var(--accent); outline-offset: -8px; }
+  /* A game played in the page: its controls sit on top of the side panel. A
+     game still being played stays at its latest step, so it has no transport. */
+  #game, #live-help { display: none; }
+  :scope.played #game { display: block; margin-bottom: 16px; }
+  :scope.live #transport, :scope.live #slider, :scope.live #settings { display: none; }
+  :scope.live #live-help { display: block; grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+  :scope.live #canvas { cursor: pointer; }
+  kbd {
+    font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; padding: 0 4px;
+    border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+  }
+  #play-status { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #play-note { color: var(--muted); font-size: 13px; height: 1.4em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #play-note.warn { color: var(--p1); }
+  #play-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  #selection { height: 16em; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+  #selection .row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+  #selection .label { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  #selection button { text-align: left; }
+  #selection button.unit { display: block; width: 100%; margin: 2px 0; }
+  #selection button.chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  #selection button.spent { color: var(--muted); }
+  #play-tally { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 6px; text-align: center; }
+  #play-tally div { padding: 3px 0; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
+  #play-tally b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  #play-tally span { display: block; font-size: 11px; white-space: nowrap; }
+  #play-tally .bad b { color: #f03e3e; }
+  #play-tally .good b { color: #2f9e44; }
+  #play-log { height: 5.6em; overflow-y: auto; font-size: 13px; color: var(--muted); }
+  #menu {
+    position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 4px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  }
+  #menu button { text-align: left; white-space: nowrap; }
+  /* What an attack on the enemy under the pointer would do. It sits beside
+     the fight, and the pointer goes through it. */
+  #forecast {
+    position: absolute; z-index: 2; pointer-events: none; padding: 8px 10px; white-space: nowrap; font-size: 13px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  }
+  #forecast .fc-fight + .fc-fight { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+  #forecast .fc-row { display: grid; grid-template-columns: 9.5em 96px 5.2em 5.6em; gap: 8px; align-items: center; margin: 3px 0; }
+  #forecast .fc-who { overflow: hidden; text-overflow: ellipsis; }
+  #forecast .fc-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+  #forecast .fc-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
+  #forecast .fc-lose { background: repeating-linear-gradient(135deg, #f03e3e 0 3px, #ffa8a8 3px 6px); }
+  #forecast .fc-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  #forecast .fc-num b { color: var(--text); }
+  #forecast .fc-delta { font-weight: 700; color: #f03e3e; font-variant-numeric: tabular-nums; }
+  #forecast .fc-delta.none { font-weight: 400; color: var(--muted); }
+  #forecast .fc-hint { margin-top: 6px; color: var(--muted); font-size: 12px; }
+  #error { color: var(--p1); white-space: pre-wrap; }
+  @media (max-width: 800px) {
+    .game-layout { flex-direction: column; }
+    #board { min-height: 0; }
+    #side { max-height: 40%; }
+    header, footer { padding: 5px 8px; gap: 5px 10px; }
+    footer { max-height: 28%; overflow-y: auto; }
+    #side { width: auto; border-left: none; border-top: 1px solid var(--border); }
+    footer { grid-template-columns: 1fr; grid-template-areas: "legend" "chart" "slider" "transport" "settings"; }
+    #army-legend { justify-self: start; justify-content: flex-start; }
+  }
+}

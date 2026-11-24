@@ -360,6 +360,11 @@ impl Server {
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)));
         let mut full = self.opts.root.join(relative);
+        // The homepage is also served at /. Its sibling assets must resolve
+        // there as well as beside /web/index.html.
+        if plain && !full.exists() {
+            full = self.opts.root.join("web").join(relative);
+        }
         if plain && full.is_dir() {
             full.push("index.html");
         }

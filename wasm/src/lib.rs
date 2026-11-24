@@ -86,10 +86,11 @@ pub unsafe extern "C" fn bb_load(
     setup_len: usize,
     script_ptr: *const u8,
     script_len: usize,
+    open_turn: u32,
 ) -> i32 {
     let setup = input(setup_ptr, setup_len);
     let script = input(script_ptr, script_len);
-    match load(&setup, &script) {
+    match load(&setup, &script, open_turn != 0) {
         Ok((viewer, info)) => {
             let n = viewer.steps.len() as i32;
             VIEWER.with(|v| *v.borrow_mut() = Some(viewer));
@@ -266,7 +267,7 @@ fn new_setup(config: &str) -> Result<String, String> {
     Ok(Game::new(rules, map).setup_lines(true).join("\n"))
 }
 
-fn load(setup: &str, script: &str) -> Result<(Viewer, String), String> {
+fn load(setup: &str, script: &str, open_turn: bool) -> Result<(Viewer, String), String> {
     let game = Game::from_setup(setup.lines())?;
     let mut steps = Vec::new();
     for line in script.lines() {
@@ -301,7 +302,7 @@ fn load(setup: &str, script: &str) -> Result<(Viewer, String), String> {
         steps,
         snapshots,
         tip: g,
-        open: false,
+        open: open_turn,
     };
     Ok((viewer, info))
 }
@@ -544,7 +545,7 @@ mod tests {
         let game = Game::new(rules, map);
         let setup = game.setup_lines(true).join("\n");
         let script = "T 1\nO M 3 000\nO B 0 I\nT 2\nO M 6 333\nT 1\nO M 99 0\n";
-        let (viewer, info) = load(&setup, script).unwrap();
+        let (viewer, info) = load(&setup, script, false).unwrap();
         assert!(info.starts_with("{\"width\":40,"));
         // One army entry at the start and one after each of the 3 turns;
         // each side starts with two infantry and a scout.
@@ -564,7 +565,7 @@ mod tests {
             "{}",
             &s3[s3.find("\"reply\"").unwrap()..]
         );
-        assert!(load(&setup, "X 1").is_err());
+        assert!(load(&setup, "X 1", false).is_err());
     }
 
     #[test]
@@ -574,8 +575,10 @@ mod tests {
         let map = bitbath_engine::mapgen::generate(&rules, 3).unwrap();
         let game = Game::new(rules, map);
         let setup = game.setup_lines(true).join("\n");
-        let (viewer, _) = load(&setup, "T 1\nO B 0 I\nT 2\n").unwrap();
+        let (viewer, _) = load(&setup, "T 1\nO B 0 I\nT 2\n", false).unwrap();
         assert!(viewer.state_json(2).ends_with("\"outcome\":null}"));
+        let (unfinished, _) = load(&setup, "T 1\nO B 0 I\nT 2\n", true).unwrap();
+        assert!(unfinished.state_json(3).ends_with("\"outcome\":null}"));
         // Player 1 built a unit, so the tiebreak gives them the bigger army.
         assert!(viewer.state_json(3).ends_with("\"outcome\":[1,\"army\"]}"));
     }
@@ -588,7 +591,7 @@ mod tests {
         assert!(new_setup("nope = 1").is_err());
         assert!(new_setup("map_height = 7").is_err());
 
-        let (mut live, _) = load(&setup, "").unwrap();
+        let (mut live, _) = load(&setup, "", false).unwrap();
         let mut script = String::new();
         let mut replies = Vec::new();
         for line in ["T 1", "O B 0 I", "O M 99 0", "T 2", "O B 1 S"] {
@@ -604,7 +607,7 @@ mod tests {
         assert_eq!(live.tip.turn_message(0, 0)[0], "TURN 1");
 
         assert!(live.end());
-        let (replay, info) = load(&setup, &script).unwrap();
+        let (replay, info) = load(&setup, &script, false).unwrap();
         for k in 0..=5 {
             assert_eq!(live.state_json(k), replay.state_json(k));
         }

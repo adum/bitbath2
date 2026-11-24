@@ -3,7 +3,7 @@
 // engine compiled to wasm (wasm/src/lib.rs) and draws the game on a canvas.
 // It also shows games as they are played in the page: play.js adds each step
 // to a replay that grows, and takes the human player's orders.
-/* global BITBATH_WASM_BASE64 */
+/* global BitbathEngine, BitbathPieces */
 "use strict";
 
 (function () {
@@ -17,140 +17,10 @@
   /** @param {string} id */
   const $ = (id) => /** @type {any} */ (document.getElementById(id));
 
-  /** The engine, behind the C ABI in wasm/src/lib.rs. */
-  class Engine {
-    /** @param {any} exports */
-    constructor(exports) {
-      this.ex = exports;
-      this.enc = new TextEncoder();
-      this.dec = new TextDecoder();
-    }
-
-    static async create() {
-      if (typeof BITBATH_WASM_BASE64 === "undefined") {
-        throw new Error("web/bitbath_wasm.js is missing. Build it with: python scripts/build_web.py");
-      }
-      const bin = atob(BITBATH_WASM_BASE64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const { instance } = await WebAssembly.instantiate(bytes, {});
-      return new Engine(instance.exports);
-    }
-
-    /** @param {string} text @returns {[number, number]} */
-    put(text) {
-      const b = this.enc.encode(text);
-      const p = this.ex.bb_alloc(b.length);
-      new Uint8Array(this.ex.memory.buffer, p, b.length).set(b);
-      return [p, b.length];
-    }
-
-    out() {
-      return this.dec.decode(new Uint8Array(this.ex.memory.buffer, this.ex.bb_out_ptr(), this.ex.bb_out_len()));
-    }
-
-    /** @param {string} setup @param {string} script */
-    load(setup, script) {
-      const [sp, sl] = this.put(setup);
-      const [cp, cl] = this.put(script);
-      const n = this.ex.bb_load(sp, sl, cp, cl);
-      this.ex.bb_free(sp, sl);
-      this.ex.bb_free(cp, cl);
-      const out = this.out();
-      if (n < 0) throw new Error(out);
-      return { steps: n, info: JSON.parse(out) };
-    }
-
-    /** @param {number} step */
-    seek(step) {
-      this.ex.bb_seek(step);
-      return JSON.parse(this.out());
-    }
-
-    // Live games: see "Live games" below.
-
-    /** Calls an export that takes one string, and throws its error. @param {string} fn @param {string} text */
-    call(fn, text) {
-      const [p, l] = this.put(text);
-      const n = this.ex[fn](p, l);
-      this.ex.bb_free(p, l);
-      if (n < 0) throw new Error(this.out());
-      return this.out();
-    }
-
-    /** The setup lines of a new game on a generated map. @param {string} config `key = value` lines, with the map's `seed` */
-    setup(config) {
-      if (!this.ex.bb_setup) throw new Error("web/bitbath_wasm.js is out of date. Rebuild it with: python scripts/build_web.py");
-      return this.call("bb_setup", config).split("\n");
-    }
-
-    /** The engine, protocol and generator versions, for a replay's header. */
-    versions() {
-      this.ex.bb_versions();
-      return JSON.parse(this.out());
-    }
-
-    /** Adds a step to the end of the loaded game and returns its reply lines. @param {string} line `T <player>` or `O <order>` */
-    push(line) {
-      const out = this.call("bb_push", line);
-      return out ? out.split("\n") : [];
-    }
-
-    /** Ends the turn being played. Returns whether that ended the game. */
-    end() {
-      return this.ex.bb_end() === 1;
-    }
-
-    /** The init message for a player (SPEC §6.2). @param {number} player @returns {string[]} */
-    initMessage(player) {
-      if (this.ex.bb_init_message(player) < 0) throw new Error(this.out());
-      return this.out().split("\n");
-    }
-
-    /**
-     * The turn message for the player whose turn it is (SPEC §6.3).
-     * @param {number} [timeMs] the time it says the turn has @param {number} [bankMs] and the bank it says is left
-     * @returns {string[]}
-     */
-    turnMessage(timeMs, bankMs) {
-      if (this.ex.bb_turn_message(timeMs || 0, bankMs || 0) < 0) throw new Error(this.out());
-      return this.out().split("\n");
-    }
-  }
-
-  /** Splits a replay into records and builds the engine's step script. */
-  function parseReplay(text) {
-    const records = text.split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
-    const header = records[0];
-    if (!header || header.type !== "header") throw new Error("This isn't a bitbath replay.");
-    const turns = records.filter((r) => r.type === "turn");
-    const script = [];
-    const stepTurn = [];
-    const turnStart = [];
-    turns.forEach((t, i) => {
-      turnStart.push(script.length);
-      script.push("T " + t.player);
-      stepTurn.push(i);
-      for (const o of t.orders || []) {
-        script.push("O " + o);
-        stepTurn.push(i);
-      }
-    });
-    return {
-      header,
-      turns,
-      script,
-      stepTurn,
-      turnStart,
-      init: records.find((r) => r.type === "init") || null,
-      result: records.find((r) => r.type === "result") || null,
-    };
-  }
-
   // Viewer state. `pos` counts the steps applied: 0 is the start, and step
   // pos-1 is the one just shown.
   const v = {
-    /** @type {Engine | null} */ engine: null,
+    /** @type {BitbathEngine | null} */ engine: null,
     /** @type {any} */ replay: null,
     /** The game being played in the page and its controls (play.js), or null for a replay. @type {any} */ play: null,
     /** Where each unit was last drawn, as [x, y, radius] by unit id. @type {Map<number, number[]>} */ unitPos: new Map(),
@@ -635,11 +505,9 @@
       ctx.stroke();
     }
     if (rad >= 5) {
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold " + Math.round(rad * 1.1) + "px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(code, x, y + rad * 0.06);
+      // The unit's symbol or its letter, as the user chose (pieces.js).
+      const type = v.info.units[code];
+      BitbathPieces.draw(ctx, code, type ? type.name : "", x, y, rad);
     }
     // A transport shows how many units are aboard on its upper left corner.
     const aboard = hasFlag(code, "transport") ? v.state.units.filter((/** @type {any[]} */ w) => w[12] === u[0]).length : 0;
@@ -1725,7 +1593,7 @@
   }
 
   async function engine() {
-    if (!v.engine) v.engine = await Engine.create();
+    if (!v.engine) v.engine = await BitbathEngine.create();
     return v.engine;
   }
 
@@ -1734,12 +1602,13 @@
    * about to be played in the page.
    * @param {any} replay @param {any} [play]
    */
-  async function show(replay, play) {
+  async function show(replay, play, savedPosition = false) {
     stop();
     if (v.play) v.play.close();
     showMismatch("");
     try {
-      const { steps, info } = (await engine()).load(replay.header.setup.join("\n"), replay.script.join("\n"));
+      const unfinished = !play && !replay.result;
+      const { steps, info } = (await engine()).load(replay.header.setup.join("\n"), replay.script.join("\n"), unfinished);
       v.play = play || null;
       v.replay = replay;
       v.info = info;
@@ -1760,13 +1629,19 @@
       $("orders-box").hidden = false;
       $("slider").max = String(v.ends.length - 1);
       $("empty").style.display = "none";
+      $("arena").classList.add("has-match");
       const h = replay.header;
       $("matchup").textContent = h.players[0].name + " (P1) vs " + h.players[1].name + " (P2) · " + h.map + " · " + info.width + "×" + info.height;
       document.title = h.players[0].name + " vs " + h.players[1].name + " · Bitbath";
       syncMode();
       computeGeo();
       buildTerrain();
-      setPos(0);
+      if (unfinished) $("matchup").textContent += " · Unfinished";
+      setPos(savedPosition ? steps : 0);
+      if (!$("new-game").open) {
+        $("arena").scrollIntoView({ block: "start" });
+        $("arena").focus({ preventScroll: true });
+      }
       return true;
     } catch (e) {
       v.play = null;
@@ -1778,15 +1653,15 @@
   }
 
   /** @param {string} text */
-  async function openText(text) {
+  async function openText(text, savedPosition = false) {
     let replay;
     try {
-      replay = parseReplay(text);
+      replay = BitbathEngine.parseReplay(text);
     } catch (e) {
       $("error").textContent = String(e instanceof Error ? e.message : e);
       return;
     }
-    await show(replay);
+    await show(replay, null, savedPosition);
   }
 
   // Live games. A game played in the page is a replay that grows: each step
@@ -1797,8 +1672,8 @@
   /** Fits the page to what is shown: a replay, or a game being played. */
   function syncMode() {
     const fog = fogged();
-    document.body.classList.toggle("live", !!fog);
-    document.body.classList.toggle("played", !!v.play);
+    $("arena").classList.toggle("live", !!fog);
+    $("arena").classList.toggle("played", !!v.play);
     // The army chart needs the timeline that a current bitbath_wasm.js adds,
     // and would give away the opponent's strength during a game.
     $("chart-box").hidden = $("army-legend").hidden = !!fog || !v.info || !v.info.army;
@@ -1821,7 +1696,7 @@
    */
   function append(line, turn) {
     const r = v.replay;
-    const reply = /** @type {Engine} */ (v.engine).push(line);
+    const reply = /** @type {BitbathEngine} */ (v.engine).push(line);
     if (turn) {
       r.turnStart.push(r.script.length);
       r.turns.push(turn);
@@ -1843,7 +1718,7 @@
     v.replay.result = result;
     v.play.over = true;
     v.info.army = v.ends.map((e) => {
-      const units = /** @type {Engine} */ (v.engine).seek(e).units;
+      const units = /** @type {BitbathEngine} */ (v.engine).seek(e).units;
       return [1, 2].map((p) => armyValue(units.filter((/** @type {any[]} */ u) => u[1] === p)));
     });
     $("view").value = "0";
@@ -1922,8 +1797,10 @@
   });
 
   document.addEventListener("keydown", (e) => {
-    const tag = /** @type {HTMLElement} */ (e.target).tagName;
-    if (!v.replay || tag === "INPUT" || tag === "SELECT" || document.querySelector("dialog[open]")) return;
+    const target = /** @type {HTMLElement} */ (e.target);
+    if (!v.replay || !$("arena").contains(target) || target.matches("input, select")
+        || document.querySelector("dialog[open]")) return;
+    if (target.closest("button, label, summary, a") && ["Tab", "Enter", " "].includes(e.key)) return;
     // A game being played stays at its latest step, and has its own keys.
     if (fogged()) return v.play.key(e);
     const keys = {
@@ -2059,9 +1936,10 @@
 
   const url = new URLSearchParams(location.search).get("replay");
   if (url) {
+    $("arena").scrollIntoView();
     fetch(url)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(url + ": HTTP " + r.status))))
-      .then(openText)
+      .then(text => openText(text, new URLSearchParams(location.search).get("position") === "latest"))
       .catch((e) => ($("error").textContent = String(e.message || e)));
   }
 

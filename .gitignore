@@ -1,7 +1,12 @@
 /target/
+/dist/
 /runs/
 /entries/
 /arena/
 /web/bitbath_wasm.js
+/web/pyodide-*/
+/web/reference-bots.zip
 __pycache__/
 *.pyc
+/site/node_modules/
+/site/.wrangler/

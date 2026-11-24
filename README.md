@@ -29,7 +29,7 @@ To watch a game, build the viewer once:
 python scripts/build_web.py
 ```
 
-Then open `web/index.html` in a browser and choose a replay file, or drop one on the page. To open replays by URL instead, serve the repository with `python scripts/serve.py` and open `http://localhost:8000/web/index.html?replay=/runs/<game>/replay.bbr`. After rebuilding the viewer, reload the page; the viewer warns when a replay doesn't play back the way it was recorded, which usually means the viewer is out of date. In the viewer:
+Then open `web/play.html` in a browser and choose a replay file, or drop one on the page. To open replays by URL instead, serve the repository with `python scripts/serve.py` and open `http://localhost:8000/web/play.html?replay=/runs/<game>/replay.bbr`. After rebuilding the viewer, reload the page; the viewer warns when a replay doesn't play back the way it was recorded, which usually means the viewer is out of date. In the viewer:
 
 - **Space** plays or pauses.
 - **← / →** step through orders.
@@ -38,7 +38,13 @@ Then open `web/index.html` in a browser and choose a replay file, or drop one on
 
 ## Playing by hand
 
-The viewer's page also plays games: you against a bot built into the page. Click **New game**, then pick an opponent, a map size, and a side. The `random` bot is for learning the controls, and `greedy` puts up a fight. Nothing else needs to run, since the game runs in the page on the same engine.
+Open [the Bitbath homepage](web/index.html) after running `python scripts/build_web.py`. It shows the latest Micro standings, with filters for LLM entries and the full field. **Play Micro** opens match setup on the full-window [Play page](web/play.html). Completing an arena run or rebuilding the web engine refreshes the standings from local results. A fresh checkout includes the last exported standings.
+
+The viewer's page also plays games: you against a bot built into the page. Click **New game**, then pick an opponent, a map size, and a side. The `random` bot is for learning the controls, and `greedy` puts up a fight. Bastion, Smart, and Vanguard run their tournament Python code in a browser worker. Start the local web server or use the hosted site to play them.
+
+The hosted site records games as you play. Enter a player name in **New game** to appear on the human scoreboard. Names are remembered on this browser and matching names share a score. Guests contribute to site totals. The homepage links to every recent game. Unfinished games show city counts and army values and open at the latest saved move. Their results count toward rank and win rate once the game finishes.
+
+To run the scoreboard locally with Node 22.13 or newer, build the hosted site with `python scripts/build_web.py --dist`. In `site/`, run `npm ci`, `npx wrangler d1 migrations apply DB --local`, and `npm run dev`. Run `npm test` there to check recording and scoreboard behavior.
 
 You see the game through your own fog of war:
 
@@ -49,6 +55,8 @@ You see the game through your own fog of war:
 - **Click one of your cities** to build there, or press a unit's letter, such as **I** for infantry. A gold **+** marks each city that can still build this turn.
 - **N** or **Tab** selects the next unit with something left to do, **Esc** deselects, and **E** or **Enter** ends your turn.
 
+**Settings**, at the top right, picks how units are drawn: a symbol for each kind (a sword for infantry, pikes, a horse's head, a bow, an eye for the scout), or its letter. The choice is kept in the browser.
+
 When the game ends, it becomes a replay: you can step through it with both sides in view, and save it as a `.bbr` file.
 
 To play against a bot on disk, let `bitbath serve` serve the page:
@@ -57,7 +65,7 @@ To play against a bot on disk, let `bitbath serve` serve the page:
 target/release/bitbath serve
 ```
 
-Then open `http://localhost:8000/web/index.html`. The New game dialog's opponent list now also has the bots on disk, marked "on disk", after the built-in ones.
+Then open `http://localhost:8000/web/play.html`. The New game dialog's opponent list now also has the bots on disk, marked "on disk", after the built-in ones.
 
 - **Which bots.** The server offers every Python file in `bots/` and every program in `target/release/`, named by its file without `_bot`. It doesn't check that they are bots, so the list can hold a program that isn't one. Add any other bot with `--bot <name>=<command>`, and pass `--no-discover` to offer only those.
 
@@ -99,6 +107,12 @@ A few sample bots are there for variety. Each plays one style, none of them well
 - [bots/volley_bot.py](bots/volley_bot.py) gathers archers into packs that advance together and shoot from two hexes away.
 - [bots/raider_bot.py](bots/raider_bot.py) hunts with cavalry, which avoid pikemen and go home to heal.
 - [bots/rush_bot.py](bots/rush_bot.py) sends nothing but infantry straight at the enemy and attacks whatever it reaches.
+
+[Bastion](bots/bastion_bot.py) is an independent Python bot. It forecasts neutral-city captures, coordinates attacks, and keeps defenders near threatened cities as its army grows. Run a match against Vanguard with the following command.
+
+```bash
+target/release/bitbath play --p1 "python bots/bastion_bot.py" --p2 "python bots/vanguard_bot.py" --map seed:42
+```
 
 ## Rules and maps
 

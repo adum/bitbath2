@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .leaderboard import refresh as refresh_leaderboard
 from .process import run_process
 from .run import ENTRIES, now, write_json
 from .sandbox import ROOT, BenchmarkError, Docker, archive_of, extract_archive
@@ -180,5 +181,6 @@ def arena(args):
         finally:
             # Whatever was played is kept, so the next run continues from it.
             download(container, season)
+    refresh_leaderboard(ROOT)
     print(f"Results: {season}")
     return season

@@ -303,7 +303,7 @@ The engine talks to two *players* over the protocol in §6. All three modes use 
 - **No runner:** the game runs in the page, on the engine compiled to wasm. There is no clock.
 - **Same display:** the game is a replay that grows as it is played, so the viewer shows it with the code that shows replays. Until the game ends, the human sees it through their own fog of war, and only at its latest step.
 - **Orders:** the page turns clicks into the orders of §6.4. Its conveniences stay outside the engine: where a unit can move, the path there, and what an attack would do.
-- **Built-in bots:** `random` and `greedy`, ported to JavaScript on a small kit (`web/kit.js`). The page hands a bot the init and turn messages of §6, and the bot sends back order lines and reads their replies.
+- **Built-in bots:** Random and Greedy use the JavaScript kit (`web/kit.js`). Bastion, Smart, and Vanguard use their tournament Python sources and kit in a browser worker. The page hands a bot the init and turn messages of §6, and the bot sends back order lines and reads their replies.
 - **Bots on disk:** a page can't start a program, so `bitbath serve` serves the page and runs bots for it. Such a bot stands behind the same two calls as a built-in one.
   - **A bridge, not a referee:** the page's engine still builds the messages and answers the orders. The server starts the bot and carries lines between the page and the bot's stdin and stdout, one request for each line the bot sends.
   - **Which bots:** the Python files in `bots/`, the programs in `target/release/`, and the commands named with `--bot <name>=<command>`. The server doesn't check that what it finds are bots. It never runs a command the page sends, listens on this machine only, and turns away requests that don't come from its own pages.
@@ -618,7 +618,7 @@ bitbath2/
 **The viewer** needs no web toolchain:
 
 - The wasm crate exports plain C functions instead of using wasm-bindgen, so building it needs only cargo.
-- `scripts/build_web.py` embeds the wasm in `web/bitbath_wasm.js` as base64, so `web/index.html` opens straight from disk.
+- `scripts/build_web.py` embeds the wasm in `web/bitbath_wasm.js` as base64, so `web/play.html` opens straight from disk.
 - Current Rust emits wasm reference types, so the viewer needs a browser from 2022 or later.
 
 **Determinism rules for `engine`:**

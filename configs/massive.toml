@@ -1,0 +1,9 @@
+map_width = 280
+map_height = 220            # must be even
+neutral_cities = 46        # must be even
+round_limit = 900          
+
+# More units to move each turn, so bots get twice the default time.
+time_bank_ms = 10000
+time_increment_ms = 2000
+time_bank_cap_ms = 20000

@@ -2,7 +2,7 @@
 
     python scripts/serve.py [port]
 
-Then open http://localhost:8000/web/index.html, adding
+Then open http://localhost:8000/web/play.html, adding
 ?replay=/runs/<game>/replay.bbr to open a replay directly.
 
 Unlike `python -m http.server`, this tells browsers to check every file for
@@ -15,9 +15,19 @@ import functools
 import http.server
 import os
 import sys
+from urllib.parse import urlsplit
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        url = urlsplit(self.path)
+        if url.path == "/":
+            self.send_response(302)
+            self.send_header("Location", "/web/" + ("?" + url.query if url.query else ""))
+            self.end_headers()
+            return
+        super().do_GET()
+
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache")
         super().end_headers()
@@ -28,7 +38,7 @@ def main():
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     handler = functools.partial(Handler, directory=root)
     with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as server:
-        print("Serving the viewer at http://localhost:%d/web/index.html" % port, flush=True)
+        print("Serving the viewer at http://localhost:%d/web/play.html" % port, flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

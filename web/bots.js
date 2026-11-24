@@ -1,6 +1,7 @@
 // @ts-check
 // The bots built into the play UI (play.js). They are ports of the Python
 // reference bots, written against the JavaScript kit (kit.js).
+/* global ReferenceOpponent */
 "use strict";
 
 var BitbathBots = (function () {
@@ -185,6 +186,9 @@ var BitbathBots = (function () {
   const list = [
     { id: "random", name: "Random", about: "Legal moves picked at random. Good for learning the controls.", create: (/** @type {number} */ seed) => new RandomBot(seed) },
     { id: "greedy", name: "Greedy", about: "Grabs the nearest cities and takes any fight that looks good.", create: () => new GreedyBot() },
+    { id: "bastion", name: "Bastion", about: "Races for cities and coordinates first strikes.", create: () => ReferenceOpponent.create("bastion") },
+    { id: "smart", name: "Smart", about: "Weighs captures, fights, and production each turn.", create: () => ReferenceOpponent.create("smart") },
+    { id: "vanguard", name: "Vanguard", about: "Pressures infantry with coordinated attacks.", create: () => ReferenceOpponent.create("vanguard") },
   ];
 
   return { list, RandomBot, GreedyBot };

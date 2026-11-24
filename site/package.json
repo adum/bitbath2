@@ -1,0 +1,15 @@
+{
+  "name": "bitbath-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test worker.test.mjs",
+    "db:generate": "drizzle-kit generate",
+    "dev": "wrangler dev --local"
+  },
+  "devDependencies": {
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2",
+    "wrangler": "4.92.0"
+  }
+}

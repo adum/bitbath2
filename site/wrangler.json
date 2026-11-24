@@ -1,0 +1,12 @@
+{
+  "name": "bitbath-arena",
+  "main": "worker.mjs",
+  "compatibility_date": "2025-09-01",
+  "assets": { "directory": "../dist/client", "binding": "ASSETS" },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "bitbath-games",
+    "database_id": "00000000-0000-4000-8000-000000000000",
+    "migrations_dir": "drizzle"
+  }]
+}
