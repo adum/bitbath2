@@ -439,8 +439,9 @@
       const top = list.findIndex((u) => u[0] === picked);
       list.forEach((u, j) => j !== top && place(u, j));
       if (top >= 0) place(list[top], top);
-      // The health bars of a stack go over all its units, so none is covered.
-      if (n > 1) for (const u of list) drawHealth(ctx, u);
+      // The health bars of a stack go over all its units, so none is covered,
+      // and so do the marks of the ones dug in.
+      if (n > 1) for (const u of list) drawHealth(ctx, u), drawFort(ctx, u);
     }
     if (!a) return;
     for (const u of v.state.units) {
@@ -529,7 +530,45 @@
       ctx.fillText(String(aboard), bx, by + br * 0.06);
     }
     ctx.globalAlpha = 1;
-    if (bar) drawHealth(ctx, u);
+    if (bar) drawHealth(ctx, u), drawFort(ctx, u);
+  }
+
+  /**
+   * How far a unit is dug in: a white block on its top edge for each
+   * fortification level, like the teeth of a wall. Drawn where the unit was
+   * last drawn.
+   * @param {CanvasRenderingContext2D} ctx @param {any[]} u
+   */
+  function drawFort(ctx, u) {
+    const at = v.unitPos.get(u[0]);
+    const n = u[8];
+    if (!at || !n) return;
+    const [x, y, rad] = at;
+    const side = Math.max(3, rad * 0.38);
+    const step = side * 1.3;
+    const square = hasFlag(u[2], "naval");
+    // Dimmed with the rest of a unit whose turn is over.
+    ctx.globalAlpha = u[1] === v.state.player && u[7] & 1 ? 0.55 : 1;
+    ctx.fillStyle = "#fff";
+    ctx.strokeStyle = "rgba(0,0,0,.8)";
+    ctx.lineWidth = Math.max(1, side * 0.22);
+    for (let i = 0; i < n; i++) {
+      const k = (i - (n - 1) / 2) * step;
+      ctx.save();
+      // Along the top of a ship's square, and around the rim of a disc.
+      if (square) {
+        ctx.translate(x + k, y - rad);
+      } else {
+        ctx.translate(x + rad * Math.sin(k / rad), y - rad * Math.cos(k / rad));
+        ctx.rotate(k / rad);
+      }
+      ctx.beginPath();
+      ctx.rect(-side / 2, -side / 2, side, side);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
   }
 
   /** The health bar under a unit, where the unit was last drawn. @param {CanvasRenderingContext2D} ctx @param {any[]} u */
