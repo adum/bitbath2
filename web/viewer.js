@@ -700,7 +700,10 @@
       ctx.strokeStyle = playerColor(3 - persp);
       for (const m of v.play.seen) trail(m);
     }
-    ctx.globalAlpha = 0.7;
+    // A replay's trails are how it shows the turn. The human's own, in a game
+    // being played, are only a reminder, and stay well behind the move being
+    // planned.
+    ctx.globalAlpha = fogged() === v.state.player ? 0.25 : 0.7;
     ctx.strokeStyle = playerColor(v.state.player);
     for (const m of v.marks) {
       if (m.ok && !(a && m.step >= a.from) && shown(m, persp)) trail(m);
@@ -727,6 +730,8 @@
     // Playing turn by turn, a turn's last order matters no more than the
     // others, so it shows as just its trail.
     if (v.playing && $("speed").value.startsWith("turn")) return;
+    // Nor does the move the human just made: they watched it happen.
+    if (moves && m.ok && fogged() === v.state.player) return;
     const s = v.geo.size;
     ctx.strokeStyle = ctx.fillStyle = m.ok ? playerColor(v.state.player) : "#f03e3e";
     ctx.lineWidth = Math.max(2, s * 0.16);
