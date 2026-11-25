@@ -204,6 +204,9 @@
    */
   const HUNGRY_TURNS = 4;
 
+  /** How long the light on where a picked unit can go takes to open out from it, in ms. */
+  const SPOT_MS = 200;
+
   /** @param {number} ms */
   const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -235,6 +238,8 @@
       /** Where the picked unit can move, by hex index: see Kit.reachable. @type {Map<number, string>} */ this.reach = new Map();
       /** The enemy units the picked unit can attack. @type {any[]} */ this.targets = [];
       /** The enemy units it can attack this turn after a move, each with the hex to attack from. @type {{t: any, from: number[]}[]} */ this.chase = [];
+      /** The light on where the picked unit can go: which unit and hex it is for, and when it began to open. See drawReach(). */ this.spot = { key: "", t0: 0 };
+      /** Whether the frames of that light opening are running. */ this.spotting = false;
       /** @type {Set<number>} */ this.zoc = new Set();
       /** The ids of the human's units with something left to do. @type {number[]} */ this.ready = [];
       /** Why the last order didn't do what was asked, if it didn't. */ this.problem = "";
@@ -706,6 +711,12 @@
             if (plan.when === "move" && plan.from) this.chase.push({ t, from: plan.from });
           }
         }
+        // The light opens afresh for another unit, and from where this one has moved to.
+        const key = unit && this.reach.size ? unit.id + "@" + unit.hex : "";
+        if (key !== this.spot.key) {
+          this.spot = { key, t0: performance.now() };
+          if (key) this.openSpot();
+        }
         this.ready = mine ? kit.view.myUnits().filter((/** @type {any} */ u) => this.canDo(u)).map((/** @type {any} */ u) => u.id).sort((/** @type {number} */ a, /** @type {number} */ b) => a - b) : [];
       }
       this.render();
@@ -876,20 +887,118 @@
       card.style.top = /** @type {any} */ (best).y + "px";
     }
 
+    /** Keeps the board redrawn while the light on where the picked unit can go opens. */
+    openSpot() {
+      if (this.spotting) return;
+      this.spotting = true;
+      const frame = (/** @type {number} */ now) => {
+        this.spotting = !!this.spot.key && now - this.spot.t0 < SPOT_MS;
+        V.draw();
+        if (this.spotting) requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }
+
+    /**
+     * Where the picked unit can go: the rest of the board is dimmed a little,
+     * and one line in the player's color runs around the hexes it can reach.
+     * The enemies it can attack keep their light too. Light and line open
+     * out from the unit over `SPOT_MS` when it is picked, and again from
+     * where it has moved to.
+     * @param {CanvasRenderingContext2D} ctx @param {any} unit
+     */
+    drawReach(ctx, unit) {
+      const s = v.geo.size;
+      const world = this.world;
+      /** The hexes inside the line. */
+      const area = new Set(this.reach.keys()).add(world.index(unit.hex));
+      /** The hexes left in the light. */
+      const lit = new Set(area);
+      for (const t of this.targets) lit.add(world.index(t.hex));
+      for (const p of this.chase) lit.add(world.index(p.t.hex));
+      const [ux, uy] = V.center(unit.hex[0], unit.hex[1]);
+      const corner = (/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ c, /** @type {number} */ k) => {
+        const a = (Math.PI / 180) * (60 * c - 30);
+        return [x + k * Math.cos(a), y + k * Math.sin(a)];
+      };
+      /** Adds a hex to the path being made, unless it is off the canvas. */
+      const add = (/** @type {number} */ i, /** @type {number} */ k) => {
+        const [x, y] = V.center(...world.hex(i));
+        if (x < -s || y < -s || x > v.geo.w + s || y > v.geo.h + s) return;
+        for (let c = 0; c < 6; c++) {
+          const [px, py] = corner(x, y, c, k);
+          if (c) ctx.lineTo(px, py);
+          else ctx.moveTo(px, py);
+        }
+        ctx.closePath();
+      };
+      // How far the light has opened, as a circle around the unit: none once it is fully open.
+      const t = (performance.now() - this.spot.t0) / SPOT_MS;
+      let open = -1;
+      if (t < 1) {
+        let far = 0;
+        for (const i of lit) {
+          const [x, y] = V.center(...world.hex(i));
+          far = Math.max(far, Math.hypot(x - ux, y - uy));
+        }
+        open = (far + s) * (1 - (1 - Math.max(0, t)) ** 3);
+      }
+      ctx.save();
+      // One path for all of them, each a little large: no seams, and nothing
+      // dimmed twice. Hexes out of sight are dim as it is, and are left alone.
+      ctx.fillStyle = v.dark ? "rgba(0,0,0,.3)" : "rgba(20,20,30,.17)";
+      const seen = (/** @type {number} */ i) => V.visibleTo(...world.hex(i), this.human);
+      ctx.beginPath();
+      for (let i = 0; i < world.width * world.height; i++) if (!lit.has(i) && seen(i)) add(i, s * 1.01);
+      ctx.fill();
+      if (open >= 0) {
+        // What the light hasn't got to yet is dim too.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, v.geo.w, v.geo.h);
+        ctx.arc(ux, uy, open, 0, 2 * Math.PI);
+        ctx.clip("evenodd");
+        ctx.beginPath();
+        for (const i of lit) if (seen(i)) add(i, s);
+        ctx.fill();
+        ctx.restore();
+        // And the line is drawn only as far as the light.
+        ctx.beginPath();
+        ctx.arc(ux, uy, open, 0, 2 * Math.PI);
+        ctx.clip();
+      }
+      // The line: each side of a hex of the area that has no hex of the area beyond it.
+      ctx.beginPath();
+      for (const i of area) {
+        const h = world.hex(i);
+        const [x, y] = V.center(h[0], h[1]);
+        for (let d = 0; d < 6; d++) {
+          if (area.has(world.index(Kit.step(h, d)))) continue;
+          // Direction d of Kit.DIRS runs counterclockwise from east, and the corners clockwise from the upper right.
+          const [ax, ay] = corner(x, y, (6 - d) % 6, s);
+          const [bx, by] = corner(x, y, (7 - d) % 6, s);
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(bx, by);
+        }
+      }
+      ctx.lineCap = ctx.lineJoin = "round";
+      // On a halo, so it shows on any terrain.
+      ctx.strokeStyle = v.dark ? "rgba(0,0,0,.7)" : "rgba(255,255,255,.9)";
+      ctx.lineWidth = Math.max(3.5, s * 0.2);
+      ctx.stroke();
+      ctx.strokeStyle = V.playerColor(this.human);
+      ctx.lineWidth = Math.max(1.75, s * 0.1);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     /** Under the units: where the picked unit can go, and the way to the hex under the pointer. @param {CanvasRenderingContext2D} ctx */
     drawUnder(ctx) {
       const unit = this.unit();
       if (this.over || !unit || !this.myTurn()) return;
       const s = v.geo.size;
-      const color = V.playerColor(this.human);
+      if (this.reach.size) this.drawReach(ctx, unit);
       ctx.save();
-      ctx.fillStyle = ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.25;
-      for (const i of this.reach.keys()) {
-        const [x, y] = V.center(...this.world.hex(i));
-        V.hexPath(ctx, x, y, s * 0.97);
-        ctx.fill();
-      }
       // The way to the hex under the pointer, or to where the unit would attack the enemy there from.
       const hover = v.hover;
       const plan = hover ? this.chase.find((p) => p.t.q === hover[0] && p.t.r === hover[1]) : undefined;
@@ -1264,7 +1373,7 @@
     if (!extra) {
       extra = el("span", " With a wagon, ", "");
       extra.id = "supply-help";
-      extra.append(el("kbd", "L"), " loads and ", el("kbd", "U"), " unloads. Right-click one of your transports to board it; a unit aboard lands on a tinted hex.");
+      extra.append(el("kbd", "L"), " loads and ", el("kbd", "U"), " unloads. Right-click one of your transports to board it; a unit aboard lands on a hex inside its line.");
       $("live-help").append(extra);
     }
     extra.hidden = !on;

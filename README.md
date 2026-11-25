@@ -50,8 +50,8 @@ To run the scoreboard locally with Node 22.13 or newer, build the hosted site wi
 
 You see the game through your own fog of war:
 
-- **Click** one of your units to select it. The hexes it can reach are tinted, and the enemies it can attack are ringed.
-- **Click a tinted hex** to move there, or **a ringed enemy** to attack it. Hovering shows the path, or what the attack would do. A fainter ring marks an enemy the unit can reach this turn: a click moves it into range and attacks, as the forecast shows.
+- **Click** one of your units to select it. A line opens out around the hexes it can reach, the rest of the board dims a little, and the enemies it can attack are ringed.
+- **Click a hex inside the line** to move there, or **a ringed enemy** to attack it. Hovering shows the path, or what the attack would do. A fainter ring marks an enemy the unit can reach this turn: a click moves it into range and attacks, as the forecast shows.
 - **Right-click** (or Shift-click) moves onto a hex that holds your own units; a plain click selects one of them instead. A right-click anywhere else deselects.
 - **C** captures the city the unit stands on.
 - **Click one of your cities** to build there, or press a unit's letter, such as **I** for infantry. A gold **+** marks each city that can still build this turn.
@@ -67,7 +67,7 @@ The maps marked **ships and food** play the strategic ruleset ([STRATEGIC.md](ST
 - **Bread** is kept by each city. The number at the foot of a city's hex is its bread, and a site's is its wheat, for every city and site you can see. Selecting a city shows what it can build with its own bread; only a port, a city next to water, builds ships.
 - **Sites** have no owners, so **C** doesn't capture them. Any wagon on a site can load its wheat, and a unit standing on one keeps the enemy's wagons off it.
 - **A wagon** on a site, or on one of your cities, gets **Load (L)** and **Unload (U)**. The field beside them takes an amount, and empty moves everything. A wagon can't move after either. A loaded wagon shows a crate: yellow for wheat, brown for bread.
-- **Boarding:** with a land unit selected, right-click one of your transports next to it. Selecting the transport's hex lists the units aboard; pick one, and the land it can step onto is tinted.
+- **Boarding:** with a land unit selected, right-click one of your transports next to it. Selecting the transport's hex lists the units aboard; pick one, and the land it can step onto is outlined.
 - **Rations** are listed with each unit. A unit running short gets an amber mark, and a red one when it has none left; the turn's report says which units are starving.
 
 When the game ends, it becomes a replay: you can step through it with both sides in view, and save it as a `.bbr` file.
