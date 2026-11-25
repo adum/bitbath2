@@ -5,7 +5,8 @@
 # an island with no city and the two richest sites, which only wagons carried
 # by transport can harvest. The Play page's Islets map is this one.
 #
-# The rest is the strategic preset (configs/strategic.toml) as it stands.
+# The rest is the strategic preset (configs/strategic.toml) as it stands,
+# except that the sites grow half as much.
 
 map_layout = "islands"
 map_width = 24
@@ -21,12 +22,13 @@ time_bank_cap_ms = 20000
 
 # Supply (STRATEGIC.md §4, §5, §10). There's no gold: units cost bread.
 # The sites by the homes get the middle of each range, and the middle
-# sites the top of it.
+# sites the top of it. The output is half the strategic preset's: at the
+# full rate, wheat came in faster than two cities could build with it.
 supply = 1
 start_bread = 300          # in each home city
 city_bread = 10            # per city per turn, unless an enemy is on or next to it
-site_output_min = 20       # wheat per round
-site_output_max = 100
+site_output_min = 10       # wheat per round: 30 at each home site,
+site_output_max = 50       # and 50 at each site in the middle
 site_cap_min = 400         # the most wheat a site piles up
 site_cap_max = 3000
 cargo_max = 1000           # wheat and bread together, per wagon

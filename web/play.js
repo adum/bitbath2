@@ -42,7 +42,8 @@
   /**
    * The maps a game can be played on, as config lines like those in configs/.
    * Small is configs/small.toml. The ones with `rules: "strategic"` play the
-   * strategic ruleset, and need an opponent that knows it. Islands is
+   * strategic ruleset, and need an opponent that knows it. Islets is
+   * configs/islets.toml, with its sites growing half as much, Islands is
    * configs/islands.toml, and Strategic is configs/strategic.toml.
    */
   const MAPS = [
@@ -53,7 +54,7 @@
     {
       id: "islets", name: "Islets", label: "Islets · ships and food", rules: "strategic",
       about: "The strategic rules on 24 × 18 hexes: bread instead of gold, wagons, rations, and ships. Each side has a home island with a port to take, and the richest sites are on the island between. 300 rounds.",
-      config: strategic('map_layout = "islands"\nmap_width = 24\nmap_height = 18\nneutral_cities = 2\nsites = 4\nround_limit = 300'),
+      config: strategic('map_layout = "islands"\nmap_width = 24\nmap_height = 18\nneutral_cities = 2\nsites = 4\nround_limit = 300\nsite_output_min = 10\nsite_output_max = 50'),
     },
     {
       id: "islands", name: "Islands", label: "Islands · ships and food", rules: "strategic",

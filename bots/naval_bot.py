@@ -993,30 +993,49 @@ class NavalBot(sb.SupplyBot):
         def mine():
             return [s.units[w] for w, i in sorted(self.haulers.items()) if i == isle and w in s.units]
 
+        def stranded():
+            """Its wagons left on the landmass, when no enemy stands there to
+            stop the ferry fetching them. A ferry held off by the enemy, or
+            tired of waiting, sails home without them, and with no wagon
+            aboard it would never sail for them again."""
+            if any(self.land.get(e.hex) == isle and not e.carrier and not self.types[e.type].naval
+                   for e in s.enemy_units()):
+                return []
+            return [w for w in mine() if not w.carrier and self.land.get(w.hex) == isle]
+
         if f["phase"] == "dock":
             there = self.dock(t, f)
             port = s.cities[f["port"]]
             home = self.land.get(port.hex)
             if lost:
                 # Nothing to haul: everyone ashore, and the ferry goes back
-                # to carrying expeditions.
+                # to carrying expeditions, once it has fetched any wagons
+                # still over there.
                 if there:
                     self.land_home(t)
                 if not s.passengers(t):
-                    del self.ferries[t.id]
-                    self.voyages[t.id] = {"phase": "gather", "port": f["port"], "waited": 0}
-                return
-            for w in mine():
-                if not w.carrier and self.land.get(w.hex) == home:
-                    self.hauler_home(w, t, port, there)
-            aboard = [w for w in mine() if w.carrier == t.id]
-            behind = [w for w in mine() if not w.carrier and self.land.get(w.hex) == home]
-            if there and aboard and (not behind or f["waited"] >= WAIT):
-                f["phase"], f["waited"] = "out", 0
-            elif aboard:
-                f["waited"] += 1
+                    if stranded():
+                        f["phase"], f["waited"] = "out", 0
+                    else:
+                        del self.ferries[t.id]
+                        self.voyages[t.id] = {"phase": "gather", "port": f["port"], "waited": 0}
+                        return
+                else:
+                    return
+            else:
+                for w in mine():
+                    if not w.carrier and self.land.get(w.hex) == home:
+                        self.hauler_home(w, t, port, there)
+                aboard = [w for w in mine() if w.carrier == t.id]
+                behind = [w for w in mine() if not w.carrier and self.land.get(w.hex) == home]
+                if there and aboard and (not behind or f["waited"] >= WAIT):
+                    f["phase"], f["waited"] = "out", 0
+                elif there and not aboard and not behind and stranded():
+                    f["phase"], f["waited"] = "out", 0
+                elif aboard:
+                    f["waited"] += 1
         if f["phase"] == "out":
-            if lost:
+            if lost and not stranded():
                 f["phase"] = "back"
             else:
                 spots = self.isle_landings(isle)
