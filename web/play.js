@@ -1486,59 +1486,29 @@
    * `bitbath serve` offers, if that is what serves the page. A bot's
    * `rules` are the rule sets it knows, and its `maps` the maps it's made
    * for, both from the bot index (bots/index.json). A bot on disk that the
-   * index doesn't know may play any. `rated` is a bot's id among the
-   * ratings (bots/ratings.json), if it has one.
-   * @type {{id: string, name: string, label?: string, about: string, rules: string[] | "any", maps: string[] | "any", rated: string | null, command: string, create: (seed: number) => any}[]}
+   * index doesn't know may play any.
+   * @type {{id: string, name: string, label?: string, about: string, rules: string[] | "any", maps: string[] | "any", command: string, create: (seed: number) => any}[]}
    */
-  const opponents = Bots.list.map((/** @type {any} */ b) => Object.assign({ command: "built-in " + b.id + " bot", rated: b.id }, b));
-  for (const kind of opponents) {
-    const option = el("option", kind.name);
-    option.value = kind.id;
-    $("opponent").append(option);
+  const opponents = Bots.list.map((/** @type {any} */ b) => Object.assign({ command: "built-in " + b.id + " bot" }, b));
+
+  /** @param {string} id @param {{id: string, name: string, label?: string, about: string}[]} items @param {string} aboutId */
+  function fill(id, items, aboutId) {
+    const select = $(id);
+    for (const item of items) {
+      const option = el("option", item.label || item.name);
+      option.value = item.id;
+      select.append(option);
+    }
+    const about = () => ($(aboutId).textContent = (items.find((x) => x.id === select.value) || items[0]).about);
+    select.onchange = about;
+    return about;
   }
 
-  /** A map's size in hexes, from its config: the default game's 40 × 30 unless it says otherwise. @param {any} map */
-  function mapSize(map) {
-    /** @param {string} key @param {number} otherwise */
-    const get = (key, otherwise) => {
-      const found = new RegExp("^" + key + " = (\\d+)$", "m").exec(map.config);
-      return found ? Number(found[1]) : otherwise;
-    };
-    return [get("map_width", 40), get("map_height", 30)];
-  }
-
-  // The maps, each as a card with a picture of it: see drawPreviews().
-  for (const map of MAPS) {
-    const [w, h] = mapSize(map);
-    const input = /** @type {HTMLInputElement} */ (document.createElement("input"));
-    input.type = "radio";
-    input.name = "map";
-    input.value = map.id;
-    const preview = /** @type {HTMLCanvasElement} */ (document.createElement("canvas"));
-    preview.className = "map-preview";
-    preview.width = 300;
-    preview.height = 200;
-    preview.setAttribute("aria-hidden", "true");
-    const card = el("label", "", "map-card");
-    card.append(input, preview, el("span", map.name, "map-name"), el("span", w + " × " + h + (map.rules === "strategic" ? " · ships and food" : ""), "map-dims"));
-    $("map-size").append(card);
-  }
-
-  /** The map picked in the dialog. */
-  function pickedMap() {
-    const input = /** @type {HTMLInputElement | null} */ ($("map-size").querySelector("input:checked"));
-    return MAPS.find((m) => input && m.id === input.value) || MAPS[0];
-  }
-
-  /** @param {string} id */
-  function pickMap(id) {
-    for (const input of $("map-size").querySelectorAll("input")) input.checked = input.value === id;
-  }
-
+  const abouts = [fill("opponent", opponents, "opponent-about"), fill("map-size", MAPS, "map-about")];
+  $("opponent").value = "greedy";
   const query = new URLSearchParams(location.search);
   const mapId = query.get("map");
-  pickMap(MAPS.find((m) => m.id === mapId)?.id || MAPS[0].id);
-  $("opponent").value = "greedy";
+  if (MAPS.some((m) => m.id === mapId)) $("map-size").value = mapId;
   const botId = query.get("bot");
   if (opponents.some((b) => b.id === botId)) $("opponent").value = botId;
 
@@ -1548,82 +1518,19 @@
     return has(bot.maps, map.id) && has(bot.rules, map.rules || "classic");
   }
 
-  /**
-   * The ladder of ratings (bots/ratings.json) that the dialog shows for a
-   * map, with the map it was played on: the map's own, or else the one of
-   * the same rules whose map is nearest its size.
-   * @param {any} map @returns {{ladder: any, map: any} | null}
-   */
-  function ladderFor(map) {
-    const area = (/** @type {any} */ m) => mapSize(m)[0] * mapSize(m)[1];
-    let found = null;
-    let gap = Infinity;
-    for (const ladder of Object.values(Bots.ladders)) {
-      const home = MAPS.find((m) => m.id === ladder.map);
-      if (!home || ladder.rules !== (map.rules || "classic")) continue;
-      const d = home === map ? -1 : Math.abs(area(home) - area(map));
-      if (d < gap) [found, gap] = [{ ladder, map: home }, d];
-    }
-    return found;
-  }
-
-  /**
-   * A bot's rating for a map: the number for the opponent menu, and a
-   * sentence on where it comes from, each empty if there's nothing to say.
-   * @param {any} kind @param {any} map @returns {[string, string]}
-   */
-  function rating(kind, map) {
-    const found = ladderFor(map);
-    if (!found) return ["", ""];
-    const r = kind.rated ? found.ladder.ratings[kind.rated] : null;
-    const elsewhere = found.map === map ? "" : " " + map.name + " has no ratings of its own.";
-    if (!r) return ["", "Not rated on " + found.map.name + "." + elsewhere];
-    let text = "Rated " + r.rating + " on " + found.map.name;
-    if (found.ladder.anchor === kind.rated) text += " (the scale's anchor)";
-    else if (r.interval) text += " (" + r.interval[0] + "–" + r.interval[1] + ")";
-    if (r.stale) text += ", before its latest changes";
-    return [String(r.rating), text + "." + elsewhere];
-  }
-
-  /** Says what the map and the opponent picked are, and how the opponent rates there. */
-  function describe() {
-    const map = pickedMap();
-    const kind = opponents.find((b) => b.id === $("opponent").value) || opponents[0];
-    $("map-about").textContent = map.about;
-    $("opponent-about").textContent = [kind.about, rating(kind, map)[1]].filter(Boolean).join(" ");
-  }
-
-  /**
-   * Offers the opponents that can play the map picked, each with its rating
-   * there, and picks one of them if the one picked can't. The bots built in
-   * come first, then the ones on disk, each weakest first, and the ones
-   * without a rating after those, in the index's order.
-   */
+  /** Offers the opponents that can play the map picked, and picks one of them if the one picked can't. */
   function offerOpponents() {
-    const map = pickedMap();
+    const map = MAPS.find((m) => m.id === $("map-size").value) || MAPS[0];
     const select = /** @type {HTMLSelectElement} */ ($("opponent"));
     const fits = (/** @type {string} */ id) => {
       const kind = opponents.find((b) => b.id === id);
       return !!kind && canPlayMap(kind, map);
     };
-    /** @type {[HTMLOptionElement, number, number, number][]} */
-    const order = [];
-    for (const option of Array.from(select.options)) {
-      const kind = opponents.find((b) => b.id === option.value);
-      if (!kind) continue;
-      const [number] = rating(kind, map);
-      option.textContent = (kind.label || kind.name) + (number ? " · " + number : "");
-      option.hidden = option.disabled = !fits(option.value);
-      order.push([option, kind.id.startsWith("disk:") ? 1 : 0, number ? Number(number) : Infinity, opponents.indexOf(kind)]);
-    }
-    // Two without a rating compare as NaN, which falls through to their places in the list.
-    order.sort((a, b) => a[1] - b[1] || a[2] - b[2] || a[3] - b[3]);
-    for (const [option] of order) select.append(option);
+    for (const option of Array.from(select.options)) option.hidden = option.disabled = !fits(option.value);
     if (!fits(select.value)) select.value = fits("greedy") ? "greedy" : (opponents.find((b) => fits(b.id)) || opponents[0]).id;
-    describe();
+    abouts.forEach((about) => about());
   }
   $("map-size").addEventListener("change", offerOpponents);
-  $("opponent").addEventListener("change", describe);
   offerOpponents();
 
   // The bots on disk. A page opened as a file, or served by anything but
@@ -1643,7 +1550,6 @@
             about: (known ? known.about + " " : "") + "Runs on this machine: " + b.command,
             rules: known ? known.rules : "any",
             maps: known ? known.maps : "any",
-            rated: known ? b.name : null,
             command: b.command,
             create: async () => {
               const bot = new RemoteBot(b.name, b.command);
@@ -1657,7 +1563,7 @@
           option.value = item.id;
           $("opponent").append(option);
         }
-        // Labels them with their ratings, and hides the ones that can't play the map picked.
+        // Hides the ones that can't play the map picked.
         offerOpponents();
       })
       .catch(() => {});
@@ -1669,65 +1575,13 @@
   abandonNote.setAttribute("role", "status");
   $("start").before(abandonNote);
 
-  /**
-   * The seed of a new game's map when none is typed. The dialog picks it as
-   * it opens, so that the maps it draws are the ones the game is played on.
-   */
-  let pickedSeed = 0;
-
-  /** The seed the game will use: the one typed, or else the one picked. */
-  function seedChosen() {
-    const typed = $("seed").value.trim();
-    return /^\d{1,15}$/.test(typed) ? Number(typed) : pickedSeed;
-  }
-
-  /** Counts the drawings of the map cards' pictures, so that a newer one stops an older one. */
-  let drawing = 0;
-
-  /** Draws each map card's picture, for the seed the game will use. */
-  async function drawPreviews() {
-    const turn = ++drawing;
-    let engine;
-    try {
-      engine = await V.engine();
-    } catch (e) {
-      return; // With no engine there's no map to draw, and Start says why.
-    }
-    const seed = seedChosen();
-    for (const card of Array.from($("map-size").children)) {
-      if (turn !== drawing) return;
-      const map = MAPS.find((m) => m.id === card.querySelector("input").value);
-      const canvas = card.querySelector("canvas");
-      try {
-        V.drawPreview(canvas, engine.setup(map.config + "\nseed = " + seed));
-        card.title = "";
-      } catch (e) {
-        V.drawPreview(canvas, []);
-        card.title = String(e instanceof Error ? e.message : e);
-      }
-      // A pause after each map keeps typing a seed responsive.
-      await new Promise((resolve) => setTimeout(resolve));
-    }
-  }
-
-  /** @type {number | undefined} */
-  let typing;
-  $("seed").addEventListener("input", () => {
-    clearTimeout(typing);
-    typing = setTimeout(drawPreviews, 200);
-  });
-
   function openDialog() {
     $("player-name").value = GameRecording.savedName();
     $("new-game-error").textContent = "";
-    // A new game gets a new map, unless a seed is typed again. It's picked
-    // now, so that the dialog can draw it.
+    // A new game gets a new map, unless a seed is typed again.
     $("seed").value = "";
-    pickedSeed = Math.floor(Math.random() * 1e6);
-    $("seed").placeholder = String(pickedSeed);
     abandonNote.hidden = !(current && !current.over && !current.closed);
     $("new-game").showModal();
-    drawPreviews();
   }
 
   $("new-game-button").onclick = $("play-button").onclick = $("play-again").onclick = openDialog;
@@ -1740,11 +1594,12 @@
     $("start").disabled = true;
     $("start").textContent = "Starting…";
     $("new-game-error").textContent = "";
+    const typed = $("seed").value.trim();
     const name = $("player-name").value.trim();
     GameRecording.setName(name);
-    const seed = seedChosen();
+    const seed = /^\d{1,15}$/.test(typed) ? Number(typed) : Math.floor(Math.random() * 1e6);
     try {
-      await start({ bot: $("opponent").value, map: pickedMap().id, human: Number($("side-choice").value), seed, name });
+      await start({ bot: $("opponent").value, map: $("map-size").value, human: Number($("side-choice").value), seed, name });
       $("new-game").close();
       $("arena").scrollIntoView({ block: "start" });
       $("arena").focus({ preventScroll: true });
