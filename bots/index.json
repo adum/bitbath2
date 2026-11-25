@@ -1,5 +1,5 @@
 {
-  "doc": "What we know about each bot. README.md describes the fields under \"The bot index\", and tests/test_bot_index.py checks them against the bots' files, imports, the Play page, and the benchmark.",
+  "doc": "What we know about each bot. README.md describes the fields under \"The bot index\", and tests/test_bot_index.py checks them against the bots' files, imports, the Play page, and the benchmark. The Play page offers its bots in this order.",
   "bots": {
     "random": {
       "name": "Random",
@@ -40,6 +40,26 @@
       "maps": "any",
       "play_page": "js",
       "benchmark": "kit"
+    },
+    "bastion": {
+      "name": "Bastion",
+      "about": "Races for cities and coordinates first strikes.",
+      "kind": "reference",
+      "made": {
+        "by": null,
+        "how": "Added with Claude Code alongside solid. The README calls it an independent bot, and who wrote it isn't recorded.",
+        "created": "2026-11-19",
+        "commit": "0813f45"
+      },
+      "language": "python",
+      "files": ["bots/bastion_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/bastion_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": "pyodide",
+      "benchmark": "held back"
     },
     "smart": {
       "name": "Smart",
@@ -99,26 +119,6 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": "held back"
-    },
-    "bastion": {
-      "name": "Bastion",
-      "about": "Races for cities and coordinates first strikes.",
-      "kind": "reference",
-      "made": {
-        "by": null,
-        "how": "Added with Claude Code alongside solid. The README calls it an independent bot, and who wrote it isn't recorded.",
-        "created": "2026-11-19",
-        "commit": "0813f45"
-      },
-      "language": "python",
-      "files": ["bots/bastion_bot.py"],
-      "depends": ["kits/python/bitbath.py"],
-      "run": "python bots/bastion_bot.py",
-      "build": null,
-      "rules": ["classic"],
-      "maps": "any",
-      "play_page": "pyodide",
       "benchmark": "held back"
     },
     "apex": {
@@ -257,7 +257,7 @@
       "run": "python bots/naval_bot.py",
       "build": null,
       "rules": ["classic", "strategic"],
-      "maps": "any",
+      "maps": ["islets", "islands", "seas", "strategic"],
       "play_page": "pyodide",
       "benchmark": null
     },

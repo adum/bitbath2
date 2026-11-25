@@ -1,12 +1,20 @@
 // @ts-check
-// The bots built into the play UI (play.js). They are ports of the Python
-// reference bots, written against the JavaScript kit (kit.js).
+// The bots the play UI (play.js) offers: those of the bot index,
+// bots/index.json, that it can run. Random and Greedy are ports of Python
+// reference bots, written here against the JavaScript kit (kit.js). The
+// others run in a worker (reference-opponent.js).
 /* global ReferenceOpponent */
 "use strict";
 
 var BitbathBots = (function () {
   /** @type {any} */
   const Kit = typeof BitbathKit !== "undefined" ? BitbathKit : require("./kit.js");
+  /**
+   * What the page needs to know of its bots, from the bot index. A web build
+   * (scripts/build_web_bots.py) writes it into bot-index.js.
+   * @type {{id: string, name: string, about: string, rules: string[], maps: string[] | "any", play_page: string}[]}
+   */
+  const Index = typeof BitbathBotIndex !== "undefined" ? BitbathBotIndex : require("./bot-index.js");
 
   /** A small seeded random number generator (mulberry32). @param {number} seed @returns {() => number} */
   function rng(seed) {
@@ -180,19 +188,26 @@ var BitbathBots = (function () {
   }
 
   /**
-   * The bots a game can be started against, easiest first. `create` makes a
-   * player for one game: see kit.js for what a player is.
+   * The players for the bots ported here, by their ids in the index.
+   * @type {Record<string, (seed: number) => any>}
    */
-  const list = [
-    { id: "random", name: "Random", about: "Legal moves picked at random. Good for learning the controls.", create: (/** @type {number} */ seed) => new RandomBot(seed) },
-    { id: "greedy", name: "Greedy", about: "Grabs the nearest cities and takes any fight that looks good.", create: () => new GreedyBot() },
-    { id: "bastion", name: "Bastion", about: "Races for cities and coordinates first strikes.", create: () => ReferenceOpponent.create("bastion") },
-    { id: "smart", name: "Smart", about: "Weighs captures, fights, and production each turn.", create: () => ReferenceOpponent.create("smart") },
-    { id: "vanguard", name: "Vanguard", about: "Pressures infantry with coordinated attacks.", create: () => ReferenceOpponent.create("vanguard") },
-    { id: "gpt-6-astra", name: "GPT-6 Astra", map: "micro", about: "The Micro tournament bot. Searches ahead with a value model trained on self-play.", create: () => ReferenceOpponent.create("gpt-6-astra") },
-    // The strategic ruleset's (STRATEGIC.md): `rules` says which maps a bot can play.
-    { id: "naval", name: "Naval", rules: "strategic", about: "Hauls wheat with wagons, ships its army to other islands, and raids with galleys.", create: () => ReferenceOpponent.create("naval") },
-  ];
+  const own = {
+    random: (seed) => new RandomBot(seed),
+    greedy: () => new GreedyBot(),
+  };
+
+  /**
+   * The bots a game can be started against, in the index's order. A bot
+   * knows the rule sets in its `rules`, and is made for the maps in its
+   * `maps`. `create` makes a player for one game: see kit.js for what a
+   * player is. A bot whose `play_page` isn't `js` runs in a worker, in
+   * Python with Pyodide or as WebAssembly.
+   */
+  const list = Index.map((b) =>
+    Object.assign({}, b, {
+      create: b.play_page === "js" ? own[b.id] : () => ReferenceOpponent.create(b.id),
+    }),
+  );
 
   return { list, RandomBot, GreedyBot };
 })();

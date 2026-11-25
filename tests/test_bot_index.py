@@ -1,20 +1,26 @@
 """Checks bots/index.json, the bot index (README: The bot index), against the
-bots' files and imports, the Play page's list, and the benchmark's.
+bots' files and imports, what the Play page needs, and the benchmark's list.
 
 Usage: python tests/test_bot_index.py
 """
 
 import ast
+import importlib
 import json
 import re
 import shutil
 import subprocess
+import sys
 import unittest
 from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "bots" / "index.json"
+# The web build's scripts, and the bots and kit they bundle.
+sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "bots"), str(ROOT / "kits" / "python")]
+import browser_bot  # noqa: E402
+import build_web_bots  # noqa: E402
 
 FIELDS = {"name", "about", "kind", "made", "language", "files", "depends", "run", "build", "rules", "maps",
           "play_page", "benchmark"}
@@ -38,18 +44,6 @@ def map_names():
     """The maps a record can name: the presets in configs/, and the Play page's maps."""
     names = {p.stem for p in (ROOT / "configs").glob("*.toml")}
     return names | set(re.findall(r'\bid: "([^"]+)", name: "', text("web/play.js")))
-
-
-def play_page_list():
-    """{id: {field: value}} for the bots in web/bots.js's list."""
-    source = text("web/bots.js")
-    block = source[source.index("const list = ["):]
-    out = {}
-    for line in block[:block.index("];")].splitlines():
-        found = re.search(r'\bid: "([^"]+)"', line)
-        if found:
-            out[found.group(1)] = dict(re.findall(r'\b(name|about|rules|map): "([^"]*)"', line))
-    return out
 
 
 def local_imports(path):
@@ -135,31 +129,27 @@ class BotIndex(unittest.TestCase):
                                  f"{bid}: depends should list every repository file it imports, directly or not")
 
     def test_play_page(self):
-        index, listed = bots(), play_page_list()
-        self.assertEqual(sorted(listed), sorted(bid for bid, b in index.items() if b["play_page"]),
-                         "web/bots.js's list should hold the bots whose play_page isn't null")
-        for bid, fields in listed.items():
-            b = index[bid]
-            self.assertEqual(fields.get("name"), b["name"], f"{bid}: web/bots.js has another name")
-            self.assertEqual(fields.get("about"), b["about"], f"{bid}: web/bots.js has another about line")
-            self.assertIn(fields.get("rules", "classic"), b["rules"], f"{bid}: the Play page offers it for other rules")
-            if "map" in fields:
-                self.assertEqual(b["maps"], [fields["map"]], f"{bid}: the Play page offers it on {fields['map']} only")
-        # A Pyodide bot needs a class in scripts/browser_bot.py, and its
-        # files and the bots it imports in the bundle of reference bots.
-        pyodide = sorted(bid for bid, b in index.items() if b["play_page"] == "pyodide")
-        classes = re.search(r"bot = \{([^}]*)\}\[name\]", text("scripts/browser_bot.py")).group(1)
-        self.assertEqual(sorted(re.findall(r'"([^"]+)":', classes)), pyodide,
-                         "scripts/browser_bot.py should have a class for each Pyodide bot")
-        names = re.search(r'_bot\.py" for name in \(([^)]*)\)', text("scripts/build_web_bots.py")).group(1)
-        bundled = {f"bots/{name}_bot.py" for name in re.findall(r'"([^"]+)"', names)}
-        for bid in pyodide:
-            needs = {f for f in index[bid]["files"] + index[bid]["depends"] if f.startswith("bots/")}
-            self.assertEqual(needs - bundled, set(), f"{bid}: scripts/build_web_bots.py should bundle these")
+        index = bots()
+        # The web build writes the page's list into web/bot-index.js.
+        page = build_web_bots.page_list(index)
+        listed = json.loads(page.split(" = ", 1)[1].split(";\n", 1)[0])
+        self.assertEqual([b["id"] for b in listed], [bid for bid, b in index.items() if b["play_page"]],
+                         "web/bot-index.js should list the bots whose play_page isn't null, in the index's order")
+        # web/bots.js plays its own ports, and runs the others in a worker.
+        own = re.search(r"const own = \{([^}]*)\}", text("web/bots.js")).group(1)
+        self.assertEqual(sorted(re.findall(r'^\s*"?([\w-]+)"?\s*:', own, re.M)),
+                         sorted(bid for bid, b in index.items() if b["play_page"] == "js"),
+                         "web/bots.js should have a port for each bot whose play_page is js, and no others")
+        build_web_bots.bundled(index)  # Raises if two files of the bundle share a name.
         worker = text("web/reference-worker.js")
         for bid, b in index.items():
-            if b["play_page"] == "wasm":
-                self.assertIn(f'"{bid}"', worker, f"{bid}: web/reference-worker.js should load it")
+            with self.subTest(bot=bid):
+                if b["play_page"] == "pyodide":
+                    # scripts/browser_bot.py runs the bot its first file defines.
+                    self.assertEqual(b["language"], "python", "Pyodide runs Python")
+                    browser_bot.bot_class(importlib.import_module(Path(b["files"][0]).stem))
+                if b["play_page"] == "wasm":
+                    self.assertTrue(f'"{bid}"' in worker, "web/reference-worker.js should load it")
 
     def test_benchmark(self):
         index = bots()

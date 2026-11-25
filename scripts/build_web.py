@@ -43,7 +43,7 @@ def main():
         destination = dist / "client"
         destination.mkdir(parents=True, exist_ok=True)
         for name in ("index.html", "humans.html", "play.html", "arena.css", "home.css", "mark.svg", "micro-map.svg",
-                     "standings.js", "home.js", "bitbath_wasm.js", "engine.js", "kit.js", "bots.js",
+                     "standings.js", "home.js", "bitbath_wasm.js", "engine.js", "kit.js", "bot-index.js", "bots.js",
                      "reference-bots.zip", "reference-worker.js", "reference-opponent.js", "astra.js", "astra.wasm",
                      "pieces.js", "sounds.js", "viewer.js", "play.js",
                      "recording.js", "scoreboard.js", "scoreboard-position.js"):

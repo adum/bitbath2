@@ -4,6 +4,7 @@
 /entries/
 /arena/
 /web/bitbath_wasm.js
+/web/bot-index.js
 /web/pyodide-*/
 /web/reference-bots.zip
 __pycache__/

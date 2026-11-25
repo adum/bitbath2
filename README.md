@@ -40,7 +40,7 @@ Then open `web/play.html` in a browser and choose a replay file, or drop one on 
 
 Open [the Bitbath homepage](web/index.html) after running `python scripts/build_web.py`. It shows the latest Micro standings, with filters for LLM entries and the full field. **Play Micro** opens match setup on the full-window [Play page](web/play.html). Completing an arena run or rebuilding the web engine refreshes the standings from local results. A fresh checkout includes the last exported standings.
 
-The viewer's page also plays games: you against a bot built into the page. Click **New game**, then pick an opponent, a map size, and a side. The `random` bot is for learning the controls, and `greedy` puts up a fight. Bastion, Smart, and Vanguard run their tournament Python code in a browser worker. Start the local web server or use the hosted site to play them.
+The viewer's page also plays games: you against a bot built into the page. Click **New game**, then pick an opponent, a map size, and a side. The `random` bot is for learning the controls, and `greedy` puts up a fight. Bastion, Smart, and Vanguard run their tournament Python code in a browser worker. Start the local web server or use the hosted site to play them. The page takes its opponents from the [bot index](#the-bot-index).
 
 On **Micro**, choose **GPT-6 Astra** to play the season 5 tournament entry. Its C++ search and trained value model run in a browser worker. The compiled bot ships with the web assets. To rebuild it from the original submission archive, activate Emscripten 4.0.21 and run `python scripts/build_astra.py`.
 
@@ -80,7 +80,7 @@ target/release/bitbath serve
 
 Then open `http://localhost:8000/web/play.html`. The New game dialog's opponent list now also has the bots on disk, marked "on disk", after the built-in ones.
 
-- **Which bots.** The server offers every Python file in `bots/` and every program in `target/release/`, named by its file without `_bot`. It doesn't check that they are bots, so the list can hold a program that isn't one. Add any other bot with `--bot <name>=<command>`, and pass `--no-discover` to offer only those.
+- **Which bots.** The server offers every Python file in `bots/` and every program in `target/release/`. A bot in the [bot index](#the-bot-index) goes by its id there, and the page shows its name and about line, and offers it only on the maps it's made for, if it knows their rules. Any other bot is named by its file without `_bot`, and offered for every map. The server doesn't check that they are bots, so the list can hold a program that isn't one. Add any other bot with `--bot <name>=<command>`, and pass `--no-discover` to offer only those.
 
 - **The page is still the referee.** The server only starts the bot and carries its lines to the page and back.
 - **Nothing from the page.** The server runs only the bots it offers, never a command the page sends. It listens on this machine only, and answers only its own pages.
@@ -139,13 +139,26 @@ target/release/bitbath play --p1 "python bots/bastion_bot.py" --p2 "python bots/
 | `language`, `files`, `depends` | Its language, its own files, and every file in the repository it imports, directly or not. |
 | `run`, `build` | The commands that run and build it, from the repository's root, or null. |
 | `rules` | The rule sets it knows: `classic`, `strategic` ([STRATEGIC.md](STRATEGIC.md)), or both. |
-| `maps` | `"any"`, or the maps it can play, by preset or Play page name. |
+| `maps` | `"any"`, or the maps it's made for, by preset or Play page name. Naval plays the classic rules as Vanguard does, but it's made for the maps with ships. |
 | `play_page` | How the Play page runs it: `js` (a port in web/bots.js), `pyodide`, or `wasm`. Null if the Play page doesn't offer it, though `bitbath serve` still runs it from disk. |
 | `benchmark` | `kit` if the benchmark's starter kit includes it, `held back` for the other reference bots the benchmark plays, `entry`, or null. |
 
 `made.by` is who git credits: the person who committed the bot, and the model named as co-author of that commit. For a benchmark entry, `session` copies the main facts from its run's record in `entries/`, which isn't in git.
 
-`python tests/test_bot_index.py` checks the index. Every file in `bots/` needs a record, each record's files must exist, and a Python bot's `depends` must match what it imports. The Play page's list, `scripts/browser_bot.py`, the bots `scripts/build_web_bots.py` bundles, `bench/arena.json`, and `bench/starter.txt` must agree with it, and each `commit` must be one that added the bot's files.
+The Play page and `bitbath serve` read the index:
+
+- **The Play page** offers the bots whose `play_page` isn't null, in the index's order. It offers each bot on the maps it's made for, if it knows their rules. The web build writes what the page needs into `web/bot-index.js`. After changing the index, run `python scripts/build_web.py` again, or `python scripts/build_web_bots.py --skip-runtime` to rebuild only the bots.
+- **The page's Python bots** go into `web/reference-bots.zip` with the files they import and the index. `scripts/browser_bot.py` runs a bot from its first file, which must define one subclass of the kit's `Bot`.
+- **`bitbath serve`** sends the page the record of each bot on disk that the index runs. The page then shows its name and about line, and offers it as it does its own bots.
+
+`python tests/test_bot_index.py` checks the index:
+
+- Every file in `bots/` needs a record, and each record's files must exist.
+- A Python bot's `depends` must match what it imports.
+- `web/bots.js` must have a port for each `js` bot.
+- Each `pyodide` bot must be Python and define one bot, and the browser worker must load each `wasm` bot.
+- `bench/arena.json` and `bench/starter.txt` must agree with the index.
+- Each `commit` must be one that added the bot's files.
 
 ## Rules and maps
 

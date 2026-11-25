@@ -1373,10 +1373,11 @@
 
   /**
    * The bots to play against: the ones built into the page, then the ones
-   * `bitbath serve` offers, if that is what serves the page.
-   * Each built-in bot knows one ruleset, its `rules`: the default game's if
-   * there is none. A bot on disk may know any.
-   * @type {{id: string, name: string, label?: string, about: string, rules?: string, command: string, create: (seed: number) => any}[]}
+   * `bitbath serve` offers, if that is what serves the page. A bot's
+   * `rules` are the rule sets it knows, and its `maps` the maps it's made
+   * for, both from the bot index (bots/index.json). A bot on disk that the
+   * index doesn't know may play any.
+   * @type {{id: string, name: string, label?: string, about: string, rules: string[] | "any", maps: string[] | "any", command: string, create: (seed: number) => any}[]}
    */
   const opponents = Bots.list.map((/** @type {any} */ b) => Object.assign({ command: "built-in " + b.id + " bot" }, b));
 
@@ -1401,9 +1402,10 @@
   const botId = query.get("bot");
   if (opponents.some((b) => b.id === botId)) $("opponent").value = botId;
 
-  /** @param {any} bot @param {any} map */
+  /** Whether a bot is made for a map, and knows its rules. @param {any} bot @param {any} map */
   function canPlayMap(bot, map) {
-    return (!bot.map || bot.map === map.id) && (bot.rules === "any" || (bot.rules || "") === (map.rules || ""));
+    const has = (/** @type {string[] | "any"} */ list, /** @type {string} */ name) => list === "any" || list.includes(name);
+    return has(bot.maps, map.id) && has(bot.rules, map.rules || "classic");
   }
 
   /** Offers the opponents that can play the map picked, and picks one of them if the one picked can't. */
@@ -1426,14 +1428,18 @@
   if (location.protocol.startsWith("http")) {
     fetch("/api/bots")
       .then((res) => (res.ok ? res.json() : { bots: [] }))
-      .then((/** @type {{bots: {name: string, command: string}[]}} */ data) => {
+      .then((/** @type {{bots: {name: string, command: string, index: any}[]}} */ data) => {
         for (const b of data.bots || []) {
+          // The server sends the bot's record in the bot index, if it has one.
+          const known = b.index;
+          const name = known ? known.name : b.name;
           const item = {
             id: "disk:" + b.name,
-            name: b.name,
-            label: b.name + " (on disk)",
-            about: "Runs on this machine: " + b.command,
-            rules: "any",
+            name,
+            label: name + " (on disk)",
+            about: (known ? known.about + " " : "") + "Runs on this machine: " + b.command,
+            rules: known ? known.rules : "any",
+            maps: known ? known.maps : "any",
             command: b.command,
             create: async () => {
               const bot = new RemoteBot(b.name, b.command);
@@ -1447,6 +1453,8 @@
           option.value = item.id;
           $("opponent").append(option);
         }
+        // Hides the ones that can't play the map picked.
+        offerOpponents();
       })
       .catch(() => {});
   }

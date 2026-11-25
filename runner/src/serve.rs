@@ -12,7 +12,8 @@
 //!
 //! The API, all JSON:
 //!
-//! - `GET /api/bots` lists the bots on offer.
+//! - `GET /api/bots` lists the bots on offer: each one's `name`, `command`,
+//!   and `index`, its record in the bot index (`bots/index.json`) or null.
 //! - `POST /api/start?bot=<name>` starts one and returns its `session`.
 //! - `POST /api/io?session=<s>&wait=<ms>` writes the body's lines to the
 //!   bot, then waits up to `wait` ms for its next line. Without `wait` it
@@ -39,6 +40,9 @@ use std::time::{Duration, Instant};
 pub struct Offer {
     pub name: String,
     pub command: String,
+    /// Its record in the bot index, which says what it is, and the rules
+    /// and maps it plays: see `discover`.
+    pub index: Option<Value>,
 }
 
 pub struct Options {
@@ -231,8 +235,10 @@ fn local_host(host: &str) -> bool {
 
 /// The bots found in the repository at `root`: each Python file in `bots/`,
 /// run with Python, and each program in `target/release/` but `bitbath`
-/// itself. It doesn't check that they are bots: one that isn't fails when a
-/// game with it starts, which costs less than naming every bot by hand.
+/// itself. A bot that the bot index (`bots/index.json`) runs goes by its id
+/// there, and brings its record. It doesn't check that the others are bots:
+/// one that isn't fails when a game with it starts, which costs less than
+/// naming every bot by hand.
 pub fn discover(root: &Path) -> Vec<Offer> {
     let files = |dir: &str| {
         let mut names: Vec<String> = std::fs::read_dir(root.join(dir))
@@ -250,20 +256,48 @@ pub fn discover(root: &Path) -> Vec<Offer> {
     let mut found = Vec::new();
     for file in files("bots") {
         if file.ends_with(".py") {
-            found.push((stem(&file), format!("{python} \"bots/{file}\"")));
+            found.push((format!("bots/{file}"), format!("{python} \"bots/{file}\"")));
         }
     }
     for file in files("target/release") {
         if is_program(&root.join("target/release").join(&file)) && stem(&file) != "bitbath" {
-            found.push((stem(&file), format!("\"target/release/{file}\"")));
+            found.push((format!("target/release/{file}"), format!("\"target/release/{file}\"")));
         }
     }
+    let index = bot_index(root);
     let mut offers: Vec<Offer> = Vec::new();
-    for (stem, command) in found {
-        let name = offer_name(&stem, |n| offers.iter().any(|o| o.name == n));
-        offers.push(Offer { name, command });
+    for (path, command) in found {
+        let known = index.iter().find(|(_, record)| runs(record, &path));
+        let base = known.map_or_else(|| stem(&path), |(id, _)| id.clone());
+        let name = offer_name(&base, |n| offers.iter().any(|o| o.name == n));
+        offers.push(Offer {
+            name,
+            command,
+            index: known.map(|(_, record)| record.clone()),
+        });
     }
     offers
+}
+
+/// The records of the bot index in the repository at `root`, by id: none
+/// if it has no index, or one that can't be read.
+fn bot_index(root: &Path) -> Vec<(String, Value)> {
+    let text = std::fs::read_to_string(root.join("bots").join("index.json")).unwrap_or_default();
+    let index: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    index["bots"]
+        .as_object()
+        .map(|bots| bots.clone().into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// Whether a record of the bot index runs the file at `path`: whether the
+/// last word of its `run` command is that path, with or without `.exe`.
+fn runs(record: &Value, path: &str) -> bool {
+    fn plain(p: &str) -> &str {
+        p.strip_suffix(".exe").unwrap_or(p)
+    }
+    let run = record["run"].as_str().and_then(|run| run.split_whitespace().last());
+    run.is_some_and(|run| plain(run) == plain(path))
 }
 
 #[cfg(windows)]
@@ -308,6 +342,7 @@ impl Server {
             .map(|b| Offer {
                 name: b.name.clone(),
                 command: b.command.clone(),
+                index: b.index.clone(),
             })
             .collect();
         if self.opts.discover {
@@ -319,6 +354,7 @@ impl Server {
                 offers.push(Offer {
                     name,
                     command: found.command,
+                    index: found.index,
                 });
             }
         }
@@ -344,7 +380,9 @@ impl Server {
         let session = r.query.get("session").map(String::as_str).unwrap_or("");
         match (r.method.as_str(), api) {
             ("GET", "bots") => Response::json(json!({
-                "bots": self.offers().iter().map(|b| json!({"name": b.name, "command": b.command})).collect::<Vec<_>>(),
+                "bots": self.offers().iter().map(|b| json!({
+                    "name": b.name, "command": b.command, "index": b.index,
+                })).collect::<Vec<_>>(),
             })),
             ("POST", "start") => self.start(r.query.get("bot").map(String::as_str).unwrap_or("")),
             ("POST", "io") => self.io(session, &r.body, r.query.get("wait").and_then(|w| w.parse().ok())),
@@ -515,8 +553,23 @@ mod tests {
         let found = discover(&root);
         let greedy = found.iter().find(|o| o.name == "greedy").expect("bots/greedy_bot.py");
         assert!(greedy.command.ends_with("\"bots/greedy_bot.py\""), "{}", greedy.command);
+        // The bot index says what it is, and what it plays.
+        let record = greedy.index.as_ref().expect("greedy's record in bots/index.json");
+        assert_eq!(record["name"], "Greedy");
+        assert_eq!(record["rules"], json!(["classic"]));
         assert!(found.iter().all(|o| !o.command.contains("bitbath.") && !o.command.ends_with("bitbath\"")));
         assert!(discover(&root.join("no-such-directory")).is_empty());
+    }
+
+    #[test]
+    fn finds_bots_in_the_index_by_what_they_run() {
+        let python = json!({"run": "python bots/naval_bot.py"});
+        assert!(runs(&python, "bots/naval_bot.py"));
+        assert!(!runs(&python, "bots/supply_bot.py"));
+        let program = json!({"run": "target/release/forager_bot.exe"});
+        assert!(runs(&program, "target/release/forager_bot.exe"));
+        assert!(runs(&program, "target/release/forager_bot"));
+        assert!(!runs(&json!({"run": null}), "bots/naval_bot.py"));
     }
 
     #[test]

@@ -562,7 +562,11 @@ fn cmd_serve(args: &[String]) -> Result<(), String> {
         if bots.iter().any(|b| b.name == name) {
             return Err(format!("--bot {spec}: there are two bots named '{name}'"));
         }
-        bots.push(serve::Offer { name, command });
+        bots.push(serve::Offer {
+            name,
+            command,
+            index: None,
+        });
     }
     let root = std::env::current_dir().map_err(|e| format!("no current directory: {e}"))?;
     if !root.join("web").join("index.html").is_file() {
