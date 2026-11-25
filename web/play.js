@@ -999,12 +999,23 @@
      */
     renderSelection(mine) {
       const box = $("selection");
+      // Redrawing removes the button that was just clicked or tabbed to.
+      // The focus it had goes to the row of the unit picked, or to the
+      // board, so someone using the keyboard keeps their place.
+      const focused = box.contains(document.activeElement);
       box.replaceChildren();
       box.classList.toggle("empty", !this.sel || !this.kit);
       if (!this.sel || !this.kit) {
         box.append(el("div", "Click one of your units to give it orders, or one of your cities to build."));
+        if (focused) $("canvas").focus({ preventScroll: true });
         return;
       }
+      this.fillSelection(box, mine);
+      if (focused) /** @type {HTMLElement} */ (box.querySelector(".sel-unit.chosen") || $("canvas")).focus({ preventScroll: true });
+    }
+
+    /** The parts of the selection card. @param {HTMLElement} box @param {boolean} mine */
+    fillSelection(box, mine) {
       const kit = this.kit;
       const view = kit.view;
       const world = this.world;

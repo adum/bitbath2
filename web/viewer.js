@@ -2065,8 +2065,10 @@
 
   document.addEventListener("keydown", (e) => {
     const target = /** @type {HTMLElement} */ (e.target);
-    if (!v.replay || !$("arena").contains(target) || target.matches("input, select")
-        || document.querySelector("dialog[open]")) return;
+    // With nothing focused, a key goes to the body. That happens whenever the
+    // button just clicked is redrawn away, so those keys are the board's too.
+    const here = target === document.body || target === document.documentElement || $("arena").contains(target);
+    if (!v.replay || !here || target.matches("input, select") || document.querySelector("dialog[open]")) return;
     if (target.closest("button, label, summary, a") && ["Tab", "Enter", " "].includes(e.key)) return;
     // A game being played stays at its latest step, and has its own keys.
     if (fogged()) return v.play.key(e);
