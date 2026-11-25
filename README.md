@@ -127,6 +127,26 @@ A few sample bots are there for variety. Each plays one style, none of them well
 target/release/bitbath play --p1 "python bots/bastion_bot.py" --p2 "python bots/vanguard_bot.py" --map seed:42
 ```
 
+### The bot index
+
+[bots/index.json](bots/index.json) keeps what we know about each bot, under the id the Play page, the benchmark, and `bitbath serve` call it by:
+
+| Field | What it holds |
+|---|---|
+| `name`, `about` | Its display name, and a line on how it plays. |
+| `kind` | `reference`, a bot kept as an opponent or a yardstick; `sample`, a small bot that plays one style; or `entry`, a benchmark submission, kept as it was. |
+| `made` | `by`, who made it, or null where that isn't recorded; `how`; `created`, the date; and `commit`, the commit that added it. An entry also has `session`, the benchmark run that made it. |
+| `language`, `files`, `depends` | Its language, its own files, and every file in the repository it imports, directly or not. |
+| `run`, `build` | The commands that run and build it, from the repository's root, or null. |
+| `rules` | The rule sets it knows: `classic`, `strategic` ([STRATEGIC.md](STRATEGIC.md)), or both. |
+| `maps` | `"any"`, or the maps it can play, by preset or Play page name. |
+| `play_page` | How the Play page runs it: `js` (a port in web/bots.js), `pyodide`, or `wasm`. Null if the Play page doesn't offer it, though `bitbath serve` still runs it from disk. |
+| `benchmark` | `kit` if the benchmark's starter kit includes it, `held back` for the other reference bots the benchmark plays, `entry`, or null. |
+
+`made.by` is who git credits: the person who committed the bot, and the model named as co-author of that commit. For a benchmark entry, `session` copies the main facts from its run's record in `entries/`, which isn't in git.
+
+`python tests/test_bot_index.py` checks the index. Every file in `bots/` needs a record, each record's files must exist, and a Python bot's `depends` must match what it imports. The Play page's list, `scripts/browser_bot.py`, the bots `scripts/build_web_bots.py` bundles, `bench/arena.json`, and `bench/starter.txt` must agree with it, and each `commit` must be one that added the bot's files.
+
 ## Rules and maps
 
 - `--map seed:<n>` generates a point-symmetric map.
@@ -222,7 +242,7 @@ runner/         Rust: the bitbath command (bot processes, clocks, replays, tourn
 wasm/           The engine compiled to wasm for the viewer.
 web/            The replay viewer and play UI, with its built-in bots.
 kits/python/    Python starter kit and its tests.
-bots/           Reference bots: random_bot.py, greedy_bot.py, solid_bot.py.
+bots/           Reference and sample bots, and index.json, what's known about every bot.
 tests/vectors/  Golden test vectors shared by the engine and kits.
 configs/        Rule presets.
 scripts/        Viewer build and server, and the test vector generator.
@@ -237,4 +257,5 @@ containers/     The benchmark image, and the seccomp profile for Claude Code's s
 cargo test --workspace
 python kits/python/test_bitbath.py
 python -m unittest bench.test_bench
+python tests/test_bot_index.py
 ```

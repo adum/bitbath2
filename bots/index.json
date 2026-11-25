@@ -1,0 +1,315 @@
+{
+  "doc": "What we know about each bot. README.md describes the fields under \"The bot index\", and tests/test_bot_index.py checks them against the bots' files, imports, the Play page, and the benchmark.",
+  "bots": {
+    "random": {
+      "name": "Random",
+      "about": "Legal moves picked at random. Good for learning the controls.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Opus 5.5"],
+        "how": "Written with Claude Code, with the engine, runner, and kit, as the random reference bot of SPEC §9.",
+        "created": "2026-11-02",
+        "commit": "506220d"
+      },
+      "language": "python",
+      "files": ["bots/random_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/random_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": "js",
+      "benchmark": "kit"
+    },
+    "greedy": {
+      "name": "Greedy",
+      "about": "Grabs the nearest cities and takes any fight that looks good.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Opus 5.5"],
+        "how": "Written with Claude Code, with the engine, runner, and kit, as the greedy reference bot of SPEC §9. The benchmark's ratings are anchored to it.",
+        "created": "2026-11-02",
+        "commit": "506220d"
+      },
+      "language": "python",
+      "files": ["bots/greedy_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/greedy_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": "js",
+      "benchmark": "kit"
+    },
+    "smart": {
+      "name": "Smart",
+      "about": "Weighs captures, fights, and production each turn.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Fable 5.2"],
+        "how": "Written with Claude Code as a fast heuristic player, to beat greedy.",
+        "created": "2026-11-17",
+        "commit": "ab35213"
+      },
+      "language": "python",
+      "files": ["bots/smart_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/smart_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": "pyodide",
+      "benchmark": "held back"
+    },
+    "vanguard": {
+      "name": "Vanguard",
+      "about": "Pressures infantry with coordinated attacks.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Fable 5.2"],
+        "how": "Written with Claude Code, growing out of smart, to beat Apex.",
+        "created": "2026-11-18",
+        "commit": "63f1387"
+      },
+      "language": "python",
+      "files": ["bots/vanguard_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/vanguard_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": "pyodide",
+      "benchmark": "held back"
+    },
+    "solid": {
+      "name": "Solid",
+      "about": "Coordinates capturers, scores attacks from reachable hexes, and recruits first at threatened cities.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Opus 5.5"],
+        "how": "Written with Claude Code.",
+        "created": "2026-11-19",
+        "commit": "0813f45"
+      },
+      "language": "python",
+      "files": ["bots/solid_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/solid_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": null,
+      "benchmark": "held back"
+    },
+    "bastion": {
+      "name": "Bastion",
+      "about": "Races for cities and coordinates first strikes.",
+      "kind": "reference",
+      "made": {
+        "by": null,
+        "how": "Added with Claude Code alongside solid. The README calls it an independent bot, and who wrote it isn't recorded.",
+        "created": "2026-11-19",
+        "commit": "0813f45"
+      },
+      "language": "python",
+      "files": ["bots/bastion_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/bastion_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": "pyodide",
+      "benchmark": "held back"
+    },
+    "apex": {
+      "name": "Apex",
+      "about": "Gold-trade economy, focus fire, forest ambushes, and frontline concentration.",
+      "kind": "reference",
+      "made": {
+        "by": null,
+        "how": "Added with the playable arena. Vanguard was built to beat it on 2026-11-18, so it's older than its commit, and who wrote it isn't recorded.",
+        "created": null,
+        "commit": "8a496b4"
+      },
+      "language": "rust",
+      "files": ["bots/apex_bot.rs"],
+      "depends": [],
+      "run": "target/release/apex_bot.exe",
+      "build": "rustc -O bots/apex_bot.rs -o target/release/apex_bot.exe",
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": null,
+      "benchmark": null
+    },
+    "turtle": {
+      "name": "Turtle",
+      "about": "Holds its own half of the map with pikemen and archers, and a reserve chases off intruders.",
+      "kind": "sample",
+      "made": {
+        "by": ["adum", "Claude Fable 5.2"],
+        "how": "Written with Claude Code as one of four sample bots, each playing one style.",
+        "created": "2026-11-19",
+        "commit": "3119a0f"
+      },
+      "language": "python",
+      "files": ["bots/turtle_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/turtle_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": null,
+      "benchmark": "kit"
+    },
+    "volley": {
+      "name": "Volley",
+      "about": "Gathers archers into packs that advance together and shoot from two hexes away.",
+      "kind": "sample",
+      "made": {
+        "by": ["adum", "Claude Fable 5.2"],
+        "how": "Written with Claude Code as one of four sample bots, each playing one style.",
+        "created": "2026-11-19",
+        "commit": "3119a0f"
+      },
+      "language": "python",
+      "files": ["bots/volley_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/volley_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": null,
+      "benchmark": "kit"
+    },
+    "raider": {
+      "name": "Raider",
+      "about": "Hunts with cavalry, which avoid pikemen and go home to heal.",
+      "kind": "sample",
+      "made": {
+        "by": ["adum", "Claude Fable 5.2"],
+        "how": "Written with Claude Code as one of four sample bots, each playing one style.",
+        "created": "2026-11-19",
+        "commit": "3119a0f"
+      },
+      "language": "python",
+      "files": ["bots/raider_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/raider_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": null,
+      "benchmark": "kit"
+    },
+    "rush": {
+      "name": "Rush",
+      "about": "Sends nothing but infantry straight at the enemy and attacks whatever it reaches.",
+      "kind": "sample",
+      "made": {
+        "by": ["adum", "Claude Fable 5.2"],
+        "how": "Written with Claude Code as one of four sample bots, each playing one style.",
+        "created": "2026-11-19",
+        "commit": "3119a0f"
+      },
+      "language": "python",
+      "files": ["bots/rush_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/rush_bot.py",
+      "build": null,
+      "rules": ["classic"],
+      "maps": "any",
+      "play_page": null,
+      "benchmark": "kit"
+    },
+    "supply": {
+      "name": "Supply",
+      "about": "Fights as Vanguard does, and hauls wheat and feeds its army under the strategic rules. It builds no ships.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Opus 5.5"],
+        "how": "Written with Claude Code on top of vanguard, as the reference bot for the strategic ruleset's phase 1 (STRATEGIC.md).",
+        "created": "2026-11-22",
+        "commit": "cb8e380"
+      },
+      "language": "python",
+      "files": ["bots/supply_bot.py"],
+      "depends": ["bots/vanguard_bot.py", "kits/python/bitbath.py"],
+      "run": "python bots/supply_bot.py",
+      "build": null,
+      "rules": ["classic", "strategic"],
+      "maps": "any",
+      "play_page": null,
+      "benchmark": null
+    },
+    "naval": {
+      "name": "Naval",
+      "about": "Hauls wheat with wagons, ships its army to other islands, and raids with galleys.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Opus 5.5"],
+        "how": "Written with Claude Code on top of supply, as the reference bot for the strategic ruleset's ships (STRATEGIC.md §6).",
+        "created": "2026-11-22",
+        "commit": "bc83ded"
+      },
+      "language": "python",
+      "files": ["bots/naval_bot.py"],
+      "depends": ["bots/supply_bot.py", "bots/vanguard_bot.py", "kits/python/bitbath.py"],
+      "run": "python bots/naval_bot.py",
+      "build": null,
+      "rules": ["classic", "strategic"],
+      "maps": "any",
+      "play_page": "pyodide",
+      "benchmark": null
+    },
+    "forager": {
+      "name": "Forager",
+      "about": "Spreads out to take cities, raids supply with cavalry and scouts, and ferries wheat, in a few milliseconds a turn.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Opus 5.5"],
+        "how": "Written with Claude Code as a simple, fast second bot for the strategic ruleset, in one Rust file with no dependencies.",
+        "created": "2026-11-22",
+        "commit": "7d6f038"
+      },
+      "language": "rust",
+      "files": ["bots/forager_bot.rs"],
+      "depends": [],
+      "run": "target/release/forager_bot.exe",
+      "build": "rustc -O bots/forager_bot.rs -o target/release/forager_bot.exe",
+      "rules": ["classic", "strategic"],
+      "maps": "any",
+      "play_page": null,
+      "benchmark": null
+    },
+    "gpt-6-astra": {
+      "name": "GPT-6 Astra",
+      "about": "The Micro tournament bot. Searches ahead with a value model trained on self-play.",
+      "kind": "entry",
+      "made": {
+        "by": ["gpt-6-astra"],
+        "how": "A Micro benchmark entry the model built on its own, in C++, in one session of the Codex harness. Its submission is in entries/, which isn't in git; the repository has its browser build, made by scripts/build_astra.py.",
+        "created": "2026-11-21",
+        "commit": "4869d96",
+        "session": {
+          "entry": "20261121-062844-gpt-6-astra",
+          "harness": "codex-cli 0.162.1",
+          "effort": "high",
+          "hours": 4.0,
+          "input_tokens": 45456454,
+          "output_tokens": 395730,
+          "kit_commit": "fe9c043",
+          "submission_sha256": "df9b5896bf6f09de0d33ff3161a1371b4280d4494b71a0967709277ef23c6182"
+        }
+      },
+      "language": "c++",
+      "files": ["web/astra.js", "web/astra.wasm", "bots/astra/browser.hpp", "bots/astra/browser.patch", "scripts/build_astra.py"],
+      "depends": [],
+      "run": null,
+      "build": "python scripts/build_astra.py",
+      "rules": ["classic"],
+      "maps": ["micro"],
+      "play_page": "wasm",
+      "benchmark": "entry"
+    }
+  }
+}
