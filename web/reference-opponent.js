@@ -1,6 +1,6 @@
 "use strict";
 
-// One worker per game keeps Python state and the referee mirror isolated.
+// Each game has its own bot and referee mirror.
 class ReferenceOpponent {
   static async create(id) {
     if (location.protocol === "file:") {

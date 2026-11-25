@@ -1320,6 +1320,7 @@
   async function start(options) {
     const kind = opponents.find((b) => b.id === options.bot) || opponents[0];
     const map = MAPS.find((m) => m.id === options.map) || MAPS[0];
+    if (!canPlayMap(kind, map)) throw new Error(kind.name + " cannot play " + map.name + ".");
     const human = options.human === 2 ? 2 : 1;
     const engine = await V.engine();
     const setup = engine.setup(map.config + "\nseed = " + options.seed);
@@ -1396,6 +1397,13 @@
   const query = new URLSearchParams(location.search);
   const mapId = query.get("map");
   if (MAPS.some((m) => m.id === mapId)) $("map-size").value = mapId;
+  const botId = query.get("bot");
+  if (opponents.some((b) => b.id === botId)) $("opponent").value = botId;
+
+  /** @param {any} bot @param {any} map */
+  function canPlayMap(bot, map) {
+    return (!bot.map || bot.map === map.id) && (bot.rules === "any" || (bot.rules || "") === (map.rules || ""));
+  }
 
   /** Offers the opponents that can play the map picked, and picks one of them if the one picked can't. */
   function offerOpponents() {
@@ -1403,7 +1411,7 @@
     const select = /** @type {HTMLSelectElement} */ ($("opponent"));
     const fits = (/** @type {string} */ id) => {
       const kind = opponents.find((b) => b.id === id);
-      return !!kind && (kind.rules === "any" || (kind.rules || "") === (map.rules || ""));
+      return !!kind && canPlayMap(kind, map);
     };
     for (const option of Array.from(select.options)) option.hidden = option.disabled = !fits(option.value);
     if (!fits(select.value)) select.value = fits("greedy") ? "greedy" : (opponents.find((b) => fits(b.id)) || opponents[0]).id;

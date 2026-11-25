@@ -42,6 +42,8 @@ Open [the Bitbath homepage](web/index.html) after running `python scripts/build_
 
 The viewer's page also plays games: you against a bot built into the page. Click **New game**, then pick an opponent, a map size, and a side. The `random` bot is for learning the controls, and `greedy` puts up a fight. Bastion, Smart, and Vanguard run their tournament Python code in a browser worker. Start the local web server or use the hosted site to play them.
 
+On **Micro**, choose **GPT-6 Astra** to play the season 5 tournament entry. Its C++ search and trained value model run in a browser worker. The compiled bot ships with the web assets. To rebuild it from the original submission archive, activate Emscripten 4.0.21 and run `python scripts/build_astra.py`.
+
 The hosted site records games as you play. Enter a player name in **New game** to appear on the human scoreboard. Names are remembered on this browser and matching names share a score. Guests contribute to site totals. The [human scoreboard](web/humans.html) links to every recent game. Unfinished games show city counts and army values and open at the latest saved move. Their results count toward rank and win rate once the game finishes.
 
 To run the scoreboard locally with Node 22.13 or newer, build the hosted site with `python scripts/build_web.py --dist`. In `site/`, run `npm ci`, `npx wrangler d1 migrations apply DB --local`, and `npm run dev`. Run `npm test` there to check recording and scoreboard behavior.

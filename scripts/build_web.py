@@ -44,7 +44,8 @@ def main():
         destination.mkdir(parents=True, exist_ok=True)
         for name in ("index.html", "humans.html", "play.html", "arena.css", "home.css", "mark.svg", "micro-map.svg",
                      "standings.js", "home.js", "bitbath_wasm.js", "engine.js", "kit.js", "bots.js",
-                     "reference-bots.zip", "reference-worker.js", "reference-opponent.js", "pieces.js", "sounds.js", "viewer.js", "play.js",
+                     "reference-bots.zip", "reference-worker.js", "reference-opponent.js", "astra.js", "astra.wasm",
+                     "pieces.js", "sounds.js", "viewer.js", "play.js",
                      "recording.js", "scoreboard.js", "scoreboard-position.js"):
             shutil.copyfile(os.path.join(ROOT, "web", name), os.path.join(destination, name))
             # Remove flat copies produced by the previous static build.

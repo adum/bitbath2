@@ -1,0 +1,41 @@
+--- a/bot.cpp
++++ b/bot.cpp
+@@ -1,3 +1,3 @@
+-#include <bits/stdc++.h>
++#include "browser.hpp"
+ using namespace std;
+ using Clock=chrono::steady_clock;
+@@ -500,6 +500,6 @@
+     for(auto&x:current.u)if(x.id==u.id){x=u;return;}current.u.push_back(u);
+ }
+-vector<string> order(const string&cmd,bool&revealed){cout<<cmd<<endl;string l;
+-    while(getline(cin,l)){auto v=split(l);if(v.empty())continue;if(v[0]=="GAMEOVER")exit(0);if(v[0]=="SEE"){see(v);revealed=true;}else if(v[0]=="OK"||v[0]=="PART"||v[0]=="ERR")return v;}
++vector<string> order(const string&cmd,bool&revealed){auto reply=browserReply(cmd);string l;
++    while(getline(reply,l)){auto v=split(l);if(v.empty())continue;if(v[0]=="GAMEOVER")exit(0);if(v[0]=="SEE"){see(v);revealed=true;}else if(v[0]=="OK"||v[0]=="PART"||v[0]=="ERR")return v;}
+     exit(0);
+ }
+@@ -602,8 +602,9 @@
+     cout<<"END "<<current.round<<endl;
+ }
+-int main(int argc,char**argv){
+-    if(argc>1)searchBudget=atoi(argv[1]);if(argc>2)searchMax=atoi(argv[2]);if(argc>3)searchMode=atoi(argv[3]);if(argc>4)fogMode=atoi(argv[4]);if(argc>5)readConfig(argv[5]);if(argc>6)mlWeight=atof(argv[6]);if(argc>7)cacheMode=atoi(argv[7]);if(argc>8)robustMode=atoi(argv[8]);if(argc>9)refineMode=atoi(argv[9]);if(argc>10)denialMode=atoi(argv[10]);if(argc>11)ultraMode=atoi(argv[11]);if(argc>12)openingDepth=atoi(argv[12]);if(argc>13)openingBias=atof(argv[13]);if(argc>14)focusMode=atoi(argv[14]);if(argc>15)observeMode=atoi(argv[15]);
+-    string l;int row=0;vector<City>initC;fill(tid,tid+256,-1);
+-    while(getline(cin,l)){auto v=split(l);if(v.empty())continue;string k=v[0];
++static vector<City> initC;
++extern "C" EMSCRIPTEN_KEEPALIVE void astra_init(const char *message) {
++    istringstream input(message);
++    string l; int row=0; fill(tid,tid+256,-1);
++    while(getline(input,l)){auto v=split(l);if(v.empty())continue;string k=v[0];
+         if(k=="PLAYER"){ME=number(v,1);OP=3-ME;}
+         else if(k=="MAP"){W=number(v,1);H=number(v,2);}
+@@ -616,5 +617,9 @@
+         else if(k=="INIT"){setup();for(int i=0;i<(int)initC.size();i++)cityAt[initC[i].pos]=i;current.c=initC;cout<<"READY"<<endl;break;}
+     }
+-    while(getline(cin,l)){auto v=split(l);if(v.empty())continue;string k=v[0];
++}
++extern "C" EMSCRIPTEN_KEEPALIVE void astra_turn(const char *message) {
++    istringstream input(message);
++    string l;
++    while(getline(input,l)){auto v=split(l);if(v.empty())continue;string k=v[0];
+         if(k=="TURN"){current=State();current.c=initC;current.round=number(v,1);current.next=ME;current.gold[OP]=150;}
+         else if(k=="TIME"){turnMs=number(v,1);bankMs=number(v,2);}
