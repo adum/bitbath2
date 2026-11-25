@@ -311,10 +311,12 @@ fn strategic_vectors(file: &str) {
             let city = &mut g.cities[t[0] as usize];
             (city.owner, city.capturer, city.progress, city.bread) = (t[1] as u8, t[2] as u8, t[3], t[4]);
         }
+        // As in a SITE line: id, then owner, capturer, and progress, which are
+        // always 0 since sites have no owners, then wheat.
         for s in sc.get("sites").map(strings).unwrap_or_default() {
             let t: Vec<u32> = s.split_whitespace().map(|x| x.parse().unwrap()).collect();
-            let site = &mut g.sites[t[0] as usize];
-            (site.owner, site.capturer, site.progress, site.wheat) = (t[1] as u8, t[2] as u8, t[3], t[4]);
+            assert_eq!(&t[1..4], [0, 0, 0], "{name}: site {} has an owner or capture", t[0]);
+            g.sites[t[0] as usize].wheat = t[4];
         }
         for u in strings(&sc["units"]) {
             let t: Vec<&str> = u.split_whitespace().collect();

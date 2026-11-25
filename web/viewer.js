@@ -374,30 +374,8 @@
         ctx.stroke();
       }
     });
-    // Resource sites, with supply on: a dashed border in the owner's color,
-    // and capture progress as for cities.
-    if (!v.state.sites) return;
-    v.info.sites.forEach((/** @type {number[]} */ site, /** @type {number} */ i) => {
-      const [q, r] = site;
-      const [owner, capturer, progress] = v.state.sites[i];
-      const [x, y] = center(q, r);
-      if (owner) {
-        hexPath(ctx, x, y, s * 0.86);
-        ctx.strokeStyle = playerColor(owner);
-        ctx.lineWidth = Math.max(1.5, s * 0.11);
-        ctx.setLineDash([s * 0.28, s * 0.16]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      if (capturer && (!persp || visibleTo(q, r, persp))) {
-        const frac = Math.min(1, progress / v.info.capture_points);
-        ctx.beginPath();
-        ctx.arc(x, y, s * 0.68, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * frac);
-        ctx.strokeStyle = playerColor(capturer);
-        ctx.lineWidth = Math.max(2, s * 0.14);
-        ctx.stroke();
-      }
-    });
+    // Resource sites have no owners and can't be captured (STRATEGIC.md §4),
+    // so they get no border or capture progress.
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {number} persp */
@@ -619,8 +597,9 @@
       // A neutral city holds nothing until someone takes it.
       if (v.state.cities[i][0]) label(c[0], c[1], v.state.cities[i][4] || 0, "#fff");
     });
+    // Every site grows wheat, for whichever wagon loads it.
     v.info.sites.forEach((/** @type {number[]} */ site, /** @type {number} */ i) => {
-      if (v.state.sites[i][0]) label(site[0], site[1], v.state.sites[i][3], WHEAT);
+      label(site[0], site[1], v.state.sites[i][3], WHEAT);
     });
     ctx.restore();
   }
@@ -1136,7 +1115,9 @@
     for (const p of [1, 2]) {
       const secret = !!fog && p !== fog;
       const units = st.units.filter((/** @type {any[]} */ u) => u[1] === p && !(secret && !visibleTo(u[3], u[4], fog)));
-      army[p - 1] = armyValue(units);
+      // With supply on, an army counts its player's bread too (STRATEGIC.md
+      // §9), which a hidden opponent's doesn't show.
+      army[p - 1] = armyValue(units) + (v.info.supply && !secret ? money[p - 1] : 0);
       cities[p - 1] = st.cities.filter((/** @type {number[]} */ c) => c[0] === p).length;
       const row = document.createElement("tr");
       const name = el("td", playerName(p));
@@ -1313,11 +1294,11 @@
 
     // The city or site on it.
     const cp = v.info.capture_points;
-    /** @param {string} name @param {number} owner @param {number} capturer @param {number} progress @param {HTMLElement[]} lines */
+    /** @param {string} name @param {number | null} owner null for a site, which no one owns @param {number} capturer @param {number} progress @param {HTMLElement[]} lines */
     const place = (name, owner, capturer, progress, lines) => {
       const sec = el("div", "", "hc-sec");
       const title = el("div", "", "hc-title");
-      title.append(dot(owner), el("b", name), el("span", who(owner), "hc-owner"));
+      title.append(dot(owner || 0), el("b", name), el("span", owner === null ? "no owner" : who(owner), "hc-owner"));
       sec.append(title, ...lines);
       if (capturer && seen) sec.append(meter((capturer === fog ? "You are" : playerName(capturer) + " is") + " capturing it · " + progress + " of " + cp, progress / cp, playerColor(capturer)));
       parts.push(sec);
@@ -1329,10 +1310,10 @@
     });
     (v.state.sites ? v.info.sites : []).forEach((/** @type {number[]} */ s, /** @type {number} */ i) => {
       if (s[0] !== q || s[1] !== r) return;
-      const [owner, capturer, progress, wheat] = v.state.sites[i];
-      const lines = [el("div", "Grows " + s[3] + " wheat a turn" + (seen ? "" : ", up to " + num(s[4])), "hc-line")];
+      const wheat = v.state.sites[i][3];
+      const lines = [el("div", "Grows " + s[3] + " wheat a round" + (seen ? "" : ", up to " + num(s[4])), "hc-line")];
       if (seen) lines.push(meter(num(wheat) + " of " + num(s[4]) + " wheat", wheat / s[4], WHEAT));
-      place("Site " + i, owner, capturer, progress, lines);
+      place("Site " + i, null, 0, 0, lines);
     });
 
     // The units on it, each transport followed by the units aboard.
@@ -1622,7 +1603,7 @@
     }
     game.push(
       "A player who owns no cities loses at once.",
-      "After " + c.round_limit + " rounds, the player with more cities wins. If that's tied, " + (supply ? "the player with more sites wins, then " : "") + "the bigger army wins: each unit counts its cost scaled by the HP it has left. Otherwise it's a draw.",
+      "After " + c.round_limit + " rounds, the player with more cities wins. If that's tied, the bigger army wins: each unit counts its cost scaled by the HP it has left" + (supply ? ", and all the bread a player holds, in cities and wagons, counts too" : "") + ". Otherwise it's a draw.",
       "A bot that crashes, goes over its memory limit, or fails to finish " + c.hang_turns + " turns in a row forfeits.",
     );
     section("The game", game);
@@ -1630,19 +1611,19 @@
     const eats = "Feeding: each unit eats " + c.eat_base + " ration" + (c.eat_base === 1 ? "" : "s") + ", plus " + c.eat_move + " if it moved and " + c.eat_attack + " if it attacked on its last turn. Then it refills to " + c.ration_max + " from your cities and wagons on or next to its hex, at " + c.ration_cost + " bread a ration: cities first, then wagons, lower ids first. A unit that can't cover what it ate starves: it loses " + c.starve_hp + " HP, and doesn't heal this turn.";
     section("Each turn", [
       supply
-        ? "Production: each site you own grows its output of wheat, up to its cap, unless an enemy unit stands on it. A site next to one of your cities hands its wheat to that city, where it becomes bread. Each of your cities makes " + c.city_bread + " bread, unless an enemy unit is on it or next to it."
+        ? "Production: at the start of each round, every site grows its output of wheat, up to its cap, whoever stands on it or near it. Each of your cities makes " + c.city_bread + " bread, unless an enemy unit is on it or next to it."
         : "Income: " + c.city_income + " gold per city owned, minus " + c.unit_upkeep + " per unit. Gold never drops below 0, and nothing is disbanded.",
       ...(supply ? [eats] : []),
       "Units standing on their own cities heal " + c.city_heal + " HP.",
-      "A " + (supply ? "city's or site's" : "city's") + " capture progress is lost when the capturing player no longer has a unit on it.",
+      "A city's capture progress is lost when the capturing player no longer has a unit on it.",
       "Every unit gets its full movement back, and one action: an attack or a capture. A unit can't move after its action.",
     ]);
 
     if (supply) {
       section("Wheat and bread", [
         "Wheat grows at sites. It becomes bread, one for one, only when it enters a city. Bread builds units and feeds them; nothing eats wheat.",
-        "Wagons carry up to " + num(c.cargo_max) + " wheat and bread together. L loads a wagon with the wheat of the site it stands on, or the bread of the city; U unloads it into the city it stands on. A wagon can load and unload as often as it likes in a turn, but can't move afterward.",
-        "Sites are captured like cities. Each city keeps its own bread, which goes to whoever captures it.",
+        "Wagons carry up to " + num(c.cargo_max) + " wheat and bread together. L loads a wagon with the wheat of the site it stands on, or the bread of your city; U unloads it into your city it stands on. A wagon can load and unload as often as it likes in a turn, but can't move afterward.",
+        "Sites have no owners, and no one captures them: any wagon on one can load its wheat, and a unit standing on one keeps the enemy's wagons off it. Each city keeps its own bread, which goes to whoever captures it.",
       ]);
     }
 

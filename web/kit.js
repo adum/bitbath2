@@ -17,8 +17,8 @@
 //
 // With the strategic ruleset on (world.supply, STRATEGIC.md) there is no
 // gold: each city keeps its own bread (city.bread), which pays for what it
-// builds. Sites (view.sites) grow wheat, wagons carry it, and units carry
-// rations. Ships sail on water by each terrain's naval_move_cost; a land unit
+// builds. Sites (view.sites) have no owners: each grows wheat every round,
+// which any wagon on it can load and carry home, and units carry rations. Ships sail on water by each terrain's naval_move_cost; a land unit
 // boards a transport by moving onto it, and a unit aboard (unit.carrier)
 // lands with a one-step move.
 "use strict";
@@ -198,9 +198,11 @@ var BitbathKit = (function () {
   }
 
   /**
-   * A resource site, with supply on. It grows `output` wheat a turn for its
-   * owner, up to `cap`. Its wheat and capture progress are 0 while the player
-   * can't see it.
+   * A resource site, with supply on. Sites have no owners: each grows
+   * `output` wheat at the start of every round, up to `cap`, and any wagon on
+   * it can load the wheat. Its wheat is 0 while the player can't see it.
+   * `owner`, `capturer`, and `progress` stay 0; the protocol keeps them so
+   * that SITE lines didn't change shape.
    */
   class Site {
     /** @param {number} id @param {number} q @param {number} r @param {number} owner @param {number} output @param {number} cap */
@@ -303,10 +305,6 @@ var BitbathKit = (function () {
       return this.cities.filter((c) => c.owner === this.player);
     }
 
-    mySites() {
-      return this.sites.filter((s) => s.owner === this.player);
-    }
-
     /** @param {number[]} h */
     siteAt(h) {
       return this.sites.find((s) => s.q === h[0] && s.r === h[1]) || null;
@@ -382,13 +380,13 @@ var BitbathKit = (function () {
       return unit.owner === this.player && !unit.fresh && !unit.acted;
     }
 
-    /** The city or site unit stands on, if it could be captured: one that isn't the player's. @param {Unit} unit */
+    /** The city unit stands on, if it could be captured: one that isn't the player's. Sites have no owners, so no one captures them. @param {Unit} unit */
     prize(unit) {
-      const place = this.view.cityAt(unit.hex) || this.view.siteAt(unit.hex);
-      return place && place.owner !== this.player ? place : null;
+      const city = this.view.cityAt(unit.hex);
+      return city && city.owner !== this.player ? city : null;
     }
 
-    /** Whether unit can capture the city or site it stands on right now. @param {Unit} unit */
+    /** Whether unit can capture the city it stands on right now. @param {Unit} unit */
     canCapture(unit) {
       return this.canAct(unit) && this.unitType(unit).capture && !unit.carrier && !!this.prize(unit);
     }
@@ -456,7 +454,7 @@ var BitbathKit = (function () {
 
     /**
      * What a wagon could load where it stands: the bread of the player's
-     * city, or the wheat of the player's site, as much as fits. 0 if nothing.
+     * city, or the wheat of any site, as much as fits. 0 if nothing.
      * @param {Unit} unit
      */
     loadable(unit) {
@@ -465,7 +463,7 @@ var BitbathKit = (function () {
       const city = this.view.cityAt(unit.hex);
       if (city) return city.owner === this.player ? Math.min(city.bread, room) : 0;
       const site = this.view.siteAt(unit.hex);
-      return site && site.owner === this.player ? Math.min(site.wheat, room) : 0;
+      return site ? Math.min(site.wheat, room) : 0;
     }
 
     /** What a wagon could unload where it stands: its wheat and bread, if it is on a city of the player's. @param {Unit} unit */

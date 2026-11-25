@@ -466,11 +466,11 @@ fn print_status(game: &Game, opts: &Options) {
         let name = &opts.players[p as usize - 1].name;
         if game.rules.supply() {
             format!(
-                "{name}: {} cities, {} sites, {} units, {} bread",
+                "{name}: {} cities, {} units, {} bread, army {}",
                 game.cities_of(p),
-                game.sites_of(p),
                 game.units_of(p),
-                game.bread_of(p)
+                game.bread_of(p),
+                game.army_value(p)
             )
         } else {
             format!(

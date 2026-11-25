@@ -25,9 +25,10 @@ by DIRS[d]: 0 E, 1 NE, 2 NW, 3 W, 4 SW, 5 SE.
 
 The strategic ruleset (STRATEGIC.md) turns on supply: rules.supply is True,
 there's no gold, and each city keeps its own bread (city.bread), which pays
-for the units it builds. Sites (state.sites) grow wheat, which wagons carry
-to cities with load() and unload(). Units carry rations (unit.rations) and
-eat them every turn; meal() tells you how many a turn costs.
+for the units it builds. Sites (state.sites) have no owners: each grows
+wheat every round, which any wagon on it can load() and carry to one of your
+cities to unload(). Units carry rations (unit.rations) and eat them every
+turn; meal() tells you how many a turn costs.
 
 Ships (rules.naval) sail on water by each terrain's naval_move_cost, and
 ports, cities next to water, build them onto the water next to them. A land
@@ -213,7 +214,7 @@ class Map:
     def __init__(self, width, height, rows, rules):
         self.width, self.height, self.rows, self.rules = width, height, rows, rules
         self.cities = []        # (id, hex, initial owner)
-        self.sites = []         # (id, hex, initial owner, output, cap), with supply on
+        self.sites = []         # (id, hex, output, cap), with supply on
 
     def contains(self, h):
         col, row = to_storage(h)
@@ -311,15 +312,13 @@ class City:
 
 
 class Site:
-    """A resource site, with supply on. It grows output wheat a turn for its
-    owner, up to cap. wheat, capturer, and progress are 0 while you can't
-    see it."""
+    """A resource site, with supply on. Sites have no owners: each grows
+    output wheat at the start of every round, up to cap, and any wagon on it
+    can load the wheat. wheat is 0 while you can't see the site."""
 
-    def __init__(self, id, q, r, owner, output, cap):
-        self.id, self.q, self.r, self.owner = id, q, r, owner
+    def __init__(self, id, q, r, output, cap):
+        self.id, self.q, self.r = id, q, r
         self.output, self.cap = output, cap
-        self.capturer = 0
-        self.progress = 0
         self.wheat = 0
 
     @property
@@ -327,7 +326,7 @@ class Site:
         return (self.q, self.r)
 
     def __repr__(self):
-        return "Site(%d at (%d,%d), owner %d, %d wheat)" % (self.id, self.q, self.r, self.owner, self.wheat)
+        return "Site(%d at (%d,%d), %d wheat)" % (self.id, self.q, self.r, self.wheat)
 
 
 class State:
@@ -352,9 +351,6 @@ class State:
 
     def my_cities(self):
         return [c for c in self.cities if c.owner == self.player]
-
-    def my_sites(self):
-        return [s for s in self.sites if s.owner == self.player]
 
     def units_at(self, h):
         return [u for u in self.units.values() if u.hex == h]
@@ -463,18 +459,17 @@ class Bot:
         return reply
 
     def capture(self, unit):
-        """Captures, or adds capture progress to, the city or site unit stands on."""
+        """Captures, or adds capture progress to, the city unit stands on."""
         unit = self._unit(unit)
         reply = self._order("C %d" % unit.id)
         if reply.ok:
             unit.acted = True
-            place = self.state.city_at(unit.hex) or self.state.site_at(unit.hex)
+            city = self.state.city_at(unit.hex)
             if reply.values == ["captured"]:
-                place.owner, place.capturer, place.progress = self.player, 0, 0
-                if isinstance(place, City):
-                    place.built = True
+                city.owner, city.capturer, city.progress = self.player, 0, 0
+                city.built = True
             else:
-                place.capturer, place.progress = self.player, int(reply.values[0])
+                city.capturer, city.progress = self.player, int(reply.values[0])
         return reply
 
     def build(self, city, code):
@@ -497,8 +492,9 @@ class Bot:
         return reply
 
     def load(self, unit, amount=None):
-        """A wagon takes wheat from the site it stands on, or bread from the
-        city, as much as fits or at most amount. It can't move afterward."""
+        """A wagon takes wheat from the site it stands on, whoever is near, or
+        bread from your city, as much as fits or at most amount. It can't
+        move afterward."""
         return self._carry("L", unit, amount)
 
     def unload(self, unit, amount=None):
@@ -548,11 +544,12 @@ class Bot:
         return unit.owner == self.player and not unit.fresh and not unit.acted
 
     def can_capture(self, unit):
-        """Whether unit can capture the city or site it stands on right now."""
+        """Whether unit can capture the city it stands on right now. Sites
+        have no owners, so no one captures them."""
         unit = self._unit(unit)
-        place = self.state.city_at(unit.hex) or self.state.site_at(unit.hex)
+        city = self.state.city_at(unit.hex)
         return (self.can_act(unit) and self.unit_type(unit).capture and not unit.carrier
-                and place is not None and place.owner != self.player)
+                and city is not None and city.owner != self.player)
 
     # Ship helpers (STRATEGIC.md §6).
 
@@ -830,7 +827,8 @@ def _parse_init(bot, read=_read_line):
         elif kw == "CITY":
             cities.append((int(t[1]), (int(t[2]), int(t[3])), int(t[4])))
         elif kw == "SITE":
-            sites.append((int(t[1]), (int(t[2]), int(t[3])), int(t[4]), int(t[5]), int(t[6])))
+            # SITE id q r owner output cap, where owner is always 0.
+            sites.append((int(t[1]), (int(t[2]), int(t[3])), int(t[5]), int(t[6])))
         elif kw == "TERRAIN":
             rules.terrains[t[1]] = Terrain(t[1], t[2], *[int(x) for x in t[3:8]])
         elif kw == "UNITTYPE":
@@ -849,7 +847,7 @@ def _parse_init(bot, read=_read_line):
 def _parse_turn(bot, first, read=None):
     read = read or _read_line
     cities = [City(cid, h[0], h[1], owner) for cid, h, owner in bot.map.cities]
-    sites = [Site(sid, h[0], h[1], owner, output, cap) for sid, h, owner, output, cap in bot.map.sites]
+    sites = [Site(sid, h[0], h[1], output, cap) for sid, h, output, cap in bot.map.sites]
     state = State(bot.player, cities, sites)
     state.round = int(first.split()[1])
     while True:
@@ -868,8 +866,8 @@ def _parse_turn(bot, first, read=None):
             c.owner, c.capturer, c.progress = int(t[2]), int(t[3]), int(t[4])
             c.bread = int(t[5]) if len(t) > 5 else 0
         elif kw == "SITE":
-            s = sites[int(t[1])]
-            s.owner, s.capturer, s.progress, s.wheat = int(t[2]), int(t[3]), int(t[4]), int(t[5])
+            # SITE id owner capturer progress wheat, where the middle three are always 0.
+            sites[int(t[1])].wheat = int(t[5])
         elif kw == "UNIT":
             u = _unit(t)
             if u.owner == bot.player:

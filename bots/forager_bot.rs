@@ -3,19 +3,19 @@
 // reference bot masses its army on one enemy city, Forager spreads out and
 // goes after the enemy's supply:
 //
-// - Every capturer heads for the nearest city or site no other unit is
-//   after, so it takes ground fast.
-// - Cavalry and scouts raid: they hunt enemy wagons and stand on enemy
-//   sites, which stops them growing wheat, or on enemy cities, which stops
-//   them building. Without supply there's nothing to raid but cities, so
-//   only scouts raid, and cavalry fight with the rest.
+// - Every capturer heads for the nearest city no other unit is after, so
+//   it takes ground fast.
+// - Cavalry and scouts raid: they hunt enemy wagons and stand on the sites
+//   on the enemy's side of the map, which keeps its wagons off them, or on
+//   enemy cities, which stops them building. Without supply there's nothing
+//   to raid but cities, so only scouts raid, and cavalry fight with the rest.
 // - Units that aren't capturing or raiding hunt the enemy units in sight.
 // - Pikemen hold the cities nearest the enemy and dig in.
 // - A unit attacks only when it takes more value than it loses back, with
 //   no planned kills.
-// - Wagons haul wheat from the sites that don't deliver by themselves, one
-//   wagon in three carries bread to hungry units, and hungry units walk to
-//   bread.
+// - Wagons haul wheat from the sites on its side of the map, which have no
+//   owners, one wagon in three carries bread to hungry units, and hungry
+//   units walk to bread.
 // - It builds a fixed mix of unit types with each city's own bread (or with
 //   gold in the default game), and no more units than its bread can feed.
 //
@@ -25,9 +25,10 @@
 //   with units that have nothing left to take on their landmass, sails for
 //   the best city or site across the water, preferring ones no other
 //   transport is after, puts everyone ashore, and comes back for more.
-// - On a landmass where it holds sites but no city, the units that took
-//   them stand guard, and a transport ferries wagons between the sites and
-//   a port, taking bread out for the guards and bringing wheat home.
+// - On a landmass with sites where its units have landed and no one holds
+//   a city, the units stand guard by the sites, and a transport ferries
+//   wagons between the sites and a port, taking bread out for the guards
+//   and bringing wheat home.
 // - Galleys raid at sea: they sink enemy transports and ferries, and
 //   otherwise lie off the enemy's ports.
 // - A home island of 4 cities or fewer keeps 2 land units for each city.
@@ -51,7 +52,7 @@ const MIX: [(char, f64); 5] = [('I', 0.40), ('P', 0.20), ('K', 0.15), ('A', 0.10
 const MIX_NO_SUPPLY: [(char, f64); 5] = [('I', 0.45), ('P', 0.20), ('K', 0.20), ('A', 0.15), ('S', 0.0)];
 // Bread a city keeps back to feed the units around it.
 const KEEP: i64 = 50;
-// A capturer goes for a city or site at most this many turns away.
+// A capturer goes for a city at most this many turns away.
 const TARGET_TURNS: i32 = 15;
 // A wagon fetches wheat once a site holds this much (or all it can hold).
 const LOAD: i64 = 200;
@@ -144,6 +145,8 @@ struct Ship {
     waited: i32,
 }
 
+// A city or a site. Sites have no owners: a site's owner, capturer, and
+// progress stay 0.
 struct Place {
     at: usize,
     owner: u8,
@@ -306,7 +309,8 @@ impl Bot {
                 Some("MAP") => (self.w, self.h) = (num(1) as i32, num(2) as i32),
                 Some("ROW") => rows.push(t.get(1).unwrap_or(&"").to_string()),
                 Some("CITY") => cities.push((num(2) as i32, num(3) as i32, num(4) as u8, 0, 0)),
-                Some("SITE") => sites.push((num(2) as i32, num(3) as i32, num(4) as u8, num(5), num(6))),
+                // SITE id q r owner output cap, where owner is always 0.
+                Some("SITE") => sites.push((num(2) as i32, num(3) as i32, 0, num(5), num(6))),
                 Some("TERRAIN") => {
                     let ch = t[1].chars().next().unwrap_or('?');
                     self.tchar.insert(ch, self.terrains.len());
@@ -443,10 +447,8 @@ impl Bot {
                     (c.owner, c.capturer, c.progress, c.stock, c.built) =
                         (num(2) as u8, num(3) as u8, num(4) as i32, num(5), false);
                 }
-                Some("SITE") => {
-                    let s = &mut self.sites[num(1) as usize];
-                    (s.owner, s.capturer, s.progress, s.stock) = (num(2) as u8, num(3) as u8, num(4) as i32, num(5));
-                }
+                // SITE id owner capturer progress wheat, where the middle three are always 0.
+                Some("SITE") => self.sites[num(1) as usize].stock = num(5),
                 Some("UNIT") => {
                     let u = self.parse_unit(&t);
                     self.units.push(u);
@@ -640,6 +642,19 @@ impl Bot {
         if self.passengers(t_id).len() as i64 >= self.pmax || !self.units[t].alive {
             return None;
         }
+        // A unit boards the lowest-numbered of our transports with room on
+        // the hex (STRATEGIC.md §6), so it can board t only if that's t.
+        let me = self.me;
+        if self.units.iter().any(|x| {
+            x.alive
+                && x.owner == me
+                && x.at == t_at
+                && x.id < t_id
+                && self.types[x.ty].transport
+                && (self.passengers(x.id).len() as i64) < self.pmax
+        }) {
+            return None;
+        }
         let (at, mp) = (self.units[u].at, self.units[u].mp);
         let skirmish = self.types[self.units[u].ty].skirmish;
         let mut best: Option<(i32, String)> = None;
@@ -735,12 +750,7 @@ impl Bot {
         self.units[u].acted = true;
         if t[0] == "OK" && t[1] == "captured" {
             let me = self.me;
-            for p in self
-                .cities
-                .iter_mut()
-                .chain(self.sites.iter_mut())
-                .filter(|p| p.at == at)
-            {
+            for p in self.cities.iter_mut().filter(|p| p.at == at) {
                 p.owner = me;
                 p.built = true;
             }
@@ -863,12 +873,7 @@ impl Bot {
             }
             let at = self.units[u].at;
             let me = self.me;
-            if self
-                .cities
-                .iter()
-                .chain(self.sites.iter())
-                .any(|p| p.at == at && p.owner != me)
-            {
+            if self.cities.iter().any(|p| p.at == at && p.owner != me) {
                 self.capture(u);
             }
         }
@@ -938,23 +943,38 @@ impl Bot {
         }
     }
 
-    fn near_own_city(&self, at: usize) -> bool {
-        self.cities
-            .iter()
-            .any(|c| c.owner == self.me && self.hexdist(c.at, at) == 1)
+    /// The walks to hex `at` from our nearest city and from the enemy's.
+    fn city_walks(&self, at: usize) -> (i32, i32) {
+        let (mut ours, mut theirs) = (FAR, FAR);
+        for (c, p) in self.cities.iter().enumerate() {
+            if p.owner == self.me {
+                ours = ours.min(self.city_field[c][at]);
+            } else if p.owner != 0 {
+                theirs = theirs.min(self.city_field[c][at]);
+            }
+        }
+        (ours, theirs)
+    }
+
+    /// Whether hex `at` is on our side of the map: a walk from one of our
+    /// cities reaches it, and is no longer than from the enemy's nearest.
+    fn our_side(&self, at: usize) -> bool {
+        let (ours, theirs) = self.city_walks(at);
+        ours < FAR && ours <= theirs
+    }
+
+    /// Whether hex `at` is on the enemy's side of the map.
+    fn their_side(&self, at: usize) -> bool {
+        let (ours, theirs) = self.city_walks(at);
+        theirs < FAR && theirs < ours
     }
 
     fn wagons(&mut self) {
         let me = self.me;
-        // Sites on a landmass where we hold no city are a ferry's to haul.
-        let held = self.held_lands();
+        // The sites on our side of the map with no enemy on them. Sites on a
+        // landmass where we hold no city are a ferry's to haul.
         let haul: Vec<usize> = (0..self.sites.len())
-            .filter(|&s| {
-                self.sites[s].owner == me
-                    && !self.enemy[self.sites[s].at]
-                    && !self.near_own_city(self.sites[s].at)
-                    && held.contains(&self.land[self.sites[s].at])
-            })
+            .filter(|&s| !self.enemy[self.sites[s].at] && self.our_side(self.sites[s].at))
             .collect();
         let hungry: Vec<usize> = (0..self.units.len())
             .filter(|&u| {
@@ -1110,11 +1130,15 @@ impl Bot {
         self.walk(w, &f, true);
     }
 
-    /// Our city nearest `at` with `need` bread to spare and no enemy on it.
+    /// Our city nearest `at` with no enemy on it and, if `need` is above 0,
+    /// that much bread to spare beyond what it keeps. With need 0, any city
+    /// will do, however little bread it holds, as when unloading wheat.
     fn nearest_city(&self, at: usize, need: i64) -> Option<usize> {
         (0..self.cities.len())
             .filter(|&c| {
-                self.cities[c].owner == self.me && !self.enemy[self.cities[c].at] && self.cities[c].stock - KEEP >= need
+                self.cities[c].owner == self.me
+                    && !self.enemy[self.cities[c].at]
+                    && (need <= 0 || self.cities[c].stock - KEEP >= need)
             })
             .min_by_key(|&c| (self.city_field[c][at], c))
     }
@@ -1129,8 +1153,9 @@ impl Bot {
             .collect()
     }
 
-    /// Cavalry and scouts go for enemy wagons, then enemy sites and cities
-    /// with no one on them, the nearest first.
+    /// Cavalry and scouts go for enemy wagons and the sites on the enemy's
+    /// side of the map, then enemy cities, with no one on them, the nearest
+    /// first.
     fn raid(&mut self) {
         let me = self.me;
         let mut goals: Vec<usize> = self
@@ -1142,7 +1167,7 @@ impl Bot {
         goals.extend(
             self.sites
                 .iter()
-                .filter(|s| s.owner != me && s.owner != 0 && !self.enemy[s.at])
+                .filter(|s| !self.enemy[s.at] && self.their_side(s.at))
                 .map(|s| s.at),
         );
         if goals.is_empty() {
@@ -1205,11 +1230,11 @@ impl Bot {
         }
     }
 
-    /// Capturers go for the nearest city or site no other unit is after;
-    /// everyone else marches on the nearest enemy city.
+    /// Capturers go for the nearest city no other unit is after, two to a
+    /// city; everyone else marches on the nearest enemy city.
     fn spread(&mut self) {
         let me = self.me;
-        let mut plans: Vec<(i32, usize, usize, bool)> = Vec::new();
+        let mut plans: Vec<(i32, usize, usize)> = Vec::new();
         for u in 0..self.units.len() {
             if !self.ready(u) || self.units[u].busy || !self.types[self.units[u].ty].capture {
                 continue;
@@ -1218,34 +1243,23 @@ impl Bot {
             for (k, _) in self.cities.iter().enumerate().filter(|(_, p)| p.owner != me) {
                 let turns = self.city_field[k][at] / mv;
                 if turns <= TARGET_TURNS {
-                    plans.push((turns, u, k, true));
-                }
-            }
-            for (k, _) in self.sites.iter().enumerate().filter(|(_, p)| p.owner != me) {
-                let turns = self.site_field[k][at] / mv;
-                if turns <= TARGET_TURNS {
-                    plans.push((turns, u, k, false));
+                    plans.push((turns, u, k));
                 }
             }
         }
         plans.sort();
-        let mut sent: HashMap<(bool, usize), usize> = HashMap::new();
-        for (_, u, k, city) in plans {
+        let mut sent: HashMap<usize, usize> = HashMap::new();
+        for (_, u, k) in plans {
             if self.units[u].busy || !self.time_left() {
                 continue;
             }
-            let room = if city { 2 } else { 1 };
-            let n = sent.entry((city, k)).or_insert(0);
-            if *n >= room {
+            let n = sent.entry(k).or_insert(0);
+            if *n >= 2 {
                 continue;
             }
             *n += 1;
             self.units[u].busy = true;
-            let f = if city {
-                self.city_field[k].clone()
-            } else {
-                self.site_field[k].clone()
-            };
+            let f = self.city_field[k].clone();
             self.walk(u, &f, false);
         }
         // Everyone else hunts the visible enemy units, or failing that marches
@@ -1363,25 +1377,41 @@ impl Bot {
             .collect()
     }
 
-    /// Our sites on landmass `isle` with no enemy on them.
+    /// The sites on landmass `isle` with no enemy on them.
     fn isle_sites(&self, isle: u32) -> Vec<usize> {
         (0..self.sites.len())
             .filter(|&k| {
                 let s = &self.sites[k];
-                s.owner == self.me && self.land[s.at] == isle && !self.enemy[s.at]
+                self.land[s.at] == isle && !self.enemy[s.at]
             })
             .collect()
     }
 
-    /// Landmasses where we hold sites but no city, whose wheat only a ferry
-    /// can bring home.
+    /// Landmasses where our land units stand ashore, not counting wagons.
+    fn camps(&self) -> Vec<u32> {
+        let mut out: Vec<u32> = self
+            .units
+            .iter()
+            .filter(|u| u.alive && u.owner == self.me && u.carrier == 0)
+            .filter(|u| !self.types[u.ty].carry && !self.types[u.ty].naval)
+            .map(|u| self.land[u.at])
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Landmasses with sites where our land units stand and no one holds a
+    /// city, whose wheat only a ferry can bring home.
     fn haul_isles(&self) -> Vec<u32> {
-        let held = self.held_lands();
+        let camps = self.camps();
+        let cities: Vec<u32> = self.cities.iter().filter(|c| c.owner != 0).map(|c| self.land[c.at]).collect();
         let mut out: Vec<u32> = self
             .sites
             .iter()
-            .filter(|s| s.owner == self.me && !self.enemy[s.at] && !held.contains(&self.land[s.at]))
+            .filter(|s| !self.enemy[s.at])
             .map(|s| self.land[s.at])
+            .filter(|l| camps.contains(l) && !cities.contains(l))
             .collect();
         out.sort_unstable();
         out.dedup();
@@ -1409,9 +1439,9 @@ impl Bot {
     /// The best city or site across the water from water hex `at`, for
     /// units of the given strength from landmass `home`, with the
     /// landmass it's on. Cities we don't hold on landmasses where we hold
-    /// none; sites we don't hold on landmasses where no one holds a city,
-    /// and our own there once enemy units land. Nearer and richer first, and
-    /// ones another transport sails for count half.
+    /// none; sites on landmasses where no one holds a city, until our units
+    /// land there, and again once enemy units land. Nearer and richer first,
+    /// and ones another transport sails for count half.
     fn best_target(&mut self, at: usize, home: u32, strength: f64, skip: u32) -> Option<((bool, usize), u32)> {
         let me = self.me;
         let sea = self.sea[at];
@@ -1428,6 +1458,7 @@ impl Bot {
             .filter(|e| e.alive && e.owner != me && e.carrier == 0 && !self.types[e.ty].naval)
             .map(|e| self.land[e.at])
             .collect();
+        let camps = self.camps();
         let others: Vec<(bool, usize)> = self
             .ships
             .iter()
@@ -1443,19 +1474,19 @@ impl Bot {
         }
         for (k, s) in self.sites.iter().enumerate() {
             let l = self.land[s.at];
-            if l != home && !held.contains(&l) && !theirs.contains(&l) && (s.owner != me || invaded.contains(&l)) {
+            if l != home && !held.contains(&l) && !theirs.contains(&l) && (!camps.contains(&l) || invaded.contains(&l)) {
                 cands.push(((false, k), s.output.max(1) as f64 / 100.0));
             }
         }
         let mv = self.transport.map_or(1, |t| self.types[t].mv.max(1));
         let mut best: Option<(f64, (bool, usize), u32)> = None;
         for (key, value) in cands {
-            let (hex, owner) = if key.0 {
-                (self.cities[key.1].at, self.cities[key.1].owner)
+            let (hex, ours) = if key.0 {
+                (self.cities[key.1].at, self.cities[key.1].owner == me)
             } else {
-                (self.sites[key.1].at, self.sites[key.1].owner)
+                (self.sites[key.1].at, false)
             };
-            if owner != me && self.danger(hex) > 1.5 * strength + 100.0 {
+            if !ours && self.danger(hex) > 1.5 * strength + 100.0 {
                 continue;
             }
             let spots: Vec<usize> = self.landings(hex).into_iter().filter(|&w| self.sea[w] == sea).collect();
@@ -1934,7 +1965,21 @@ impl Bot {
             s.port = best.map(|b| b.1);
         }
         let Some(port) = s.port else { return false };
+        // Each transport docks on a hex of its own if the port has one free,
+        // since units boarding take the lowest-numbered transport on a hex.
+        let id = self.units[t].id;
         let water = self.port_water(port, sea);
+        let free: Vec<usize> = water
+            .iter()
+            .copied()
+            .filter(|&w| {
+                !self
+                    .units
+                    .iter()
+                    .any(|x| x.alive && x.owner == me && x.id != id && self.types[x.ty].transport && x.at == w)
+            })
+            .collect();
+        let water = if free.is_empty() { water } else { free };
         if water.contains(&at) {
             return true;
         }
@@ -1963,13 +2008,13 @@ impl Bot {
         }
     }
 
-    /// Captures the city or site p stands on, if it can.
+    /// Captures the city p stands on, if it can.
     fn capture_here(&mut self, p: usize) {
         if !self.ready(p) || !self.types[self.units[p].ty].capture {
             return;
         }
         let (at, me) = (self.units[p].at, self.me);
-        if self.cities.iter().chain(self.sites.iter()).any(|q| q.at == at && q.owner != me) {
+        if self.cities.iter().any(|q| q.at == at && q.owner != me) {
             self.capture(p);
         }
     }
@@ -2092,7 +2137,7 @@ impl Bot {
 
     fn load_site(&mut self, w: usize, k: usize) {
         let room = self.rule("cargo_max") - self.units[w].wheat - self.units[w].bread;
-        if room > 0 && self.sites[k].stock > 0 && self.sites[k].owner == self.me {
+        if room > 0 && self.sites[k].stock > 0 {
             self.carry('L', w, None);
         }
     }
@@ -2154,7 +2199,7 @@ impl Bot {
         }
     }
 
-    /// Idle land units stand guard: by our sites on a landmass only a ferry
+    /// Idle land units stand guard: by the sites on a landmass only a ferry
     /// serves, where its wagons feed them, or by our cities at home.
     fn guard(&mut self) {
         let isles = self.haul_isles();
@@ -2266,19 +2311,21 @@ impl Bot {
 
     // Building.
 
-    /// Bread a turn: what our cities make, and our sites' wheat. A site on a
-    /// landmass where we hold no city counts only while a ferry with wagons
-    /// brings its wheat home.
+    /// Bread a turn: what our cities make, and the wheat of the sites on our
+    /// side of the map. A site on a landmass only a ferry serves counts
+    /// while a ferry with wagons brings its wheat home.
     fn income(&self) -> i64 {
         let me = self.me;
-        let held = self.held_lands();
+        let isles = if self.naval { self.haul_isles() } else { Vec::new() };
         let ferried: Vec<u32> = self.haulers.values().copied().collect();
         let mut made = self.rule("city_bread") * self.cities.iter().filter(|c| c.owner == me).count() as i64;
         made += self
             .sites
             .iter()
-            .filter(|s| s.owner == me)
-            .filter(|s| !self.naval || held.contains(&self.land[s.at]) || ferried.contains(&self.land[s.at]))
+            .filter(|s| {
+                let l = self.land[s.at];
+                self.our_side(s.at) || (isles.contains(&l) && ferried.contains(&l))
+            })
             .map(|s| s.output)
             .sum::<i64>();
         made
@@ -2301,11 +2348,7 @@ impl Bot {
         } else {
             i64::MAX
         };
-        let hauls = self
-            .sites
-            .iter()
-            .filter(|s| s.owner == me && !self.near_own_city(s.at))
-            .count();
+        let hauls = self.sites.iter().filter(|s| self.our_side(s.at)).count();
         // Each ferry wants two wagons of its own.
         let ferried = if self.naval { self.haul_isles().len() } else { 0 };
         let wagons_wanted = if self.supply {

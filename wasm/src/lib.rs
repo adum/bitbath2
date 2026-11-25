@@ -393,13 +393,14 @@ fn info_json(game: &Game) -> String {
         .map(|c| format!("[{},{},{}]", c.hex.q, c.hex.r, c.owner))
         .collect();
     s.push_str(&cities.join(","));
-    // Sites, with supply on (STRATEGIC.md §4): q, r, initial owner, output, cap.
+    // Sites, with supply on (STRATEGIC.md §4): q, r, owner, output, cap. Sites
+    // have no owner, so it's always 0, kept so the page reads the same shape.
     s.push_str("],\"sites\":[");
     let sites: Vec<String> = game
         .map
         .sites
         .iter()
-        .map(|c| format!("[{},{},{},{},{}]", c.hex.q, c.hex.r, c.owner, c.output, c.cap))
+        .map(|c| format!("[{},{},0,{},{}]", c.hex.q, c.hex.r, c.output, c.cap))
         .collect();
     s.push_str(&sites.join(","));
     let _ = write!(
@@ -455,7 +456,7 @@ impl Viewer {
         );
         // With supply on, units also carry wheat, bread, rations, and the
         // transport they're aboard, cities their bread, and sites their owner,
-        // capture, and wheat.
+        // capture, and wheat. Sites have no owner or capture, so those are 0.
         let supply = game.rules.supply();
         let units: Vec<String> = game
             .units
@@ -496,7 +497,7 @@ impl Viewer {
             let sites: Vec<String> = game
                 .sites
                 .iter()
-                .map(|s| format!("[{},{},{},{}]", s.owner, s.capturer, s.progress, s.wheat))
+                .map(|s| format!("[0,0,0,{}]", s.wheat))
                 .collect();
             let _ = write!(
                 out,

@@ -10,13 +10,12 @@ pub struct CityInfo {
     pub owner: u8,
 }
 
-/// A resource site (STRATEGIC.md §3): it grows `output` wheat a turn for its
-/// owner, and piles up at most `cap`.
+/// A resource site (STRATEGIC.md §3): it grows `output` wheat a round and
+/// piles up at most `cap`, for whichever player's wagon comes to load it.
+/// Sites have no owner; `SITE` lines keep an owner field, always 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SiteInfo {
     pub hex: Hex,
-    /// Owner at the start of the game: 0 for neutral, or 1 or 2.
-    pub owner: u8,
     pub output: u32,
     pub cap: u32,
 }
@@ -83,10 +82,7 @@ impl Map {
             out.push(format!("CITY {} {} {} {}", id, c.hex.q, c.hex.r, c.owner));
         }
         for (id, s) in self.sites.iter().enumerate() {
-            out.push(format!(
-                "SITE {} {} {} {} {} {}",
-                id, s.hex.q, s.hex.r, s.owner, s.output, s.cap
-            ));
+            out.push(format!("SITE {} {} {} 0 {} {}", id, s.hex.q, s.hex.r, s.output, s.cap));
         }
         out
     }
@@ -136,9 +132,6 @@ impl Map {
             }
             if has_site[i] {
                 return Err(format!("two sites at {}", s.hex));
-            }
-            if s.owner > 2 {
-                return Err(format!("site {id} has owner {}; owners are 0, 1, or 2", s.owner));
             }
             has_site[i] = true;
         }
@@ -213,9 +206,12 @@ where
                     if id != sites.len() {
                         return Err(format!("expected site id {}", sites.len()));
                     }
+                    let owner: u8 = int(t.get(4), "owner")?;
+                    if owner != 0 {
+                        return Err(format!("site {id} has owner {owner}, but sites have no owners: it must be 0"));
+                    }
                     sites.push(SiteInfo {
                         hex: Hex::new(int(t.get(2), "q")?, int(t.get(3), "r")?),
-                        owner: int(t.get(4), "owner")?,
                         output: int(t.get(5), "output")?,
                         cap: int(t.get(6), "cap")?,
                     });
@@ -359,7 +355,7 @@ mod tests {
     fn sites_round_trip_and_need_supply() {
         let mut rules = Rules::default();
         rules.set("terrain.R", "site 1 0 0 0").unwrap();
-        let map_lines = SMALL.replace("ROW ..f.", "ROW ..fR") + "SITE 0 2 2 1 50 1000\n";
+        let map_lines = SMALL.replace("ROW ..f.", "ROW ..fR") + "SITE 0 2 2 0 50 1000\n";
         assert!(parse_setup(map_lines.lines(), rules.clone()).is_err());
         rules.set("supply", "1").unwrap();
         let (rules, map) = parse_setup(map_lines.lines(), rules).unwrap();
@@ -367,14 +363,17 @@ mod tests {
         assert_eq!(map.sites[0].hex, Hex::new(2, 2));
         let mut lines = map.lines(&rules);
         lines.extend(rules.lines(true));
-        assert!(lines.contains(&"SITE 0 2 2 1 50 1000".to_string()));
+        assert!(lines.contains(&"SITE 0 2 2 0 50 1000".to_string()));
         assert!(lines.contains(&"RULE ration_max 60".to_string()));
         let (rules2, map2) = parse_setup(lines.iter().map(|s| s.as_str()), Rules::default()).unwrap();
         assert_eq!(rules, rules2);
         assert_eq!(map, map2);
         // An R hex needs a SITE line.
-        let missing = map_lines.replace("SITE 0 2 2 1 50 1000\n", "");
+        let missing = map_lines.replace("SITE 0 2 2 0 50 1000\n", "");
         assert!(parse_setup(missing.lines(), rules.clone()).is_err());
+        // Sites have no owners.
+        let owned = map_lines.replace("SITE 0 2 2 0", "SITE 0 2 2 1");
+        assert!(parse_setup(owned.lines(), rules.clone()).is_err());
     }
 
     #[test]

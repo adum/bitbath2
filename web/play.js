@@ -1037,7 +1037,7 @@
       const facts = ["(" + hex[0] + "," + hex[1] + ")"];
       if (city) facts.push(whose(city.owner));
       if (city && supply && world.isPort(hex)) facts.push("port");
-      if (site) facts.push(whose(site.owner), "grows " + site.output + " a turn");
+      if (site) facts.push("no owner", "grows " + site.output + " a round");
       if (!city && !site) facts.push("defense " + terrain.defense + "%");
       name.append(el("span", facts.join(" · ")));
       const head = part("sel-head", name);
@@ -1104,7 +1104,7 @@
           if (kit.canCapture(unit)) {
             const prize = kit.prize(unit);
             const progress = (prize.capturer === this.human ? prize.progress : 0) + unit.hp;
-            const what = progress >= c.capture_points ? "takes the " + (city ? "city" : "site") : progress + " of " + c.capture_points;
+            const what = progress >= c.capture_points ? "takes the city" : progress + " of " + c.capture_points;
             row.append(action("Capture · " + what, "C", () => this.capture(), "primary"));
           }
           // A wagon's goods: wheat from a site, bread from a city, and both into a city.

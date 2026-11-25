@@ -7,7 +7,7 @@ use crate::rules::{Rules, CITY_CHAR, ISLANDS, SITE_CHAR};
 /// Bumped whenever generated maps change for the same seed and rules. Maps
 /// without sites are unchanged by site placement, which draws nothing from
 /// the generator when there are no sites to place.
-pub const GENERATOR_VERSION: u32 = 1;
+pub const GENERATOR_VERSION: u32 = 2;
 
 /// Generates the map for `seed` using `rules.c` for its layout, size, share
 /// of water, number of neutral cities, and, with supply on, number of sites.
@@ -259,8 +259,8 @@ fn symmetric_noise(seed: u64, w: i32, n: usize, s: u32) -> Vec<u32> {
 }
 
 /// The islands map (STRATEGIC.md §3). Each home stands on an island that
-/// spreads from it into its corner of the map, with a site of its own next
-/// to it and a neutral port to take on the coast facing the middle. The
+/// spreads from it into its corner of the map, with a site next to it and a
+/// neutral port to take on the coast facing the middle. The
 /// middle of the map is an island with no city, holding the other sites, the
 /// richest on the map, as one patch. Everything else is sea. The seed shapes
 /// the coasts and the terrain, and picks the port and the home sites.
@@ -405,9 +405,9 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
         (c.site_output_min + c.site_output_max) / 2,
         (c.site_cap_min + c.site_cap_max) / 2,
     );
-    let mut sites = vec![(site, 1u8, home_site), (n - 1 - site, 2, home_site)];
-    sites.extend(patch.iter().map(|&k| (k, 0, (c.site_output_max, c.site_cap_max))));
-    for &(k, ..) in &sites {
+    let mut sites = vec![(site, home_site), (n - 1 - site, home_site)];
+    sites.extend(patch.iter().map(|&k| (k, (c.site_output_max, c.site_cap_max))));
+    for &(k, _) in &sites {
         tiles[k] = t.site;
     }
     map.tiles = tiles;
@@ -418,9 +418,8 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
         .collect();
     map.sites = sites
         .iter()
-        .map(|&(k, owner, (output, cap))| SiteInfo {
+        .map(|&(k, (output, cap))| SiteInfo {
             hex: map.hex(k),
-            owner,
             output,
             cap,
         })
@@ -534,7 +533,7 @@ fn draw(lo: u32, hi: u32, richness: u32, rng: &mut SplitMix64) -> u32 {
 }
 
 /// Places the resource sites in mirrored pairs (STRATEGIC.md §3): one next
-/// to each home, owned by that player; half the rest, rounded down, next to
+/// to each home; half the rest, rounded down, next to
 /// neutral cities, at most one each; and the others in the open, at least 3
 /// hexes from any city. The pair by the homes gets the middle of each range
 /// of output and cap. Other pairs get richer the farther they are from the
@@ -633,18 +632,9 @@ fn place_sites(
                 round_down(cap, 50, c.site_cap_min),
             )
         };
-        for (j, &k) in pair.iter().enumerate() {
+        for &k in pair {
             tiles[k] = t.site;
-            let owner = if i == 0 { j as u8 + 1 } else { 0 };
-            out.push((
-                k,
-                SiteInfo {
-                    hex: hex(k),
-                    owner,
-                    output,
-                    cap,
-                },
-            ));
+            out.push((k, SiteInfo { hex: hex(k), output, cap }));
         }
     }
     Some(out)
@@ -700,11 +690,9 @@ mod tests {
                     assert_eq!(m.mirror(pair[0].hex), pair[1].hex);
                     assert_eq!((pair[0].output, pair[0].cap), (pair[1].output, pair[1].cap));
                 }
-                assert_eq!((m.sites[0].owner, m.sites[1].owner), (1, 2));
                 assert_eq!(m.sites[0].hex.distance(m.cities[0].hex), 1);
                 assert_eq!((m.sites[0].output, m.sites[0].cap), (60, 1700));
                 for s in &m.sites[2..] {
-                    assert_eq!(s.owner, 0);
                     assert!((20..=100).contains(&s.output) && (400..=3000).contains(&s.cap), "{s:?}");
                 }
                 // Half the other pairs, rounded down, sit next to a neutral city.
@@ -862,14 +850,13 @@ mod tests {
                 for pair in m.sites.chunks(2) {
                     assert_eq!(m.mirror(pair[0].hex), pair[1].hex);
                 }
-                assert_eq!((m.sites[0].owner, m.sites[1].owner), (1, 2));
                 assert_eq!(m.sites[0].hex.distance(home), 1);
                 assert_eq!((m.sites[0].output, m.sites[0].cap), (60, 1700));
                 let middle = isle(m.sites[2].hex);
                 assert!(middle != isle(home) && middle != isle(m.cities[1].hex));
                 assert_eq!(m.sites[2].hex.distance(m.sites[3].hex), 1);
                 for s in &m.sites[2..] {
-                    assert_eq!((s.owner, s.output, s.cap), (0, 100, 3000));
+                    assert_eq!((s.output, s.cap), (100, 3000));
                     assert_eq!(isle(s.hex), middle);
                     assert!(m.sites[2..].iter().any(|o| o.hex.distance(s.hex) == 1));
                 }

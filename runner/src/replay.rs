@@ -259,12 +259,12 @@ pub fn summary(replay: &Replay, all_orders: bool) -> Result<String, String> {
             rejected = 0;
             header = if game.rules.supply() {
                 format!(
-                    "  P{p} {:<10} bread {:<5} cities {:<3} sites {:<3} units {:<4}",
+                    "  P{p} {:<10} bread {:<5} cities {:<3} units {:<4} army {:<6}",
                     replay.name(p),
                     game.bread_of(p),
                     game.cities_of(p),
-                    game.sites_of(p),
-                    game.units_of(p)
+                    game.units_of(p),
+                    game.army_value(p)
                 )
             } else {
                 format!(

@@ -187,7 +187,7 @@ class Orders(unittest.TestCase):
 
 # The init message of a supply game (STRATEGIC.md §11): a site, a wagon, and
 # the supply rules.
-SUPPLY_INIT = DEFAULT_INIT.replace("CITY 0 0 0 1\n", "CITY 0 0 0 1\nSITE 0 1 0 1 60 1700\n").replace(
+SUPPLY_INIT = DEFAULT_INIT.replace("CITY 0 0 0 1\n", "CITY 0 0 0 1\nSITE 0 1 0 0 60 1700\n").replace(
     "TERRAIN ~ water 0 0 0 0\n", "TERRAIN ~ water 0 0 0 0\nTERRAIN R site 1 0 0 0 0\n").replace(
     "UNITTYPE S scout 80 100 6 4 1 1 skirmish\n",
     "UNITTYPE S scout 80 100 6 4 1 1 skirmish\nUNITTYPE W wagon 100 100 4 2 1 1 carry\n").replace(
@@ -197,7 +197,7 @@ SUPPLY_INIT = DEFAULT_INIT.replace("CITY 0 0 0 1\n", "CITY 0 0 0 1\nSITE 0 1 0 1
 class Supply(unittest.TestCase):
     def setUp(self):
         self.bot = make_bot(["CR....", "......", "......", "......"], SUPPLY_INIT)
-        lines = iter(["TIME 1000 1000", "CITY 0 1 0 0 420", "SITE 0 1 0 0 650",
+        lines = iter(["TIME 1000 1000", "CITY 0 1 0 0 420", "SITE 0 0 0 0 650",
                       "UNIT 41 1 W 1 0 100 0 0 0 0 30", "UNIT 42 1 I 0 0 80 0 0 0 0 12", "GO"])
         self.bot.state = bb._parse_turn(self.bot, "TURN 7", lambda: next(lines))
 
@@ -214,10 +214,10 @@ class Supply(unittest.TestCase):
         self.assertTrue(bot.rules.supply)
         self.assertFalse(make_bot(["......"] * 4).rules.supply)
         self.assertTrue(bot.rules.unit_types["W"].carry)
-        self.assertEqual(bot.map.sites, [(0, (1, 0), 1, 60, 1700)])
+        self.assertEqual(bot.map.sites, [(0, (1, 0), 60, 1700)])
         self.assertEqual((state.gold, state.cities[0].bread), (0, 420))
         site = state.sites[0]
-        self.assertEqual((site.hex, site.owner, site.output, site.cap, site.wheat), ((1, 0), 1, 60, 1700, 650))
+        self.assertEqual((site.hex, site.output, site.cap, site.wheat), ((1, 0), 60, 1700, 650))
         self.assertIs(state.site_at((1, 0)), site)
         wagon, foot = state.units[41], state.units[42]
         self.assertEqual((wagon.carrier, wagon.wheat, wagon.bread, wagon.rations), (0, 0, 0, 30))
@@ -233,7 +233,7 @@ class Supply(unittest.TestCase):
         wagon.q, wagon.r = 0, 0  # as if it had moved onto the city
         reply, sent = self.send(["OK 350 0 720"], lambda: bot.unload(wagon, 300))
         self.assertEqual((sent, wagon.wheat, state.cities[0].bread), ("U 41 300\n", 350, 720))
-        reply, _ = self.send(["ERR cannot_load unit 41 isn't on a site or city you hold"], lambda: bot.load(wagon))
+        reply, _ = self.send(["ERR cannot_load unit 41 isn't on a site or a city you hold"], lambda: bot.load(wagon))
         self.assertEqual((reply.ok, reply.code), (False, "cannot_load"))
 
     def test_building_pays_with_the_citys_bread(self):
@@ -242,14 +242,12 @@ class Supply(unittest.TestCase):
         self.assertTrue(reply)
         self.assertEqual((state.cities[0].bread, state.units[43].rations), (320, 30))
 
-    def test_capturing_a_site_and_food(self):
+    def test_no_one_captures_a_site_and_food(self):
         bot, state = self.bot, self.bot.state
-        state.sites[0].owner = 0
         foot = state.units[42]
         foot.q, foot.r = 1, 0
-        self.assertTrue(bot.can_capture(foot))
-        self.send(["OK 80 200"], lambda: bot.capture(foot))
-        self.assertEqual((state.sites[0].capturer, state.sites[0].progress), (1, 80))
+        self.assertFalse(bot.can_capture(foot))
+        self.assertFalse(hasattr(state.sites[0], "owner"))
         self.assertEqual((bot.meal(), bot.meal(moved=True), bot.meal(True, True)), (1, 2, 3))
         self.assertEqual(bot.food_near((1, 0)), [state.cities[0]])
         self.assertEqual(bot.food_near((3, 2)), [])

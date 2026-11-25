@@ -1,6 +1,6 @@
 # The islands map (STRATEGIC.md §3): the strategic ruleset on a small map
 # made to test its resources and ships. Each home is on an island in its
-# corner, with a site of its own and a neutral port to take. In the middle
+# corner, with a site beside its home and a neutral port to take. In the middle
 # is an island with no city and the two richest sites, which only wagons
 # carried by transport can harvest. Everything else is sea.
 #
@@ -11,7 +11,7 @@ map_width = 40
 map_height = 30            # must be even
 neutral_cities = 2         # one port on each home island
 sites = 4                  # one by each home, and the pair in the middle
-round_limit = 500          # the tiebreak counts cities, then sites
+round_limit = 500          # the tiebreak counts cities, then armies
 
 # The large preset's clock, as in the strategic preset.
 time_bank_ms = 10000
@@ -24,7 +24,7 @@ time_bank_cap_ms = 20000
 supply = 1
 start_bread = 300          # in each home city
 city_bread = 10            # per city per turn, unless an enemy is on or next to it
-site_output_min = 20       # wheat per turn
+site_output_min = 20       # wheat per round
 site_output_max = 100
 site_cap_min = 400         # the most wheat a site piles up
 site_cap_max = 3000

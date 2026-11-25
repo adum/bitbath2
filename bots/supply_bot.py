@@ -4,12 +4,10 @@ It fights as vanguard does, and adds what the supply rules need:
 
 - It builds with each city's own bread, keeping some back to feed the
   units around the city.
-- It takes resource sites as well as cities: before the army marches, the
-  nearest free capturers go for the sites it doesn't hold, richer first.
-- It hauls wheat. Wagons fetch it from its sites that aren't next to one of
-  its cities, which deliver by themselves, and unload it in the nearest
-  city, where it becomes bread. It builds about one wagon for every two
-  such sites.
+- It hauls wheat. Sites have no owners, so its wagons fetch the wheat of
+  every site on its side of the map, no farther from its cities than from
+  the enemy's, and unload it in the nearest city, where it becomes bread.
+  It builds about one wagon for every two such sites.
 - It keeps the army fed. A unit whose rations won't last the walk to bread
   goes to eat, and other wagons carry bread from cities to where units are
   going hungry.
@@ -41,10 +39,6 @@ REFILL = 100
 # A unit is hungry enough for a wagon to come to it when it has eaten this
 # many rations since it last refilled.
 HUNGRY = 8
-# How far, in turns, a capturer goes for a site.
-SITE_TURNS = 8
-# At most this share of the army hunts sites at once.
-SITE_SHARE = 0.25
 # Wagons are worth a lot and can't fight back: they weigh danger this many
 # times as heavily as other units.
 WAGON_CAUTION = 1.5
@@ -92,14 +86,7 @@ class SupplyBot(vb.VanguardBot):
             self.feed_army()
         super().capture_in_place()
 
-    def rush_cities(self):
-        super().rush_cities()
-        if self.supply:
-            self.rush_sites()
-
     def advance(self):
-        if self.supply:
-            self.seek_sites()
         super().advance()
         if self.supply:
             self.run_wagons()
@@ -173,70 +160,21 @@ class SupplyBot(vb.VanguardBot):
             elif walk > 0 and not self.out_of_time():
                 self.walk(u, self.food_field)
 
-    # Sites.
-
-    def rush_sites(self):
-        """Capturers that can reach a site we don't hold this turn take it,
-        unless the enemy is much stronger there."""
-        me = self.player
-        for site in self.state.sites:
-            if site.owner == me or site.hex in self.enemy_hex or self.out_of_time():
-                continue
-            if self.threat.get(site.hex, 0) > vb.CAUTION * (self.support.get(site.hex, 0) + 100):
-                continue
-            field = self.site_field[site.id]
-            near = [u for u in self.ready() if u.mp > 0 and self.types[u.type].capture
-                    and field.get(u.hex, 1 << 30) <= u.mp]
-            for u in sorted(near, key=lambda u: (-u.hp, u.id)):
-                path = self.reach(u).get(site.hex)
-                if path is not None:
-                    self.go(u, path)
-                    if self.can_capture(u):
-                        self.capture(u)
-                    break
-
-    def seek_sites(self):
-        """Sends the nearest free capturers toward the sites we don't hold,
-        one each, richer sites first."""
-        self.refresh()
-        self.cover = self.coverage(True)
-        s, me = self.state, self.player
-        free = [u for u in self.ready() if u.mp > 0 and self.types[u.type].capture]
-        army = sum(1 for u in s.my_units() if not self.types[u.type].carry)
-        budget = max(2, int(army * SITE_SHARE))
-        plans = []
-        for site in s.sites:
-            if site.owner == me or self.threat.get(site.hex, 0) > 300:
-                continue
-            field = self.site_field[site.id]
-            for u in free:
-                turns = self.turns(u, field)
-                if turns is not None and turns <= SITE_TURNS:
-                    plans.append((turns - site.output / 20, site.id, u.id))
-        plans.sort()
-        sent, used = set(), set()
-        for _, sid, uid in plans:
-            if budget <= 0 or self.out_of_time():
-                break
-            if sid in sent or uid in used or uid not in s.units:
-                continue
-            sent.add(sid)
-            used.add(uid)
-            budget -= 1
-            u = s.units[uid]
-            self.busy.add(uid)
-            self.walk(u, self.site_field[sid])
-            if self.can_capture(u):
-                self.capture(u)
-
     # Wagons.
 
     def haul_sites(self):
-        """Our sites that don't deliver by themselves and have no enemy on them."""
-        s = self.state
-        ours = {c.hex for c in s.my_cities()}
-        return [x for x in s.my_sites()
-                if x.hex not in self.enemy_hex and not any(n in ours for n in bb.neighbors(x.hex))]
+        """The sites on our side of the map, with no enemy on them: those a
+        wagon can walk to from one of our cities, and no farther than from
+        the enemy's nearest city."""
+        s, far = self.state, 1 << 30
+
+        def near(cities, x):
+            return min((self.city_field[c.id].get(x.hex, far) for c in cities), default=far)
+
+        ours = s.my_cities()
+        theirs = [c for c in s.cities if c.owner not in (0, self.player)]
+        return [x for x in s.sites
+                if x.hex not in self.enemy_hex and near(ours, x) < far and near(ours, x) <= near(theirs, x)]
 
     def hungry_units(self):
         """Our units that have eaten a while and aren't where they will refill."""
@@ -250,14 +188,11 @@ class SupplyBot(vb.VanguardBot):
         return min(MAX_WAGONS, (hauls + 1) // 2 + feeds)
 
     def income(self):
-        """Bread a turn: what our cities make, plus the wheat of the sites
-        that deliver by themselves, and of the others if it hauls."""
-        s = self.state
-        ours = {c.hex for c in s.my_cities()}
-        made = self.rules.constants.get("city_bread", 0) * len(ours)
-        for x in s.my_sites():
-            if self.haul or any(n in ours for n in bb.neighbors(x.hex)):
-                made += x.output
+        """Bread a turn: what our cities make, plus, if it hauls, the wheat
+        the sites it hauls from grow."""
+        made = self.rules.constants.get("city_bread", 0) * len(self.state.my_cities())
+        if self.haul:
+            made += sum(x.output for x in self.haul_sites())
         return made
 
     def units_fed(self):
@@ -311,7 +246,7 @@ class SupplyBot(vb.VanguardBot):
                 continue
             kind, sid = self.jobs[w.id]
             if kind == "haul":
-                self.haul_from(w, sid)
+                self.haul_from(w, sid, sid in site_ids)
             else:
                 self.feed_from(w, targets)
 
@@ -325,26 +260,61 @@ class SupplyBot(vb.VanguardBot):
         return min(self.cargo_max, site.cap, site.wheat + site.output * there) / trip
 
     def nearest_city(self, w, need=0):
-        """Our city nearest w that has `need` bread to spare and no enemy on it."""
-        cities = [c for c in self.state.my_cities() if c.hex not in self.enemy_hex and c.bread - self.keep(c) >= need]
+        """Our city nearest w with no enemy on it and, if need is above 0,
+        that much bread to spare beyond what it keeps. With need 0, any city
+        will do, however little bread it holds, as when unloading wheat."""
+        cities = [c for c in self.state.my_cities()
+                  if c.hex not in self.enemy_hex and (need <= 0 or c.bread - self.keep(c) >= need)]
         known = [(self.city_field[c.id].get(w.hex), c.id, c) for c in cities]
         known = [k for k in known if k[0] is not None]
         return min(known)[2] if known else None
 
-    def haul_from(self, w, sid):
+    def enter(self, w, city):
+        """Walks wagon w toward city, and into it, making room there if our
+        units fill it."""
+        if w.hex == city.hex:
+            return
+        if bb.distance(w.hex, city.hex) == 1:
+            self.make_room(city, self.city_field[city.id])
+        self.walk(w, self.city_field[city.id], WAGON_CAUTION)
+
+    def make_room(self, city, field):
+        """If our units fill the city, moves one that hasn't acted off it, to
+        the hex it can reach nearest the goals of field, so a wagon can come
+        in. Without this, units with nothing left to do can sit on the city
+        a wagon brings wheat to, and it never gets in."""
+        s = self.state
+        if self.occ.get(city.hex, 0) < self.limit:
+            return
+        cities = {c.hex for c in s.cities}
+        for u in sorted(s.my_units(), key=lambda u: u.id):
+            if u.hex != city.hex or u.carrier or self.types[u.type].carry or not self.can_leave(u):
+                continue
+            options = [(field.get(h, 1 << 30), len(dirs), dirs) for h, dirs in self.reach(u).items()
+                       if dirs and h not in cities]
+            if options:
+                self.go(u, min(options)[2])
+                return
+
+    def can_leave(self, u):
+        """Whether make_room may move u off a city."""
+        return True
+
+    def haul_from(self, w, sid, open_):
+        """Fetches wheat from site sid, or brings a load home. open_ is
+        whether we still haul from the site."""
         s = self.state
         site = s.sites[sid]
-        if w.wheat and (w.wheat >= min(self.cargo_max, MIN_LOAD) or site.owner != self.player or site.wheat == 0):
+        if w.wheat and (w.wheat >= min(self.cargo_max, MIN_LOAD) or not open_ or site.wheat == 0):
             city = self.nearest_city(w)
             if city is None:
                 return
-            if w.hex != city.hex:
-                self.walk(w, self.city_field[city.id], WAGON_CAUTION)
+            self.enter(w, city)
             if w.hex == city.hex:
                 self.unload(w)
                 self.jobs.pop(w.id, None)   # take a new job next turn
             return
-        if site.owner != self.player:
+        if not open_:
             self.jobs.pop(w.id, None)
             return
         if w.hex != site.hex:
@@ -364,8 +334,7 @@ class SupplyBot(vb.VanguardBot):
             city = self.nearest_city(w, need=REFILL * 2)
             if city is None:
                 return
-            if w.hex != city.hex:
-                self.walk(w, self.city_field[city.id], WAGON_CAUTION)
+            self.enter(w, city)
             if w.hex == city.hex:
                 self.load(w, min(self.cargo_max - w.wheat - w.bread, city.bread - self.keep(city)))
             return
