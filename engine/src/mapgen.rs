@@ -7,7 +7,7 @@ use crate::rules::{Rules, CITY_CHAR, ISLANDS, SITE_CHAR};
 /// Bumped whenever generated maps change for the same seed and rules. Maps
 /// without sites are unchanged by site placement, which draws nothing from
 /// the generator when there are no sites to place.
-pub const GENERATOR_VERSION: u32 = 2;
+pub const GENERATOR_VERSION: u32 = 3;
 
 /// Generates the map for `seed` using `rules.c` for its layout, size, share
 /// of water, number of neutral cities, and, with supply on, number of sites.
@@ -258,12 +258,12 @@ fn symmetric_noise(seed: u64, w: i32, n: usize, s: u32) -> Vec<u32> {
     f
 }
 
-/// The islands map (STRATEGIC.md §3). Each home stands on an island that
-/// spreads from it into its corner of the map, with a site next to it and a
-/// neutral port to take on the coast facing the middle. The
-/// middle of the map is an island with no city, holding the other sites, the
-/// richest on the map, as one patch. Everything else is sea. The seed shapes
-/// the coasts and the terrain, and picks the port and the home sites.
+/// The islands map (STRATEGIC.md §3). Each home stands a few hexes inland on
+/// an island that spreads into its corner of the map, with a site 4 or 5
+/// hexes from it and a neutral port to take on the coast facing the middle.
+/// The middle of the map is an island with no city, holding the other sites,
+/// the richest on the map, as one patch. Everything else is sea. The seed
+/// shapes the coasts and the terrain, and picks the port and the home sites.
 /// Returns None to reroll.
 fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64) -> Option<Map> {
     let n = (w * h) as usize;
@@ -279,25 +279,26 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
     let relief = symmetric_noise(rng.next_u64(), w, n, 20);
     let moisture = symmetric_noise(rng.next_u64(), w, n, 28);
 
-    // Player 1's home is near the top-left corner, player 2's at its mirror
-    // image. The middle pair is the two hexes astride the middle of the map
-    // that are each other's mirror images and next to each other.
-    let home = ((h / 6 + rng.range(0, 1)) * w + w / 8 + rng.range(0, 1)) as usize;
+    // Player 1's island is drawn around an anchor near the top-left corner,
+    // and player 2's around its mirror image. Each home stands inland of its
+    // anchor (below). The middle pair is the two hexes astride the middle of
+    // the map that are each other's mirror images and next to each other.
+    let anchor = ((h / 6 + rng.range(0, 1)) * w + w / 8 + rng.range(0, 1)) as usize;
     let row = (h / 2 - 1) as usize;
     let mid = (row * w as usize..(row + 1) * w as usize).find(|&k| map.hex(k).distance(map.hex(n - 1 - k)) == 1)?;
-    let home1 = map.hex(home);
+    let anchor1 = map.hex(anchor);
     let (mid1, mid2) = (map.hex(mid), map.hex(n - 1 - mid));
     let to_mid = |k: usize| map.hex(k).distance(mid1).min(map.hex(k).distance(mid2));
 
-    // The islands. Each home's spreads from it into its corner of the map,
-    // and along the map's edges, so its coast is long. It's the land within
-    // a reach of the corner that takes it home_radius past the home. Reach
-    // is measured in the noise's units, 8 to a hex, as the average of the
-    // straight-line distance and the distance along the edges, so it goes
-    // about a fifth further along the edges than toward the middle. The
-    // middle island is a disk around the middle pair. Their coasts are
-    // pushed in or out by up to a hex and a half, and homes and the middle
-    // pair have land all around them.
+    // The islands. Each home island spreads from its anchor into its corner
+    // of the map, and along the map's edges, so its coast is long. It's the
+    // land within a reach of the corner that takes it home_radius past the
+    // anchor. Reach is measured in the noise's units, 8 to a hex, as the
+    // average of the straight-line distance and the distance along the
+    // edges, so it goes about a fifth further along the edges than toward
+    // the middle. The middle island is a disk around the middle pair. Their
+    // coasts are pushed in or out by up to a hex and a half, and anchors and
+    // the middle pair have land all around them.
     let (home_radius, mid_radius) = ((w.min(h) / 7).max(3) as i64, (w.min(h) / 10).max(2) as i64);
     let xy = |k: usize| {
         let (col, row) = ((k as i32 % w) as i64, (k as i32 / w) as i64);
@@ -309,7 +310,7 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
         (straight, (straight + dx + dy) / 2)
     };
     let (corner1, corner2) = (xy(0), xy(n - 1));
-    let (straight, blend) = apart(xy(home), corner1);
+    let (straight, blend) = apart(xy(anchor), corner1);
     let reach = blend * (straight + 8 * home_radius) / straight;
     let mut land: Vec<bool> = (0..n)
         .map(|k| {
@@ -318,7 +319,7 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
             1000 * to_corner <= 1000 * reach + 24 * push || 1000 * to_mid(k) as i64 <= 1000 * mid_radius + 2 * push
         })
         .collect();
-    for k in [home, n - 1 - home, mid, n - 1 - mid] {
+    for k in [anchor, n - 1 - anchor, mid, n - 1 - mid] {
         land[k] = true;
         for i in next_to(&map, k) {
             land[i] = true;
@@ -337,7 +338,7 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
         land[k] = land[k] || sea[k] != sea[corner];
     }
     let (isle, _) = areas(&map, |k| land[k]);
-    let islands = [isle[home], isle[n - 1 - home], isle[mid]];
+    let islands = [isle[anchor], isle[n - 1 - anchor], isle[mid]];
     if islands[0] == islands[1] || islands[0] == islands[2] || islands[1] == islands[2] {
         return None;
     }
@@ -364,20 +365,57 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
         })
         .collect();
 
-    // Player 1's port: a coastal hex of its island 3 to home_radius + 2 hexes
-    // from home, among those nearest the middle. Its site: a hex next to home.
+    // Player 1's home: of the hexes `inland` from the anchor, the one
+    // farthest from the sea, nearest the corner on ties, so that an army
+    // landing on its island has a few more hexes to march.
+    let inland = (home_radius / 2).max(1);
+    let mut shore = vec![u32::MAX; n];
+    let mut queue: std::collections::VecDeque<usize> = (0..n).filter(|&k| !land[k]).collect();
+    for &k in &queue {
+        shore[k] = 0;
+    }
+    while let Some(k) = queue.pop_front() {
+        for i in next_to(&map, k) {
+            if shore[i] == u32::MAX {
+                shore[i] = shore[k] + 1;
+                queue.push_back(i);
+            }
+        }
+    }
+    let home = (0..n)
+        .filter(|&k| land[k] && isle[k] == islands[0] && map.hex(k).distance(anchor1) as i64 == inland)
+        .max_by_key(|&k| (shore[k], std::cmp::Reverse(apart(xy(k), corner1).0), std::cmp::Reverse(k)))
+        .filter(|&k| shore[k] >= 2)?;
+    let home1 = map.hex(home);
+
+    // Its port: a coastal hex of its island 3 to home_radius + 2 hexes from
+    // the anchor, and at least 3 from home, among those nearest the middle.
+    // Its site: a hex of its island 4 or 5 hexes from home and at least 4
+    // from the port, so that its wheat takes a wagon to bring in.
     let coast: Vec<usize> = (0..n)
         .filter(|&k| {
             land[k]
                 && isle[k] == islands[0]
                 && next_to(&map, k).any(|i| !land[i])
-                && (3..=home_radius + 2).contains(&(map.hex(k).distance(home1) as i64))
+                && (3..=home_radius + 2).contains(&(map.hex(k).distance(anchor1) as i64))
+                && map.hex(k).distance(home1) >= 3
         })
         .collect();
     let nearest = coast.iter().map(|&k| to_mid(k)).min()?;
     let picks: Vec<usize> = coast.into_iter().filter(|&k| to_mid(k) <= nearest + 2).collect();
     let port = picks[rng.below(picks.len() as u64) as usize];
-    let around: Vec<usize> = next_to(&map, home).collect();
+    let port1 = map.hex(port);
+    let around: Vec<usize> = (0..n)
+        .filter(|&k| {
+            land[k]
+                && isle[k] == islands[0]
+                && (4..=5).contains(&map.hex(k).distance(home1))
+                && map.hex(k).distance(port1) >= 4
+        })
+        .collect();
+    if around.is_empty() {
+        return None;
+    }
     let site = around[rng.below(around.len() as u64) as usize];
 
     // The middle patch: the middle pair, then more mirrored pairs next to the
@@ -828,8 +866,8 @@ mod tests {
                 let (land, _) = areas(&m, |k| rules.terrains[m.tiles[k] as usize].passable());
                 let isle = |h: Hex| land[m.index(h)];
 
-                // The homes, then a neutral port on each home's island. A
-                // home isn't a port.
+                // The homes, a few hexes inland, then a neutral port on each
+                // home's island. A home isn't a port.
                 let owners: Vec<u8> = m.cities.iter().map(|c| c.owner).collect();
                 assert_eq!(owners, [1, 2, 0, 0]);
                 for pair in m.cities.chunks(2) {
@@ -838,19 +876,26 @@ mod tests {
                 let (home, port1) = (m.cities[0].hex, m.cities[2].hex);
                 assert!(!port(home) && port(port1), "seed {seed}");
                 let radius = (rules.c.map_width.min(rules.c.map_height) / 7).max(3);
-                assert!((3..=radius + 2).contains(&home.distance(port1)), "seed {seed}");
+                let inland = (radius / 2).max(1);
+                let to_sea = (0..n).filter(|&k| water(m.hex(k))).map(|k| m.hex(k).distance(home)).min();
+                assert!(to_sea >= Some(inland + 3), "seed {seed}: home {to_sea:?} from the sea");
+                assert!((3..=radius + 2 + inland).contains(&home.distance(port1)), "seed {seed}");
                 assert_eq!(isle(home), isle(port1));
                 // Each home's island spreads into its corner of the map.
                 assert_eq!(isle(m.hex(0)), isle(home), "seed {seed}");
                 assert_eq!(isle(m.hex(n - 1)), isle(m.cities[1].hex), "seed {seed}");
 
-                // Each home's site next to it, then the middle patch: the
+                // Each home's site, on its island 4 or 5 hexes from it and
+                // at least 4 from its port, then the middle patch: the
                 // richest sites, touching, on an island of their own.
                 assert_eq!(m.sites.len(), rules.c.sites as usize);
                 for pair in m.sites.chunks(2) {
                     assert_eq!(m.mirror(pair[0].hex), pair[1].hex);
                 }
-                assert_eq!(m.sites[0].hex.distance(home), 1);
+                let site1 = m.sites[0].hex;
+                assert!((4..=5).contains(&site1.distance(home)), "seed {seed}");
+                assert!(site1.distance(port1) >= 4, "seed {seed}");
+                assert_eq!(isle(site1), isle(home));
                 assert_eq!((m.sites[0].output, m.sites[0].cap), (60, 1700));
                 let middle = isle(m.sites[2].hex);
                 assert!(middle != isle(home) && middle != isle(m.cities[1].hex));

@@ -60,7 +60,7 @@ The default game stays as it is.
 - **Start:** each player gets `I, I, S` and a wagon on their home city, and `start_bread` in it.
 - **The default game's maps don't change.** The new generator parameters default to today's behavior.
 - **The islands map** is a small map for testing the resources and ships before the large maps, picked with `map_layout = "islands"`. [configs/islands.toml](configs/islands.toml) plays it at 40 × 30 with the strategic preset's rules.
-  - Each home island spreads from the home into its corner of the map and along the map's edges, 135 to 155 hexes at 40 × 30, so it has a long coast to land on. The home has its site next to it, and a neutral port a few hexes away on the coast facing the middle of the map. Taking the port is the opening.
+  - Each home island spreads into its corner of the map and along the map's edges, about 130 to 160 hexes at 40 × 30, so it has a long coast to land on. The home stands well inland, toward its corner: 6 or 7 hexes from the sea at 40 × 30, so an army that lands on the island has a march ahead of it. Its site is on the island 4 or 5 hexes from the home and at least 4 from the port, so its wheat takes a wagon to bring in. A neutral port stands on the coast facing the middle of the map, 5 to 8 hexes from the home. Taking the port is the opening.
   - The middle of the map is an island with no city, holding the other sites in one patch. The two at the very middle touch: no hex is exactly at the middle, since maps are mirrored by a 180° turn and have an even height. Only wagons carried by transport can bring their wheat home.
   - The sites by the homes get the middle of each range, and the sites in the middle the top of it: 100 wheat a round each, piling up to 3,000.
   - Everything else is sea. The seed shapes the coasts and terrain, and picks the port and the homes' sites.
@@ -222,7 +222,7 @@ New keys, with their values in the strategic preset and in the default game:
 | key | strategic | default | meaning |
 |---|---|---|---|
 | `supply` | 1 | 0 | 1 turns on wheat, bread, and rations (§4, §5), in place of gold, and allows ships (§6) |
-| `sites` | 32 | 0 | resource sites on generated maps, including the two next to the homes; must be even |
+| `sites` | 32 | 0 | resource sites on generated maps, including one near each home; must be even |
 | `water_pct` | 45 | 6 | how much of a generated map is water |
 | `map_layout` | 0 | 0 | the map generator: 0, `noise`, for the maps of SPEC §3.9 and above; 1, `islands`, for the islands map (§3). A config can give the name |
 | `start_bread` | 300 | – | bread in each home city at the start |
@@ -430,6 +430,7 @@ Then the new bot played on 10 islands maps, each twice with the sides swapped, a
 - **Two old bugs showed up.** A wagon with wheat to unload looked only for a city with bread to spare, so once its home city ran low it never came home. Before, the home site kept that city stocked. And since a unit boards the lowest-numbered transport on a hex, Forager's wagons could board a troop transport docked by their ferry and sail off with it. Wagons now unload in any city, and Forager's transports dock apart.
 - **On 6 islands maps, both sides, at most 500 rounds a game, Forager beat the naval bot 10–2,** where they were even, 8–8, before. 11 games ended by elimination, in rounds 49 to 180, and 1 at round 500, on army value with 2 cities each. Neither bot sent an invalid order.
 - **Why:** the middle island's sites now grow from round 1, so whoever lands there first finds thousands of wheat piled up. In the shortest game, Forager's ferry brought home 1,000 wheat a trip from round 20, while the naval bot kept its army to what its home site and cities fed, 9 units, and waited for a convoy.
+- **With the homes moved inland and their sites 4 or 5 hexes out** (§3), on the same 6 seeds, Forager won all 12 games, by elimination in rounds 56 to 143, and neither bot sent an invalid order. In the first 40 rounds the naval bot's wagons brought in about all its home site grew, 2,200 to 2,400 wheat, while Forager loaded over 5,000, most of it in the middle.
 
 ### Work
 
@@ -523,3 +524,4 @@ Settled on 2026-11-24:
   - *Dropped:* capturing sites, and a site next to its owner's city delivering its wheat by itself. Every load of wheat now comes in a wagon, as agreed on 2026-11-21 for supply in general.
 - **The tiebreak at the round limit is cities, then armies.** An army counts each unit at its cost times the share of its HP it has left, plus all the bread in its player's cities and wagons.
   - *Replaced:* cities, then sites, then army value without the bread.
+- **On the islands map, homes stand further inland and their sites farther out** (§3). A home is 6 or 7 hexes from the sea at 40 × 30, where it was 4 or 5, and its site 4 or 5 hexes from it and at least 4 from its port, where it was next to the home.
