@@ -7,7 +7,7 @@ use crate::rules::{Rules, CITY_CHAR, ISLANDS, SITE_CHAR};
 /// Bumped whenever generated maps change for the same seed and rules. Maps
 /// without sites are unchanged by site placement, which draws nothing from
 /// the generator when there are no sites to place.
-pub const GENERATOR_VERSION: u32 = 3;
+pub const GENERATOR_VERSION: u32 = 4;
 
 /// Generates the map for `seed` using `rules.c` for its layout, size, share
 /// of water, number of neutral cities, and, with supply on, number of sites.
@@ -297,9 +297,12 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
     // average of the straight-line distance and the distance along the
     // edges, so it goes about a fifth further along the edges than toward
     // the middle. The middle island is a disk around the middle pair. Their
-    // coasts are pushed in or out by up to a hex and a half, and anchors and
-    // the middle pair have land all around them.
+    // coasts are pushed in or out by up to a hex and a half on maps 30 or
+    // more hexes high, and proportionally less on smaller maps, so that those
+    // keep the larger maps' shapes. Anchors and the middle pair have land all
+    // around them.
     let (home_radius, mid_radius) = ((w.min(h) / 7).max(3) as i64, (w.min(h) / 10).max(2) as i64);
+    let size = w.min(h).min(30) as i64;
     let xy = |k: usize| {
         let (col, row) = ((k as i32 % w) as i64, (k as i32 / w) as i64);
         (8 * col + 4 * (row & 1), 7 * row)
@@ -314,7 +317,7 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
     let reach = blend * (straight + 8 * home_radius) / straight;
     let mut land: Vec<bool> = (0..n)
         .map(|k| {
-            let push = wobble[k] as i64 - 512;
+            let push = (wobble[k] as i64 - 512) * size / 30;
             let to_corner = apart(xy(k), corner1).1.min(apart(xy(k), corner2).1);
             1000 * to_corner <= 1000 * reach + 24 * push || 1000 * to_mid(k) as i64 <= 1000 * mid_radius + 2 * push
         })
@@ -346,6 +349,29 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
         land[k] = land[k] && islands.contains(&isle[k]);
     }
 
+    // The middle island lies out at sea, with water at least a quarter of
+    // the map's height wide between it and each home island, as on the
+    // 40 × 30 map, where 8 or more hexes of sea always part them. Distances
+    // count the hexes of water crossed.
+    let coast_of = |i: u32, k: usize| !land[k] && next_to(&map, k).any(|j| land[j] && isle[j] == i);
+    let mut gap = vec![u32::MAX; n];
+    let mut queue: std::collections::VecDeque<usize> = (0..n).filter(|&k| coast_of(islands[2], k)).collect();
+    for &k in &queue {
+        gap[k] = 1;
+    }
+    while let Some(k) = queue.pop_front() {
+        for i in next_to(&map, k) {
+            if !land[i] && gap[i] == u32::MAX {
+                gap[i] = gap[k] + 1;
+                queue.push_back(i);
+            }
+        }
+    }
+    let crossing = (0..n).filter(|&k| coast_of(islands[0], k)).map(|k| gap[k]).min()?;
+    if crossing < (w.min(h) / 4) as u32 {
+        return None;
+    }
+
     // Terrain: hills on the highest sixth of the land, forest on the wettest
     // quarter of the rest, and no mountains.
     let on_land = |f: &[u32]| -> Vec<u32> { (0..n).filter(|&k| land[k]).map(|k| f[k]).collect() };
@@ -368,7 +394,7 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
     // Player 1's home: of the hexes `inland` from the anchor, the one
     // farthest from the sea, nearest the corner on ties, so that an army
     // landing on its island has a few more hexes to march.
-    let inland = (home_radius / 2).max(1);
+    let inland = (home_radius + 1) / 2;
     let mut shore = vec![u32::MAX; n];
     let mut queue: std::collections::VecDeque<usize> = (0..n).filter(|&k| !land[k]).collect();
     for &k in &queue {
@@ -384,7 +410,13 @@ fn try_islands(rules: &Rules, t: &Palette, w: i32, h: i32, rng: &mut SplitMix64)
     }
     let home = (0..n)
         .filter(|&k| land[k] && isle[k] == islands[0] && map.hex(k).distance(anchor1) as i64 == inland)
-        .max_by_key(|&k| (shore[k], std::cmp::Reverse(apart(xy(k), corner1).0), std::cmp::Reverse(k)))
+        .max_by_key(|&k| {
+            (
+                shore[k],
+                std::cmp::Reverse(apart(xy(k), corner1).0),
+                std::cmp::Reverse(k),
+            )
+        })
         .filter(|&k| shore[k] >= 2)?;
     let home1 = map.hex(home);
 
@@ -672,7 +704,14 @@ fn place_sites(
         };
         for &k in pair {
             tiles[k] = t.site;
-            out.push((k, SiteInfo { hex: hex(k), output, cap }));
+            out.push((
+                k,
+                SiteInfo {
+                    hex: hex(k),
+                    output,
+                    cap,
+                },
+            ));
         }
     }
     Some(out)
@@ -682,6 +721,7 @@ fn place_sites(
 mod tests {
     use super::*;
     use crate::hex::Hex;
+    use std::collections::{HashMap, VecDeque};
 
     #[test]
     fn deterministic_and_symmetric() {
@@ -876,8 +916,11 @@ mod tests {
                 let (home, port1) = (m.cities[0].hex, m.cities[2].hex);
                 assert!(!port(home) && port(port1), "seed {seed}");
                 let radius = (rules.c.map_width.min(rules.c.map_height) / 7).max(3);
-                let inland = (radius / 2).max(1);
-                let to_sea = (0..n).filter(|&k| water(m.hex(k))).map(|k| m.hex(k).distance(home)).min();
+                let inland = radius.div_ceil(2);
+                let to_sea = (0..n)
+                    .filter(|&k| water(m.hex(k)))
+                    .map(|k| m.hex(k).distance(home))
+                    .min();
                 assert!(to_sea >= Some(inland + 3), "seed {seed}: home {to_sea:?} from the sea");
                 assert!((3..=radius + 2 + inland).contains(&home.distance(port1)), "seed {seed}");
                 assert_eq!(isle(home), isle(port1));
@@ -906,6 +949,34 @@ mod tests {
                     assert!(m.sites[2..].iter().any(|o| o.hex.distance(s.hex) == 1));
                 }
                 assert!(m.cities.iter().all(|c| isle(c.hex) != middle));
+                // Out at sea: a quarter of the map's height of water, or more,
+                // between the middle island and each home island.
+                let shore = |i: u32| -> Vec<usize> {
+                    (0..n)
+                        .filter(|&k| {
+                            water(m.hex(k))
+                                && m.hex(k)
+                                    .neighbors()
+                                    .into_iter()
+                                    .any(|h| m.contains(h) && !water(h) && isle(h) == i)
+                        })
+                        .collect()
+                };
+                let mut gap: HashMap<usize, u32> = shore(middle).into_iter().map(|k| (k, 1)).collect();
+                let mut queue: VecDeque<usize> = gap.keys().copied().collect();
+                while let Some(k) = queue.pop_front() {
+                    for h in m.hex(k).neighbors() {
+                        if water(h) && !gap.contains_key(&m.index(h)) {
+                            gap.insert(m.index(h), gap[&k] + 1);
+                            queue.push_back(m.index(h));
+                        }
+                    }
+                }
+                let crossing = shore(isle(home)).iter().filter_map(|k| gap.get(k)).min().copied();
+                assert!(
+                    crossing >= Some(rules.c.map_width.min(rules.c.map_height) / 4),
+                    "seed {seed}: {crossing:?}"
+                );
 
                 // Everything is reachable, but only by sea.
                 let cities: Vec<usize> = m.cities.iter().map(|c| m.index(c.hex)).collect();

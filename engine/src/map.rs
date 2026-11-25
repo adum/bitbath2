@@ -208,7 +208,9 @@ where
                     }
                     let owner: u8 = int(t.get(4), "owner")?;
                     if owner != 0 {
-                        return Err(format!("site {id} has owner {owner}, but sites have no owners: it must be 0"));
+                        return Err(format!(
+                            "site {id} has owner {owner}, but sites have no owners: it must be 0"
+                        ));
                     }
                     sites.push(SiteInfo {
                         hex: Hex::new(int(t.get(2), "q")?, int(t.get(3), "r")?),

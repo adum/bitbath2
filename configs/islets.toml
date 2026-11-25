@@ -1,0 +1,70 @@
+# The islets map: the islands map (configs/islands.toml, STRATEGIC.md §3) at
+# 24 × 18, for quicker games. The generator keeps the larger map's shapes:
+# each home stands inland on an island in its corner, with a site 4 or 5
+# hexes away and a neutral port to take, and in the middle, out at sea, is
+# an island with no city and the two richest sites, which only wagons carried
+# by transport can harvest. The Play page's Islets map is this one.
+#
+# The rest is the strategic preset (configs/strategic.toml) as it stands.
+
+map_layout = "islands"
+map_width = 24
+map_height = 18            # must be even
+neutral_cities = 2         # one port on each home island
+sites = 4                  # one near each home, and the pair in the middle
+round_limit = 300          # the tiebreak counts cities, then armies
+
+# The large preset's clock, as in the strategic preset.
+time_bank_ms = 10000
+time_increment_ms = 2000
+time_bank_cap_ms = 20000
+
+# Supply (STRATEGIC.md §4, §5, §10). There's no gold: units cost bread.
+# The sites by the homes get the middle of each range, and the middle
+# sites the top of it.
+supply = 1
+start_bread = 300          # in each home city
+city_bread = 10            # per city per turn, unless an enemy is on or next to it
+site_output_min = 20       # wheat per round
+site_output_max = 100
+site_cap_min = 400         # the most wheat a site piles up
+site_cap_max = 3000
+cargo_max = 1000           # wheat and bread together, per wagon
+passengers_max = 4         # land units per transport, wagons included
+ration_max = 60
+eat_base = 1               # rations a unit eats each turn,
+eat_move = 1               # plus this if it moved,
+eat_attack = 1             # plus this if it attacked
+ration_cost = 5            # bread per ration
+starve_hp = 10
+start_units = "I,I,S,W"
+
+# Resource sites are terrain R: <name> <move_cost> <defense> <vision_bonus> <conceal>
+terrain.R = "site 1 0 0 0"
+
+# Wagons carry wheat and bread. They can't attack or strike back.
+#   <name> <cost> <max_hp> <move> <vision> <range_min> <range_max> <flags>
+unit.W = "wagon 100 100 4 2 1 1 carry"
+damage.I.W = 70
+damage.P.W = 60
+damage.K.W = 90
+damage.A.W = 70
+damage.S.W = 40
+
+# Ships (STRATEGIC.md §6, §7) sail on water, which takes them at a move cost
+# of 1. Ports build them. Transports carry land units and can't attack;
+# galleys fight at sea and bombard the coast. From land, only archers can
+# hurt a ship.
+terrain.water.naval_move_cost = 1
+unit.T = "transport 150 100 6 2 1 1 naval,transport"
+unit.G = "galley 200 100 5 3 1 1 naval,zoc"
+damage.A.T = 40
+damage.A.G = 40
+damage.G.I = 25
+damage.G.P = 25
+damage.G.K = 25
+damage.G.A = 30
+damage.G.S = 35
+damage.G.W = 50
+damage.G.T = 80
+damage.G.G = 55

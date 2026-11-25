@@ -49,8 +49,10 @@ MAX_WAGONS = 30
 MOVING, ATTACKING = 0.6, 0.1
 # One feeding wagon for every this many hungry units.
 FEED_GROUP = 6
-# It keeps no more units than this share of what its bread income can feed.
+# It keeps no more units than this share of what its bread income can feed,
+# plus what its stockpile would feed for STOCK_TURNS turns.
 FED_SHARE = 1.0
+STOCK_TURNS = 100
 
 
 class SupplyBot(vb.VanguardBot):
@@ -197,10 +199,14 @@ class SupplyBot(vb.VanguardBot):
 
     def units_fed(self):
         """How many units the bread income can feed, each eating its base
-        meal plus moving and attacking some of the time."""
-        c = self.rules.constants
-        eats = c.get("eat_base", 0) + MOVING * c.get("eat_move", 0) + ATTACKING * c.get("eat_attack", 0)
-        return int(FED_SHARE * self.income() / max(1e-9, eats * self.ration_cost))
+        meal plus moving and attacking some of the time, and as many more as
+        the bread stockpiled in our cities and wagons would feed for
+        STOCK_TURNS turns. Without those, a player with a small income would
+        keep a small army however much bread it had saved."""
+        s, k = self.state, self.rules.constants
+        eats = k.get("eat_base", 0) + MOVING * k.get("eat_move", 0) + ATTACKING * k.get("eat_attack", 0)
+        stock = sum(c.bread for c in s.my_cities()) + sum(u.bread for u in s.my_units())
+        return int((FED_SHARE * self.income() + stock / STOCK_TURNS) / max(1e-9, eats * self.ration_cost))
 
     def supply_wagons(self):
         """The wagons that haul and feed: all that can move."""
@@ -231,7 +237,9 @@ class SupplyBot(vb.VanguardBot):
             if w.id in self.jobs:
                 continue
             open_sites = [x for x in sites if x.id not in hauled]
-            if open_sites and (feeders > 0 or not hungry):
+            # Hauling comes first while no wagon hauls: without the wheat,
+            # there's soon no bread to feed with.
+            if open_sites and (feeders > 0 or not hungry or not hauled):
                 best = max(open_sites, key=lambda x: (self.load_worth(w, x), -x.id))
                 self.jobs[w.id] = ("haul", best.id)
                 hauled[best.id] = hauled.get(best.id, 0) + 1
@@ -261,22 +269,31 @@ class SupplyBot(vb.VanguardBot):
 
     def nearest_city(self, w, need=0):
         """Our city nearest w with no enemy on it and, if need is above 0,
-        that much bread to spare beyond what it keeps. With need 0, any city
-        will do, however little bread it holds, as when unloading wheat."""
+        that much bread to spare beyond what it keeps, preferring one with no
+        enemy next to it either, such as a port no enemy ship blockades. With
+        need 0, any city will do, however little bread it holds, as when
+        unloading wheat."""
         cities = [c for c in self.state.my_cities()
                   if c.hex not in self.enemy_hex and (need <= 0 or c.bread - self.keep(c) >= need)]
-        known = [(self.city_field[c.id].get(w.hex), c.id, c) for c in cities]
-        known = [k for k in known if k[0] is not None]
-        return min(known)[2] if known else None
+        known = [(any(n in self.enemy_hex for n in bb.neighbors(c.hex)), self.city_field[c.id].get(w.hex), c.id, c)
+                 for c in cities]
+        known = [k for k in known if k[1] is not None]
+        return min(known)[3] if known else None
 
     def enter(self, w, city):
-        """Walks wagon w toward city, and into it, making room there if our
-        units fill it."""
+        """Walks wagon w toward city, keeping clear of the enemy, and into it,
+        making room there if our units fill it. Once the city is in reach it
+        goes straight in, past any enemy beside it: a wagon that kept clear of
+        the galleys blockading a port would never get in."""
         if w.hex == city.hex:
             return
         if bb.distance(w.hex, city.hex) == 1:
             self.make_room(city, self.city_field[city.id])
-        self.walk(w, self.city_field[city.id], WAGON_CAUTION)
+        path = self.reach(w).get(city.hex)
+        if path:
+            self.go(w, path)
+        else:
+            self.walk(w, self.city_field[city.id], WAGON_CAUTION)
 
     def make_room(self, city, field):
         """If our units fill the city, moves one that hasn't acted off it, to

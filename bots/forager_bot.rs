@@ -17,7 +17,8 @@
 //   owners, one wagon in three carries bread to hungry units, and hungry
 //   units walk to bread.
 // - It builds a fixed mix of unit types with each city's own bread (or with
-//   gold in the default game), and no more units than its bread can feed.
+//   gold in the default game), and no more units than its bread income, and
+//   for a while its stockpile, can feed.
 //
 // With ships (STRATEGIC.md §6) it goes overseas the same way, spread out:
 //
@@ -52,6 +53,9 @@ const MIX: [(char, f64); 5] = [('I', 0.40), ('P', 0.20), ('K', 0.15), ('A', 0.10
 const MIX_NO_SUPPLY: [(char, f64); 5] = [('I', 0.45), ('P', 0.20), ('K', 0.20), ('A', 0.15), ('S', 0.0)];
 // Bread a city keeps back to feed the units around it.
 const KEEP: i64 = 50;
+// Its army is what its bread income feeds, plus what its stockpile would
+// feed for this many turns.
+const STOCK_TURNS: f64 = 100.0;
 // A capturer goes for a city at most this many turns away.
 const TARGET_TURNS: i32 = 15;
 // A wagon fetches wheat once a site holds this much (or all it can hold).
@@ -1012,13 +1016,10 @@ impl Bot {
             let site = self.jobs.get(&id).copied().filter(|s| haul.contains(s));
             let site_wheat = site.map_or(0, |s| self.sites[s].stock);
             if self.units[w].wheat >= LOAD || (self.units[w].wheat > 0 && (site.is_none() || site_wheat == 0)) {
-                let Some(c) = self.nearest_city(self.units[w].at, 0) else {
+                let Some(c) = self.drop_city(self.units[w].at) else {
                     continue;
                 };
-                if self.units[w].at != self.cities[c].at {
-                    let f = self.city_field[c].clone();
-                    self.walk(w, &f, true);
-                }
+                self.enter_city(w, c);
                 if self.units[w].at == self.cities[c].at {
                     self.carry('U', w, None);
                     self.jobs.remove(&id);
@@ -1083,10 +1084,7 @@ impl Bot {
         }
         self.jobs.insert(id, usize::MAX);
         let goal = if self.units[w].bread >= 100 { port } else { source.unwrap_or(port) };
-        if self.units[w].at != self.cities[goal].at {
-            let f = self.city_field[goal].clone();
-            self.walk(w, &f, true);
-        }
+        self.enter_city(w, goal);
         if self.units[w].at == self.cities[goal].at {
             if goal == port {
                 self.carry('U', w, None);
@@ -1105,10 +1103,7 @@ impl Bot {
             let Some(c) = self.nearest_city(self.units[w].at, 300) else {
                 return;
             };
-            if self.units[w].at != self.cities[c].at {
-                let f = self.city_field[c].clone();
-                self.walk(w, &f, true);
-            }
+            self.enter_city(w, c);
             if self.units[w].at == self.cities[c].at {
                 let room = self.rule("cargo_max") - self.units[w].wheat - self.units[w].bread;
                 let spare = self.cities[c].stock - 2 * KEEP;
@@ -1130,17 +1125,47 @@ impl Bot {
         self.walk(w, &f, true);
     }
 
-    /// Our city nearest `at` with no enemy on it and, if `need` is above 0,
-    /// that much bread to spare beyond what it keeps. With need 0, any city
-    /// will do, however little bread it holds, as when unloading wheat.
+    /// Our city nearest `at` with no enemy on it and `need` bread to spare
+    /// beyond what it keeps.
     fn nearest_city(&self, at: usize, need: i64) -> Option<usize> {
         (0..self.cities.len())
             .filter(|&c| {
-                self.cities[c].owner == self.me
-                    && !self.enemy[self.cities[c].at]
-                    && (need <= 0 || self.cities[c].stock - KEEP >= need)
+                self.cities[c].owner == self.me && !self.enemy[self.cities[c].at] && self.cities[c].stock - KEEP >= need
             })
             .min_by_key(|&c| (self.city_field[c][at], c))
+    }
+
+    /// The city a wagon at `at` takes its wheat to: our nearest that it can
+    /// walk to with no enemy on it, however little bread it holds, and one
+    /// with no enemy next to it either if there is one, such as a port that
+    /// enemy galleys aren't blockading.
+    fn drop_city(&self, at: usize) -> Option<usize> {
+        (0..self.cities.len())
+            .filter(|&c| {
+                let p = &self.cities[c];
+                p.owner == self.me && !self.enemy[p.at] && self.city_field[c][at] < FAR
+            })
+            .min_by_key(|&c| {
+                let p = self.cities[c].at;
+                let besieged = (0..6).any(|d| self.step(p, d).is_some_and(|n| self.enemy[n]));
+                (besieged, self.city_field[c][at], c)
+            })
+    }
+
+    /// Walks wagon w toward city c, keeping clear of the enemy, but straight
+    /// in once the city is in reach: a wagon that kept clear of the enemy
+    /// galleys beside a blockaded port would never get in.
+    fn enter_city(&mut self, w: usize, c: usize) {
+        let at = self.cities[c].at;
+        if self.units[w].at == at {
+            return;
+        }
+        if let Some((_, path)) = self.reach(w).into_iter().find(|(h, _)| *h == at) {
+            self.go(w, &path);
+        } else {
+            let f = self.city_field[c].clone();
+            self.walk(w, &f, true);
+        }
     }
 
     // The army.
@@ -1710,7 +1735,21 @@ impl Bot {
                 })
                 .collect();
             free.sort_by_key(|&w| (self.city_field[port][self.units[w].at], self.units[w].id));
-            for w in free.into_iter().take(want - have) {
+            // One wagon at least stays home to haul there. Otherwise a ferry
+            // sunk with every wagon aboard leaves the home island's cities
+            // making just what its army eats, and never bread for a wagon.
+            let home_wagons = (0..self.units.len())
+                .filter(|&w| {
+                    let x = &self.units[w];
+                    x.alive
+                        && x.owner == me
+                        && self.types[x.ty].carry
+                        && x.carrier == 0
+                        && !self.haulers.contains_key(&x.id)
+                        && self.land[x.at] == home
+                })
+                .count();
+            for w in free.into_iter().take((want - have).min(home_wagons.saturating_sub(1))) {
                 let id = self.units[w].id;
                 self.haulers.insert(id, isle);
                 self.jobs.remove(&id);
@@ -1899,8 +1938,17 @@ impl Bot {
                                 }
                             }
                         }
-                        s.phase = if s.ferry { Phase::Wait } else { Phase::Back };
-                        s.waited = 0;
+                        // A unit can't board and land in the same turn, so
+                        // on a crossing this short a troop transport waits
+                        // offshore a turn or two for its crew to land. A
+                        // ferry's wagons land while it waits (below).
+                        if s.ferry {
+                            (s.phase, s.waited) = (Phase::Wait, 0);
+                        } else if self.passengers(id).is_empty() || s.waited >= 2 {
+                            (s.phase, s.waited) = (Phase::Back, 0);
+                        } else {
+                            s.waited += 1;
+                        }
                     }
                 }
                 _ => s.phase = Phase::Back,
@@ -1909,6 +1957,16 @@ impl Bot {
         if s.phase == Phase::Wait && self.units[t].alive {
             s.waited += 1;
             let isle = s.isle;
+            // Wagons that boarded the turn the ferry sailed land a turn late.
+            // They're the ones aboard with no wheat yet.
+            let unlanded = |b: &Bot, p: usize| b.haulers.contains_key(&b.units[p].id) && b.units[p].wheat == 0;
+            if !lost {
+                for p in self.passengers(id) {
+                    if unlanded(self, p) {
+                        self.hauler_land(p, isle, claims);
+                    }
+                }
+            }
             for w in self.haulers_of(isle) {
                 if self.units[w].carrier == 0 && self.land[self.units[w].at] == isle {
                     self.hauler_island(w, t, &s, lost, claims);
@@ -1919,7 +1977,8 @@ impl Bot {
                 .into_iter()
                 .filter(|&w| self.units[w].carrier == 0 && self.land[self.units[w].at] == isle)
                 .count();
-            if ashore == 0 || s.waited > 2 * FERRY_WAIT || (lost && s.waited > 2) {
+            let waiting = !lost && self.passengers(id).into_iter().any(|p| unlanded(self, p));
+            if (ashore == 0 && !waiting) || s.waited > 2 * FERRY_WAIT || (lost && s.waited > 2) {
                 s.phase = Phase::Back;
             }
         }
@@ -2341,10 +2400,15 @@ impl Bot {
             *count.entry(self.types[self.units[u].ty].code).or_insert(0.0) += 1.0;
         }
         let wagon = self.types.iter().position(|t| t.carry);
-        // Units beyond what the bread income can feed would starve.
+        // Units beyond what the bread income can feed would starve, but bread
+        // stockpiled in our cities and wagons feeds as many more as it would
+        // for STOCK_TURNS turns.
         let mut room = if self.supply {
-            let eats = self.rule("eat_base") as f64 + 0.6 * self.rule("eat_move") as f64;
-            (self.income() as f64 / (eats * self.rule("ration_cost").max(1) as f64)) as i64 - mine.len() as i64
+            let eats = (self.rule("eat_base") as f64 + 0.6 * self.rule("eat_move") as f64)
+                * self.rule("ration_cost").max(1) as f64;
+            let stock = self.cities.iter().filter(|c| c.owner == me).map(|c| c.stock).sum::<i64>()
+                + self.units.iter().filter(|u| u.alive && u.owner == me).map(|u| u.bread).sum::<i64>();
+            ((self.income() as f64 + stock as f64 / STOCK_TURNS) / eats) as i64 - mine.len() as i64
         } else {
             i64::MAX
         };
@@ -2381,8 +2445,12 @@ impl Bot {
                 self.gold
             };
             // Ships first, at a port on a sea worth them. A port that wants
-            // one and can't pay for it yet saves its bread.
-            if let Some(t) = self.ship_wanted(c, budget, &count) {
+            // one and can't pay for it yet saves its bread. But with no wagon
+            // left a wagon comes first: without one no wheat comes in, and a
+            // port saving for a ship could save forever.
+            let wagonless = self.supply && wagon.is_some_and(|w| *count.get(&self.types[w].code).unwrap_or(&0.0) < 1.0);
+            if wagonless {
+            } else if let Some(t) = self.ship_wanted(c, budget, &count) {
                 let code = self.types[t].code;
                 let reply = self.order(&format!("B {c} {code}"));
                 if reply[0] == "OK" {
@@ -2446,7 +2514,8 @@ impl Bot {
     }
 
     /// The ship city c should build with its budget, if any: transports and
-    /// galleys up to what the plan wants, at a port on a sea worth them.
+    /// galleys up to what the plan wants, at a port on a sea worth them that
+    /// no enemy ship blockades.
     fn ship_wanted(&self, c: usize, budget: i64, count: &HashMap<char, f64>) -> Option<usize> {
         if !self.naval {
             return None;
@@ -2455,7 +2524,13 @@ impl Bot {
         let port = (0..6)
             .filter_map(|d| self.step(at, d))
             .any(|n| self.naval_cost(n) > 0 && self.useful.contains(&self.sea[n]) && !self.enemy[n]);
-        if !port {
+        // A port with enemy ships next to it is blockaded: a ship launched
+        // there would be sunk before it sailed, and the wagons bringing it
+        // bread would be shot in the port.
+        let blockaded = (0..6)
+            .filter_map(|d| self.step(at, d))
+            .any(|n| self.naval_cost(n) > 0 && self.enemy[n]);
+        if !port || blockaded {
             return None;
         }
         let have = |t: usize| *count.get(&self.types[t].code).unwrap_or(&0.0) as usize;

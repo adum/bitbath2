@@ -649,7 +649,11 @@ impl Game {
         // Sites have no owner or capture progress; the line keeps its fields,
         // always 0, so that kits read it as before.
         for s in &self.sites {
-            let wheat = if self.visible[self.map.index(s.hex)] { s.wheat } else { 0 };
+            let wheat = if self.visible[self.map.index(s.hex)] {
+                s.wheat
+            } else {
+                0
+            };
             out.push(format!("SITE {} 0 0 0 {}", s.id, wheat));
         }
         let mine = self.units.iter().filter(|u| u.owner == p);
@@ -1564,7 +1568,10 @@ mod tests {
         g.begin_turn(1);
         g.end_turn();
         g.begin_turn(2);
-        assert_eq!(g.apply("C 2")[0].split(' ').take(2).collect::<Vec<_>>(), ["ERR", "cannot_capture"]);
+        assert_eq!(
+            g.apply("C 2")[0].split(' ').take(2).collect::<Vec<_>>(),
+            ["ERR", "cannot_capture"]
+        );
         assert_eq!(g.apply("L 1 30"), ["OK 30 0 20"]);
         assert!(g.turn_message(0, 0).contains(&"SITE 0 0 0 0 20".to_string()));
         assert!(parse_setup(lines.replace("SITE 0 2 1 0", "SITE 0 2 1 2").lines(), supply_rules()).is_err());

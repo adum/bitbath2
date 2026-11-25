@@ -494,11 +494,7 @@ impl Viewer {
             .collect();
         out.push_str(&cities.join(","));
         if supply {
-            let sites: Vec<String> = game
-                .sites
-                .iter()
-                .map(|s| format!("[0,0,0,{}]", s.wheat))
-                .collect();
+            let sites: Vec<String> = game.sites.iter().map(|s| format!("[0,0,0,{}]", s.wheat)).collect();
             let _ = write!(
                 out,
                 "],\"bread\":[{},{}],\"sites\":[{}",

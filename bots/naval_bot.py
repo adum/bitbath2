@@ -78,6 +78,9 @@ SHIP_BREAD = 600
 # bread than this, from a city that can spare at least STOCK_FROM beyond
 # what it keeps.
 PORT_STOCK, STOCK_FROM = 1000, 800
+# A wagon unloading wheat goes to such a port instead of the nearest city if
+# it's no more than this much farther, in move points.
+PORT_DETOUR = 6
 # A transport that gives up waiting rests this many rounds before it takes
 # on a new crew.
 REST = 10
@@ -185,6 +188,26 @@ class NavalBot(sb.SupplyBot):
 
     # Stocking ports with bread, for ships to be built and fed.
 
+    def blockaded(self, city):
+        """Whether enemy ships lie next to a port. A ship launched there would
+        be sunk before it sailed, and wagons bringing it bread would be shot
+        in the port."""
+        return any(n in self.enemy_hex and n in self.sea for n in bb.neighbors(city.hex))
+
+    def nearest_city(self, w, need=0):
+        # Wheat goes to a port on a sea that goes somewhere, if the port holds
+        # less than PORT_STOCK and isn't much farther than the nearest city.
+        # On a small island no city gets STOCK_FROM ahead, so without this
+        # the port never has the bread for a first ship.
+        city = super().nearest_city(w, need)
+        if not self.naval or need > 0 or city is None:
+            return city
+        far = self.city_field[city.id].get(w.hex, 1 << 30) + PORT_DETOUR
+        ports = [c for c in self.ports() if self.port_seas[c.id] & self.useful and c.bread < PORT_STOCK
+                 and c.hex not in self.enemy_hex and not any(n in self.enemy_hex for n in bb.neighbors(c.hex))
+                 and self.city_field[c.id].get(w.hex, 1 << 30) <= far]
+        return min(ports, key=lambda c: (self.city_field[c.id][w.hex], c.id)) if ports else city
+
     def supply_wagons(self):
         wagons = super().supply_wagons()
         if not self.naval:
@@ -203,10 +226,13 @@ class NavalBot(sb.SupplyBot):
         return [x for x in sites if self.land.get(x.hex) in held]
 
     def income(self):
-        # The ferries' sites feed the army too.
+        # The sites of a landmass a ferry serves with wagons feed the army
+        # too. Counting them before then would build an army the wheat never
+        # comes in to feed.
         made = super().income()
         if self.naval and self.haul:
-            made += sum(x.output for sites in self.haul_isles().values() for x in sites)
+            served = {f["isle"] for f in self.ferries.values()} & set(self.haulers.values())
+            made += sum(x.output for isle, sites in self.haul_isles().items() if isle in served for x in sites)
         return made
 
     def advance(self):
@@ -230,9 +256,10 @@ class NavalBot(sb.SupplyBot):
         """One wagon per port in need carries bread to it from the richest
         city on the same landmass."""
         s = self.state
-        self.stock = {w: c for w, c in self.stock.items() if w in s.units and s.cities[c].owner == self.player}
+        self.stock = {w: c for w, c in self.stock.items()
+                      if w in s.units and s.cities[c].owner == self.player and not self.blockaded(s.cities[c])}
         needy = [c for c in self.ports() if self.port_seas[c.id] & self.useful and c.bread < PORT_STOCK
-                 and c.id not in self.stock.values()]
+                 and c.id not in self.stock.values() and not self.blockaded(c)]
         for port in needy:
             rich = [c for c in s.my_cities()
                     if c.bread - self.keep(c) >= STOCK_FROM and self.land.get(c.hex) == self.land.get(port.hex)]
@@ -252,10 +279,7 @@ class NavalBot(sb.SupplyBot):
             if w.fresh or w.acted:
                 continue
             if w.bread >= min(self.cargo_max, 300):
-                if w.hex != port.hex:
-                    if bb.distance(w.hex, port.hex) == 1:
-                        self.make_room(port, self.city_field[port.id])
-                    self.walk(w, self.city_field[port.id], sb.WAGON_CAUTION)
+                self.enter(w, port)
                 if w.hex == port.hex:
                     self.unload(w)
                     del self.stock[wid]     # done: a new job next turn
@@ -266,10 +290,7 @@ class NavalBot(sb.SupplyBot):
                 del self.stock[wid]
                 continue
             src = min(rich, key=lambda c: (self.city_field[c.id].get(w.hex, 1 << 30), c.id))
-            if w.hex != src.hex:
-                if bb.distance(w.hex, src.hex) == 1:
-                    self.make_room(src, self.city_field[port.id])
-                self.walk(w, self.city_field[src.id], sb.WAGON_CAUTION)
+            self.enter(w, src)
             if w.hex == src.hex:
                 amount = min(self.cargo_max - w.bread, src.bread - self.keep(src))
                 if amount > 0:
@@ -855,7 +876,12 @@ class NavalBot(sb.SupplyBot):
                 and w.id not in self.stock and w.id not in self.haulers and not w.wheat
                 and self.land.get(w.hex) == home]
         free.sort(key=lambda w: (self.city_field[port.id].get(w.hex, 1 << 30), w.id))
-        for w in free[:want]:
+        # One wagon at least stays home to haul there. Otherwise a ferry sunk
+        # with every wagon aboard leaves the home island's cities making just
+        # what its army eats, and never bread for a new wagon.
+        home_wagons = sum(1 for x in s.my_units() if self.types[x.type].carry and not x.carrier
+                          and x.id not in self.haulers and self.land.get(x.hex) == home)
+        for w in free[:max(0, min(want, home_wagons - 1))]:
             self.haulers[w.id] = f["isle"]
             self.jobs.pop(w.id, None)
 
@@ -914,7 +940,19 @@ class NavalBot(sb.SupplyBot):
             if not ashore or f["waited"] > 2 * FERRY_WAIT or (lost and f["waited"] > 2):
                 f["phase"] = "back"
         if f["phase"] == "back" and t.id in s.units:
-            if self.dock(t, f):
+            there = self.dock(t, f)
+            # Kept off its port by the enemy's reach, a ferry with wagons
+            # aboard goes in anyway after a couple of turns, so that they get
+            # back to work even if it's lost, and the wheat at home doesn't
+            # pile up untouched while they wait.
+            if not there and s.passengers(t):
+                f["held"] = f.get("held", 0) + 1
+                if f["held"] >= 2:
+                    goals = self.port_water_of(s.cities[f["port"]], self.sea.get(t.hex))
+                    self.sail(t, self.sea_field(goals))
+                    there = t.id in s.units and t.hex in goals
+            if there:
+                f["held"] = 0
                 port = s.cities[f["port"]]
                 for w in sorted(s.passengers(t), key=lambda u: u.id):
                     self.hauler_ashore(w, port)
@@ -965,10 +1003,7 @@ class NavalBot(sb.SupplyBot):
         if w.fresh or w.mp <= 0:
             return
         if w.wheat or (self.guard_need(w) - w.bread >= 50 and port.bread - self.keep(port) >= 50):
-            if w.hex != port.hex:
-                if bb.distance(w.hex, port.hex) == 1:
-                    self.make_room(port, self.city_field[port.id])
-                self.walk(w, self.city_field[port.id], sb.WAGON_CAUTION)
+            self.enter(w, port)
             if w.hex == port.hex:
                 self.unload_wheat(w)
                 self.take_bread(w, port)
@@ -1180,7 +1215,7 @@ class NavalBot(sb.SupplyBot):
             if room <= 0:
                 break
             launch = self.launch_hex(c)
-            if c.built or c.hex in self.enemy_hex or launch is None:
+            if c.built or c.hex in self.enemy_hex or launch is None or self.blockaded(c):
                 continue
             sea = self.sea.get(launch)
             budget = c.bread - sb.KEEP

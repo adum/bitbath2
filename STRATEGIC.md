@@ -65,6 +65,7 @@ The default game stays as it is.
   - The sites by the homes get the middle of each range, and the sites in the middle the top of it: 100 wheat a round each, piling up to 3,000.
   - Everything else is sea. The seed shapes the coasts and terrain, and picks the port and the homes' sites.
   - It needs `neutral_cities = 2`, `sites` of at least 4, and ships. `water_pct` doesn't apply.
+  - **Islets** is the same map at 24 × 18, for quicker games: [configs/islets.toml](configs/islets.toml), and the play page's Islets. On maps under 30 hexes high the coasts wobble proportionally less, so a small map keeps the large one's shapes. On any size, the middle island lies out at sea, with water a quarter of the map's height wide or more between it and each home island, and a home stands 2 hexes inland of its island's anchor on a small map as on a large one. On Islets the home islands are 60 to 76 hexes, 4 to 6 hexes of sea part them from the middle island, and homes stand 5 or 6 hexes from the sea. At 40 × 30 the maps are as before.
 
 ## 4. Wheat and bread
 
@@ -432,6 +433,16 @@ Then the new bot played on 10 islands maps, each twice with the sides swapped, a
 - **Why:** the middle island's sites now grow from round 1, so whoever lands there first finds thousands of wheat piled up. In the shortest game, Forager's ferry brought home 1,000 wheat a trip from round 20, while the naval bot kept its army to what its home site and cities fed, 9 units, and waited for a convoy.
 - **With the homes moved inland and their sites 4 or 5 hexes out** (§3), on the same 6 seeds, Forager won all 12 games, by elimination in rounds 56 to 143, and neither bot sent an invalid order. In the first 40 rounds the naval bot's wagons brought in about all its home site grew, 2,200 to 2,400 wheat, while Forager loaded over 5,000, most of it in the middle.
 
+**Islets**, on 2026-11-25 (§3). The first games on the small map, before the generator kept its proportions, went 11–1 to the naval bot, but mostly because Forager froze: once its ships were sunk, it sent no orders for the rest of the game while its army starved. Short crossings and blockades exposed bugs in both bots, each fixed:
+
+- **Crews that couldn't land.** A unit can't board and land in the same turn, and on Islets a transport can reach the far shore the turn its crew boards. Forager then sailed home with them, and did it again every other turn. Its transports now wait offshore for the crew to land, and its ferries for their wagons.
+- **Wagons stuck outside a blockaded port.** Wagons kept clear of the enemy galleys lying beside a port, so they never went in, and nothing else brought bread in. Wagons in both bots now take wheat to a city with no enemy next to it if there is one, and go straight into a city once it's in reach.
+- **No ships on a small island.** The naval bot stocked a port only from a city with 800 bread to spare, which no city on Islets ever has, so it never built a ship. Its wagons now unload wheat at a port that's short of bread if it's not much farther than the nearest city.
+- **Armies sized by income alone.** Both bots kept only the army their bread income fed, about 9 units on Islets, while thousands of bread piled up. A stockpile now feeds as many more units as it would for 100 turns.
+- **No wagon left.** A ferry sunk with every wagon aboard, or wagons shot carrying bread to a blockaded port, left a bot whose cities made just what its army ate, with never enough for a new wagon. Both bots now keep a wagon at home, and neither builds ships at a blockaded port or carries bread to one. Forager builds a wagon before ships when it has none, and the naval bot hauls before feeding while no wagon hauls. A naval ferry kept off its port by the enemy goes in anyway after two turns, so its wagons don't wait aboard for good.
+
+Then, on 8 Islets maps, each twice with the sides swapped, the naval bot beat Forager 9–7, and on the 6 islands maps of the games above, 9–3. Neither bot sent an invalid order, and neither went more than 4 turns without one. On the islands map every game ended by elimination, in rounds 65 to 369. On Islets only 2 did, in rounds 72 and 73: the other 14 reached round 300 with 2 cities each and were decided on army value, and in those each bot hauled all game, 56 to 116 loads. With these bots, each side holds its small island, and neither presses an invasion home.
+
 ### Work
 
 Done in phase 1:
@@ -458,6 +469,7 @@ Done in phase 2:
 - **A naval reference bot,** [bots/naval_bot.py](bots/naval_bot.py): the supply bot, plus convoys of transports that carry the idle part of its army overseas, galleys that sink transports, bombard the coast, escort, and blockade, and wagons that stock its ports with bread for the ships. `--no-bombard` keeps its galleys off land units. Vanguard and the supply bot now cope with enemy ships.
 - **The islands map** (§3), a small map for testing the resources and ships, picked with `map_layout`. For it, the naval bot learned to land by sites overseas, to ferry their wheat home, and to leave a garrison behind (results above).
 - **Forager at sea.** Each of its transports fills up with land units that have nothing left to do at home and sails alone for the best city or site overseas, preferring ones no other transport is after. It ferries wheat from sites overseas as the naval bot does. Its galleys raid enemy transports and otherwise lie off enemy ports. Its wagons carry bread to a port that's saving for a ship, and it keeps a garrison on a small home island.
+- **Islets** (§3), the islands map at 24 × 18, and fixes to both bots for its short crossings and blockades (results above).
 
 Still to do:
 
@@ -525,3 +537,7 @@ Settled on 2026-11-24:
 - **The tiebreak at the round limit is cities, then armies.** An army counts each unit at its cost times the share of its HP it has left, plus all the bread in its player's cities and wagons.
   - *Replaced:* cities, then sites, then army value without the bread.
 - **On the islands map, homes stand further inland and their sites farther out** (§3). A home is 6 or 7 hexes from the sea at 40 × 30, where it was 4 or 5, and its site 4 or 5 hexes from it and at least 4 from its port, where it was next to the home.
+
+Settled on 2026-11-25:
+
+- **Islets is the small map to work on** (§3): the islands map at 24 × 18, with the generator keeping the larger map's shapes, so that it offers the same play in quicker games.
