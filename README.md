@@ -49,7 +49,7 @@ To run the scoreboard locally with Node 22.13 or newer, build the hosted site wi
 You see the game through your own fog of war:
 
 - **Click** one of your units to select it. The hexes it can reach are tinted, and the enemies it can attack are ringed.
-- **Click a tinted hex** to move there, or **a ringed enemy** to attack it. Hovering shows the path, or what the attack would do.
+- **Click a tinted hex** to move there, or **a ringed enemy** to attack it. Hovering shows the path, or what the attack would do. A fainter ring marks an enemy the unit can reach this turn: a click moves it into range and attacks, as the forecast shows.
 - **Right-click** (or Shift-click) moves onto a hex that holds your own units; a plain click selects one of them instead. A right-click anywhere else deselects.
 - **C** captures the city the unit stands on.
 - **Click one of your cities** to build there, or press a unit's letter, such as **I** for infantry. A gold **+** marks each city that can still build this turn.

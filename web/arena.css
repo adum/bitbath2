@@ -99,6 +99,7 @@ body { margin: 0; }
   #new-game-body .wide { grid-column: 1 / -1; }
   #new-game-body .hint { grid-column: 2; margin-top: -6px; font-size: 12px; color: var(--muted); }
   #new-game-error { color: var(--p1); }
+  #new-game-abandon { padding: 7px 10px; border: 1px solid color-mix(in srgb, #e8590c 45%, var(--border)); border-radius: 6px; background: color-mix(in srgb, #e8590c 9%, var(--panel)); font-size: 13px; }
   #start { justify-self: end; }
   #settings-dialog { width: min(480px, calc(100vw - 32px)); }
   #settings-body { padding: 4px 16px 16px; }

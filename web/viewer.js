@@ -732,6 +732,39 @@
     const hp = new Map();
     for (const u of v.state.units) hp.set(u[0], u[5]);
     for (const u of v.base.state.units) hp.set(u[0], u[5]);
+    // The transport each unit is aboard, as the turn goes: a unit aboard is
+    // wherever its transport has sailed to (STRATEGIC.md §6).
+    /** @type {Map<number, number>} */
+    const carrier = new Map();
+    /** @type {Map<number, any[]>} */
+    const units = new Map();
+    for (const u of v.state.units) units.set(u[0], u);
+    for (const u of v.base.state.units) {
+      units.set(u[0], u);
+      if (u[12]) carrier.set(u[0], u[12]);
+    }
+    /** Follows a move that worked from `from` to `end`. @param {number} id @param {number[]} from @param {number[]} end */
+    const moved = (id, from, end) => {
+      at.set(id, end);
+      const u = units.get(id);
+      if (!u || (from[0] === end[0] && from[1] === end[1])) return;
+      if (carrier.delete(id)) return; // It was aboard, and has landed.
+      if (hasFlag(u[2], "transport")) {
+        for (const [rider, ship] of carrier) if (ship === id) at.set(rider, end);
+        return;
+      }
+      const t = v.info.terrain[v.info.rows[end[1]][end[0] + Math.floor(end[1] / 2)]];
+      if (hasFlag(u[2], "naval") || !t || t.move_cost) return;
+      // A land unit that ends on water has boarded: the lowest-numbered of
+      // its player's transports there with room.
+      const most = parseRules(v.replay.header.setup).c.passengers_max || 0;
+      const ships = Array.from(units.values()).filter((s) => {
+        const h = at.get(s[0]);
+        return s[1] === u[1] && hasFlag(s[2], "transport") && !!h && h[0] === end[0] && h[1] === end[1];
+      });
+      const ship = ships.sort((a, b) => a[0] - b[0]).find((s) => Array.from(carrier.values()).filter((c) => c === s[0]).length < most);
+      if (ship) carrier.set(id, ship[0]);
+    };
     for (let i = first + 1; i < v.pos; i++) {
       const t = v.replay.script[i].slice(2).trim().split(/\s+/);
       const result = v.info.results[i] || "";
@@ -750,7 +783,7 @@
           h = [h[0] + d[0], h[1] + d[1]];
           hexes.push(h);
         }
-        if (end) at.set(Number(t[1]), end);
+        if (end) moved(Number(t[1]), from, end);
         marks.push({ step: i, op: "M", id: Number(t[1]), ok, hexes });
       } else if (t[0] === "A" && from) {
         const target = Number(t[2]);

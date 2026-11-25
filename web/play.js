@@ -233,6 +233,7 @@
       /** The hex picked, and the unit picked on it, if any. @type {{hex: number[], unit: number | null} | null} */ this.sel = null;
       /** Where the picked unit can move, by hex index: see Kit.reachable. @type {Map<number, string>} */ this.reach = new Map();
       /** The enemy units the picked unit can attack. @type {any[]} */ this.targets = [];
+      /** The enemy units it can attack this turn after a move, each with the hex to attack from. @type {{t: any, from: number[]}[]} */ this.chase = [];
       /** @type {Set<number>} */ this.zoc = new Set();
       /** The ids of the human's units with something left to do. @type {number[]} */ this.ready = [];
       /** Why the last order didn't do what was asked, if it didn't. */ this.problem = "";
@@ -494,12 +495,41 @@
     order(line) {
       if (!this.myTurn()) return;
       closeMenu();
-      const reply = this.send(line);
+      this.show(line, this.send(line));
+    }
+
+    /**
+     * Moves the unit picked to the hex a plan attacks from, and attacks from
+     * there: what a click on an enemy out of range does, and what the
+     * forecast for it showed. If a hidden enemy stops the move short, the
+     * attack is off.
+     * @param {any} unit @param {{t: any, from: number[]}} plan
+     */
+    advance(unit, plan) {
+      const dirs = this.reach.get(this.world.index(plan.from));
+      if (!this.myTurn() || dirs === undefined) return;
+      closeMenu();
+      const move = "M " + unit.id + " " + dirs;
+      const reply = this.send(move);
+      const t = (reply[reply.length - 1] || "").split(/\s+/);
+      if (t[0] !== "OK" || Number(t[1]) !== plan.from[0] || Number(t[2]) !== plan.from[1]) return this.show(move, reply);
+      BitbathSounds.play("move");
+      // Shown from before the move, so the unit slides there and then strikes.
+      const attack = "A " + unit.id + " " + plan.t.id;
+      this.show(attack, this.send(attack), 0.1);
+    }
+
+    /**
+     * Shows what an order of the human's did: plays its sound, slides the
+     * units, and ends the game if it did.
+     * @param {string} line @param {string[]} reply @param {number} [delay] how long the sound waits, in seconds
+     */
+    show(line, reply, delay) {
       const t = (reply[reply.length - 1] || "").split(/\s+/);
       this.problem = "";
       if (t[0] === "ERR") this.problem = V.capitalize(t.slice(2).join(" ")) + ".";
       else if (t[0] === "PART") this.problem = t[3] === "ambush" ? "Ambush! A hidden enemy blocked the way." : "Stopped next to a hidden enemy.";
-      BitbathSounds.play(soundOf(line[0], t));
+      BitbathSounds.play(soundOf(line[0], t), delay);
       V.animateTo(v.steps, V.STEP_MS, true);
       if (v.state.outcome) {
         this.end();
@@ -593,6 +623,12 @@
         if (targets.length > 1) {
           return openMenu(x, y, targets.map((t) => ({ label: "Attack " + this.forecast(t), run: () => this.order("A " + unit.id + " " + t.id) })));
         }
+        // An enemy it can attack after a move: it goes into range and attacks.
+        const chase = this.chase.filter((p) => p.t.q === hex[0] && p.t.r === hex[1]);
+        if (chase.length === 1) return this.advance(unit, chase[0]);
+        if (chase.length > 1) {
+          return openMenu(x, y, chase.map((p) => ({ label: "Move and attack the " + this.kit.unitType(p.t).name + " · " + p.t.hp + " hp", run: () => this.advance(unit, p) })));
+        }
         // A click on the human's own units picks one of them, so joining
         // them takes a right click, or Shift.
         const dirs = this.reach.get(this.world.index(hex));
@@ -613,7 +649,8 @@
      */
     context(hex, x, y) {
       if (menuWasOpen || !this.kit) return;
-      const can = hex && this.unit() && this.myTurn() && (this.reach.has(this.world.index(hex)) || this.targets.some((t) => t.q === hex[0] && t.r === hex[1]));
+      const on = (/** @type {any} */ t) => !!hex && t.q === hex[0] && t.r === hex[1];
+      const can = hex && this.unit() && this.myTurn() && (this.reach.has(this.world.index(hex)) || this.targets.some(on) || this.chase.some((p) => on(p.t)));
       if (can) this.click(hex, x, y, true);
       else this.select(null);
     }
@@ -657,6 +694,16 @@
         const mine = this.myTurn() && v.state.player === this.human;
         this.reach = unit && mine ? kit.reachable(unit, this.zoc) : new Map();
         this.targets = unit && mine && kit.canAttack(unit) ? kit.targetsInRange(unit) : [];
+        // The enemies out of range that it can still attack this turn, by moving first.
+        this.chase = [];
+        if (unit && mine && !unit.carrier && this.reach.size) {
+          const hurts = this.world.damage[unit.type] || {};
+          for (const t of kit.view.enemyUnits()) {
+            if (t.carrier || !(hurts[t.type] > 0) || this.targets.includes(t)) continue;
+            const plan = this.attackFrom(unit, t);
+            if (plan.when === "move" && plan.from) this.chase.push({ t, from: plan.from });
+          }
+        }
         this.ready = mine ? kit.view.myUnits().filter((/** @type {any} */ u) => this.canDo(u)).map((/** @type {any} */ u) => u.id).sort((/** @type {number} */ a, /** @type {number} */ b) => a - b) : [];
       }
       this.render();
@@ -667,7 +714,8 @@
       const unit = this.unit();
       if (!unit || this.over || !this.myTurn()) return false;
       if (unit.hex[0] === q && unit.hex[1] === r) return false;
-      return !this.reach.has(this.world.index([q, r])) && !this.targets.some((t) => t.q === q && t.r === r);
+      const on = (/** @type {any} */ t) => t.q === q && t.r === r;
+      return !this.reach.has(this.world.index([q, r])) && !this.targets.some(on) && !this.chase.some((p) => on(p.t));
     }
 
     /** Extra lines for the viewer's hover box: what a click on the hex would do. @param {number} q @param {number} r @returns {string[]} */
@@ -675,6 +723,7 @@
       const unit = this.unit();
       if (!unit || !this.myTurn()) return [];
       const out = this.targets.filter((t) => t.q === q && t.r === r).map((t) => "attack: " + this.forecast(t));
+      if (this.chase.some((p) => p.t.q === q && p.t.r === r)) out.push("click to move into range and attack");
       const i = this.world.index([q, r]);
       const dirs = this.reach.get(i);
       if (dirs !== undefined) {
@@ -789,7 +838,7 @@
         }),
       );
       const when = fights[0].when;
-      if (when === "move") card.append(el("div", "If you move into range first.", "fc-hint"));
+      if (when === "move") card.append(el("div", "After moving into range. Click to move there and attack.", "fc-hint"));
       else if (when === "later") card.append(el("div", "Not this turn: this unit can't attack it yet.", "fc-hint"));
       else if (fights.length > 1) card.append(el("div", "Click to choose which one to attack.", "fc-hint"));
       card.hidden = false;
@@ -839,7 +888,10 @@
         V.hexPath(ctx, x, y, s * 0.97);
         ctx.fill();
       }
-      const dirs = v.hover ? this.reach.get(this.world.index(v.hover)) : undefined;
+      // The way to the hex under the pointer, or to where the unit would attack the enemy there from.
+      const hover = v.hover;
+      const plan = hover ? this.chase.find((p) => p.t.q === hover[0] && p.t.r === hover[1]) : undefined;
+      const dirs = hover ? this.reach.get(this.world.index(plan ? plan.from : hover)) : undefined;
       if (dirs !== undefined) {
         // A move not yet made is dashed and in the text's color, so it can't
         // be taken for the trail of one already made, which is solid and in
@@ -938,8 +990,12 @@
       ctx.strokeStyle = V.cssVar("--text");
       ctx.lineWidth = Math.max(2, s * 0.1);
       if (at) {
+        // The ring has the token's shape: a rounded square for a ship, or for the transport a unit is aboard.
+        const shown = unit.carrier ? this.kit.view.units.get(unit.carrier) : unit;
+        const rad = at[2] + ctx.lineWidth;
         ctx.beginPath();
-        ctx.arc(at[0], at[1], at[2] + ctx.lineWidth, 0, 2 * Math.PI);
+        if (shown && this.kit.unitType(shown).naval) ctx.roundRect(at[0] - rad, at[1] - rad, 2 * rad, 2 * rad, rad * 0.45);
+        else ctx.arc(at[0], at[1], rad, 0, 2 * Math.PI);
         ctx.stroke();
       } else {
         const [x, y] = V.center(this.sel.hex[0], this.sel.hex[1]);
@@ -950,6 +1006,14 @@
       ctx.lineWidth = Math.max(2, s * 0.14);
       ctx.setLineDash([s * 0.3, s * 0.2]);
       for (const key of new Set(this.targets.map((t) => this.world.index(t.hex)))) {
+        const [x, y] = V.center(...this.world.hex(key));
+        V.hexPath(ctx, x, y, s * 0.88);
+        ctx.stroke();
+      }
+      // Fainter and thinner, the enemies it can attack after a move.
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = Math.max(1.5, s * 0.08);
+      for (const key of new Set(this.chase.map((p) => this.world.index(p.t.hex)))) {
         const [x, y] = V.center(...this.world.hex(key));
         V.hexPath(ctx, x, y, s * 0.88);
         ctx.stroke();
@@ -1275,6 +1339,18 @@
       throw new Error($("error").textContent);
     }
     current = game;
+    // The address may still name the replay that was open. A refresh must
+    // not bring that back in place of this game.
+    try {
+      const url = new URL(location.href);
+      if (url.searchParams.has("replay") || url.searchParams.has("position")) {
+        url.searchParams.delete("replay");
+        url.searchParams.delete("position");
+        history.replaceState(null, "", url);
+      }
+    } catch (e) {
+      // A page opened as a file may not change its address.
+    }
     supplyHelp(game.world.supply);
     game.recording = GameRecording.start({ player: name, opponent: kind.name, map: map.name, seat: human, header });
     try {
@@ -1365,9 +1441,18 @@
       .catch(() => {});
   }
 
+  // Starting a game drops the one being played, so the dialog says so.
+  const abandonNote = el("div", "Starting a new game ends the one you are playing. It can't be resumed.", "wide");
+  abandonNote.id = "new-game-abandon";
+  abandonNote.setAttribute("role", "status");
+  $("start").before(abandonNote);
+
   function openDialog() {
     $("player-name").value = GameRecording.savedName();
     $("new-game-error").textContent = "";
+    // A new game gets a new map, unless a seed is typed again.
+    $("seed").value = "";
+    abandonNote.hidden = !(current && !current.over && !current.closed);
     $("new-game").showModal();
   }
 
