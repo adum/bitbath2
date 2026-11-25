@@ -476,6 +476,11 @@ Then, with the sides swapped on each map:
 - **Between two naval bots**, on the same 6 maps, 8 of the 12 games went exactly as before. The two on one map ended 2 rounds later, and the two on another 1 round sooner. All 12 ended by elimination, in rounds 75 to 103, and player 2 still won on 5 of the 6 maps.
 - **Clean play:** no unit starved in any of these games, and no bot sent an invalid order.
 
+**Standing ladders**, later on 2026-11-25. [bots/ratings.json](bots/ratings.json) now rates the strategic bots on Islets, at half output and caps, and on the islands map (README: Ratings). `python scripts/ratings.py islets` or `islands` plays a ladder again. In each, every pair of bots plays 20 maps with the sides swapped, and the supply bot is anchored at 1000. In the first ladders no bot sent an invalid order, and each side won 60 of the 120 games on each map.
+
+- **Islets:** the naval bot 1817, the supply bot 1000, Forager 814. The naval bot won all 80 of its games by elimination, in rounds 58 to 108. The supply bot and Forager played all 40 of theirs to round 300, and army value gave the supply bot 30 of them. It builds no ships, and Forager eliminated it in none.
+- **The islands map:** the naval bot 1972, Forager 1829, the supply bot 1000. The naval bot beat Forager 28–12 and the supply bot 40–0, and Forager beat the supply bot 40–0. All but 2 games ended by elimination, in rounds 41 to 201, 63 at the median. The other 2 reached round 500 and were decided on cities.
+
 ### Work
 
 Done in phase 1:

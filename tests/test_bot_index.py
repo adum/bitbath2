@@ -1,11 +1,14 @@
 """Checks bots/index.json, the bot index (README: The bot index), against the
-bots' files and imports, what the Play page needs, and the benchmark's list.
+bots' files and imports, what the Play page needs, and the benchmark's list,
+and checks bots/ratings.json (README: Ratings) against the index.
 
 Usage: python tests/test_bot_index.py
 """
 
 import ast
+import contextlib
 import importlib
+import io
 import json
 import re
 import shutil
@@ -17,10 +20,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "bots" / "index.json"
-# The web build's scripts, and the bots and kit they bundle.
+RATINGS = ROOT / "bots" / "ratings.json"
+# The web build's scripts and the ratings', and the bots and kit they use.
 sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "bots"), str(ROOT / "kits" / "python")]
 import browser_bot  # noqa: E402
 import build_web_bots  # noqa: E402
+import ratings  # noqa: E402
 
 FIELDS = {"name", "about", "kind", "made", "language", "files", "depends", "run", "build", "rules", "maps",
           "play_page", "benchmark"}
@@ -30,6 +35,8 @@ LANGUAGES = {"python", "rust", "c++"}
 RULES = {"classic", "strategic"}
 PLAY_PAGE = {None, "js", "pyodide", "wasm"}
 BENCHMARK = {None, "kit", "held back", "entry"}
+LADDER = {"about", "rules", "map", "config", "from", "date", "commit", "seeds", "games", "anchor", "field", "ratings"}
+RATING = set(ratings.STATS) | {"source"}
 
 
 def bots():
@@ -119,7 +126,7 @@ class BotIndex(unittest.TestCase):
         listed = {f for b in bots().values() for f in b["files"]}
         for f in sorted((ROOT / "bots").rglob("*")):
             path = f.relative_to(ROOT).as_posix()
-            if f.is_file() and "__pycache__" not in f.parts and f != INDEX:
+            if f.is_file() and "__pycache__" not in f.parts and f not in (INDEX, RATINGS):
                 self.assertTrue(path in listed, f"{path} isn't in bots/index.json: give it a record, or add it to one")
 
     def test_python_depends(self):
@@ -160,6 +167,31 @@ class BotIndex(unittest.TestCase):
         kit = {line.strip() for line in text("bench/starter.txt").splitlines() if line.startswith("bots/")}
         self.assertEqual(kit, {b["files"][0] for b in index.values() if b["benchmark"] == "kit"},
                          "bench/starter.txt should hold the bots whose benchmark is kit, and no others")
+
+    def test_ratings(self):
+        # Whether a rating is current isn't checked: a bot may change before
+        # its ladders are played again. python scripts/ratings.py says which
+        # ratings are stale.
+        index, maps = bots(), map_names()
+        for name, ladder in json.loads(RATINGS.read_text(encoding="utf-8"))["ladders"].items():
+            with self.subTest(ladder=name):
+                self.assertIn(name, ratings.LADDERS, "scripts/ratings.py should know the ladder")
+                self.assertEqual(set(ladder), LADDER)
+                self.assertIn(ladder["rules"], RULES)
+                self.assertIn(ladder["map"], maps)
+                self.assertTrue(ladder["config"] and all(re.fullmatch(r"[0-9a-f]{64}", h)
+                                                         for h in ladder["config"].values()), "its config's hash")
+                date.fromisoformat(ladder["date"])
+                for bid, r in ladder["ratings"].items():
+                    self.assertIn(bid, index, f"{bid} is rated, but isn't in the index")
+                    self.assertTrue(ratings.plays(index[bid], ladder), f"{bid} doesn't play {name}'s rules and map")
+                    self.assertIn(bid, ladder["field"])
+                    self.assertEqual(set(r), RATING, f"{bid}'s rating")
+                    self.assertEqual(r["wins"] + r["draws"] + r["losses"], r["games"], f"{bid}'s record")
+                    self.assertTrue(r["source"] and all(re.fullmatch(r"[0-9a-f]{64}", h) for h in r["source"].values()),
+                                    f"{bid}: the hashes of the files it was rated with")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ratings.report(index, ratings.load())
 
     @unittest.skipUnless(shutil.which("git") and (ROOT / ".git").exists(), "needs the git repository")
     def test_commits(self):

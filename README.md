@@ -160,6 +160,15 @@ The Play page and `bitbath serve` read the index:
 - `bench/arena.json` and `bench/starter.txt` must agree with the index.
 - Each `commit` must be one that added the bot's files.
 
+### Ratings
+
+A rating means something only against the bots it was won from, on one map, so [bots/ratings.json](bots/ratings.json) keeps the bots' ratings ladder by ladder. `python scripts/ratings.py` writes it and prints it:
+
+- **micro** is the benchmark's newest Micro arena season, the one the homepage's standings show, anchored at greedy = 1000. `python scripts/ratings.py micro` copies it from `arena/`, which isn't in git.
+- **islets** and **islands** are played here by the bots that know the strategic rules and are made for the map: every pair on 20 seeds, both ways round, anchored at supply = 1000. `python scripts/ratings.py islets` plays Islets with `target/release/bitbath`, or with the one `--bitbath` names, which mustn't be older than the engine's source. The bots' files and the config must be committed, so that the ladder rates what's in its commit. It builds the Rust bots afresh in the run's folder under `runs/ladders/`, and leaves `target/release` alone.
+
+Each ladder records what was played: its rules, map, seeds, date, commit, anchor, and field, which can include bots outside the index, and its config with the config's hash. Each rating has its 95% interval, record, forfeits, invalid orders, and think times. Its `source` holds the hash of each file it was won with: the bot's files and what they import, or a benchmark entry's submission. Once one of those files changes, `python scripts/ratings.py` shows the rating as stale and names the file, until the ladder is played again. When the config changes, it shows the whole ladder as stale. The index check makes sure each rated bot is in the index and plays its ladder's rules and map. It doesn't check that ratings are current, since a bot can change before its ladders are played again.
+
 ## Rules and maps
 
 - `--map seed:<n>` generates a point-symmetric map.
@@ -255,10 +264,10 @@ runner/         Rust: the bitbath command (bot processes, clocks, replays, tourn
 wasm/           The engine compiled to wasm for the viewer.
 web/            The replay viewer and play UI, with its built-in bots.
 kits/python/    Python starter kit and its tests.
-bots/           Reference and sample bots, and index.json, what's known about every bot.
+bots/           Reference and sample bots, index.json, what's known about each, and ratings.json, how they rate.
 tests/vectors/  Golden test vectors shared by the engine and kits.
 configs/        Rule presets.
-scripts/        Viewer build and server, and the test vector generator.
+scripts/        Viewer build and server, the bots' ratings, and the test vector generator.
 bench/          The benchmark: the starter kit, the containers, model runs, the arena.
 benchmark.py    The benchmark's command line.
 containers/     The benchmark image, and the seccomp profile for Claude Code's sandbox.

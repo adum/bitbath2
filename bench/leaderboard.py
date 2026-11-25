@@ -17,7 +17,9 @@ def matches_micro_games(path, expected):
     return count == expected
 
 
-def refresh(root):
+def newest_season(root):
+    """The newest Micro season with entries and ratings of all its games, as
+    (its directory, its arena.json, its ratings.json), or None."""
     seasons = []
     for manifest in (root / "arena").glob("*/arena.json"):
         state = json.loads(manifest.read_text(encoding="utf-8"))
@@ -32,10 +34,17 @@ def refresh(root):
         scores = json.loads(ratings.read_text(encoding="utf-8"))
         has_entries = any(state["bots"][r["bot"]]["kind"] == "entry" for r in scores["ratings"])
         if has_entries and scores["games"] and matches_micro_games(games, scores["games"]):
-            break
-    else:
+            return season, state, scores
+    return None
+
+
+def refresh(root):
+    found = newest_season(root)
+    if not found:
         # A fresh clone has the checked-in standings but no private arena data.
         return
+    season, state, scores = found
+    updated = state["updated"]
 
     rows = []
     for row in scores["ratings"]:
