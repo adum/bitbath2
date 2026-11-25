@@ -3,7 +3,7 @@
 // (bots.js). The game runs in the viewer's engine and is shown by the viewer
 // (viewer.js) as a replay that grows, through the human's fog of war. This
 // file runs the turns, and turns clicks and keys into the human's orders.
-/* global BitbathKit, BitbathBots, BitbathPieces, GameRecording */
+/* global BitbathKit, BitbathBots, BitbathPieces, BitbathSounds, GameRecording */
 "use strict";
 
 (function () {
@@ -355,6 +355,10 @@
       this.log = this.describe(logs).concat(this.hunger(view, logs));
       this.tally = this.count(logs);
       this.busy = false;
+      // What the opponent did to the human's units, then the turn coming back.
+      const struck = logs.some((t) => t[0] === "HIT");
+      if (struck) BitbathSounds.play("hit");
+      BitbathSounds.play("turn", struck ? 0.3 : 0);
       // As a step of playback, so the damage numbers of the opponent's
       // attacks go on floating into the human's turn.
       V.setPos(v.steps, true);
@@ -423,6 +427,7 @@
     endTurn() {
       if (!this.myTurn()) return;
       if (this.end()) return this.finish();
+      BitbathSounds.play("end");
       this.botTurn();
     }
 
@@ -444,6 +449,7 @@
       this.busy = true;
       this.sel = null;
       closeMenu();
+      BitbathSounds.play(!winner ? "draw" : winner === this.human ? "win" : "lose", 0.25);
       V.finishLive(Object.assign(result, {
         winner,
         reason,
@@ -493,6 +499,7 @@
       this.problem = "";
       if (t[0] === "ERR") this.problem = V.capitalize(t.slice(2).join(" ")) + ".";
       else if (t[0] === "PART") this.problem = t[3] === "ambush" ? "Ambush! A hidden enemy blocked the way." : "Stopped next to a hidden enemy.";
+      BitbathSounds.play(soundOf(line[0], t));
       V.animateTo(v.steps, V.STEP_MS, true);
       if (v.state.outcome) {
         this.end();
@@ -1154,6 +1161,22 @@
 
   // The tokens in the side panel follow the style picked in the settings.
   BitbathPieces.onChange(() => current && current.render());
+
+  /**
+   * The sound of one of the human's orders (sounds.js), from its letter and
+   * the tokens of its reply (SPEC §6.4).
+   * @param {string} op @param {string[]} reply
+   */
+  function soundOf(op, reply) {
+    if (reply[0] === "ERR") return "error";
+    // An ambush stops the move with a blow that never lands.
+    if (op === "M") return reply[0] === "PART" && reply[3] === "ambush" ? "hit" : "move";
+    // OK <target's hp> <attacker's hp>.
+    if (op === "A") return reply[1] === "0" ? "kill" : "attack";
+    if (op === "C") return reply[1] === "captured" ? "captured" : "capture";
+    if (op === "B") return "build";
+    return op === "L" || op === "U" ? "carry" : "";
+  }
 
   /** What is typed in the wagon's amount field, kept while the side panel is redrawn. */
   let carryAmount = "";

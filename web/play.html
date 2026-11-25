@@ -18,7 +18,7 @@
   <span id="matchup"></span>
   <small id="recording-status" role="status"></small>
   <button id="rules-button" title="The rules this game was played under" hidden>Rules</button>
-  <button id="settings-button" title="How the game looks">Settings</button>
+  <button id="settings-button" title="How the game looks and sounds">Settings</button>
 </header>
 <div id="mismatch" role="alert" hidden>
   <strong>This replay doesn't play back the way it was recorded.</strong>
@@ -118,7 +118,13 @@
   <div id="settings-body">
     <h3 id="pieces-title">Pieces</h3>
     <div id="piece-styles" role="radiogroup" aria-labelledby="pieces-title"></div>
-    <div class="hint">Kept in this browser. Orders and replays always use the letters.</div>
+    <div class="hint">Orders and replays always use the letters.</div>
+    <h3 id="sound-title">Sound</h3>
+    <div class="volume">
+      <input type="range" id="volume" min="0" max="100" step="5" aria-labelledby="sound-title">
+      <span id="volume-value"></span>
+    </div>
+    <div class="hint">Short effects for moves, fights, captures and turns in a game you play. Both settings are kept in this browser.</div>
   </div>
 </dialog>
 <dialog id="new-game" aria-labelledby="new-game-title">
@@ -155,6 +161,7 @@
 <script src="reference-opponent.js"></script>
 <script src="bots.js"></script>
 <script src="pieces.js"></script>
+<script src="sounds.js"></script>
 <script src="viewer.js"></script>
 <script src="recording.js"></script>
 <script src="play.js"></script>

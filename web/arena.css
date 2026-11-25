@@ -104,6 +104,10 @@ body { margin: 0; }
   #settings-body { padding: 4px 16px 16px; }
   #settings-body h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 0 8px; }
   #settings-body .hint { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  #settings-body .hint + h3 { margin-top: 20px; }
+  #settings-body .volume { display: flex; align-items: center; gap: 12px; }
+  #volume { flex: 1; margin: 0; accent-color: var(--accent); }
+  #volume-value { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
   #piece-styles { display: grid; gap: 8px; }
   .piece-style {
     display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; align-items: center;

@@ -56,7 +56,7 @@ You see the game through your own fog of war:
 - **N** or **Tab** selects the next unit with something left to do, **Esc** deselects, and **E** or **Enter** ends your turn.
 - **Rest the pointer** on a hex for a card beside it: the ground, the city or site, and each unit there with its hit points and what it carries. Replays show it too.
 
-**Settings**, at the top right, picks how units are drawn: a symbol for each kind (a sword for infantry, pikes, a horse's head, a bow, an eye for the scout), or its letter. The choice is kept in the browser.
+**Settings**, at the top right, picks how units are drawn: a symbol for each kind (a sword for infantry, pikes, a horse's head, a bow, an eye for the scout), or its letter. It also has the volume of the sound effects: short, quiet sounds for moves, fights, captures, builds, and the turn changing hands, in a game you play. At 0 they are off. Both choices are kept in the browser.
 
 A unit that is dug in carries a white block on its top edge for each fortification level, yours and the opponent's alike, in games and in replays.
 
