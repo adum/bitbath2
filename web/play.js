@@ -361,8 +361,9 @@
       if (struck) BitbathSounds.play("hit");
       BitbathSounds.play("turn", struck ? 0.3 : 0);
       // As a step of playback, so the damage numbers of the opponent's
-      // attacks go on floating into the human's turn.
-      V.setPos(v.steps, true);
+      // attacks go on floating into the human's turn, and the units that
+      // starved as it began are seen to go.
+      V.animateTo(v.steps, V.STEP_MS);
     }
 
     /** Puts the opponent's last turn into words, from the turn message's LOG lines. @param {string[][]} logs */

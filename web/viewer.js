@@ -33,7 +33,8 @@
     /** The ids of the units built in the current turn so far. @type {Set<number>} */ built: new Set(),
     /** Units sliding along their paths during playback: see animateTo(). @type {any} */ anim: null,
     /** Damage numbers floating over units just hit, and an arrow (with `to`) for each attack: see floatDamage(). @type {{hex: number[], text: string, t0: number, to?: number[], color?: string}[]} */ floats: [],
-    /** Whether the damage numbers' frames are running. */ floating: false,
+    /** Units just destroyed, each kept on the board until its end has played out from `t0`: see animateTo() and drawDeath(). @type {{u: any[], t0: number}[]} */ deaths: [],
+    /** Whether the frames of the damage numbers and of the units being destroyed are running. */ floating: false,
     /** Positions at the start and after each turn. */ ends: [0],
     /** The index into `ends` of the turn shown. */ turnIdx: 0,
     /** The index into `ends` under the pointer on the army chart, or -1. */ chartHover: -1,
@@ -272,12 +273,17 @@
    * Floats the damage of the attacks from step `from` on over the units they
    * hit. A turn's attacks follow each other, so numbers on one hex don't pile up.
    * @param {number} from @param {number} persp @param {number} delay how long to wait before the first, in ms
+   * @returns {Map<number, number>} when each unit that an attack destroyed falls, by id: as that attack's numbers show
    */
   function floatDamage(from, persp, delay) {
     const sees = (/** @type {number[]} */ h) => !persp || visibleTo(h[0], h[1], persp);
     let t0 = performance.now() + delay;
+    /** @type {Map<number, number>} */
+    const falls = new Map();
     for (const m of v.marks) {
       if (m.step < from || m.op !== "A" || !m.ok || m.hexes.length !== 2) continue;
+      if (m.kill) falls.set(m.target, t0);
+      if (m.lost) falls.set(m.id, t0);
       const before = v.floats.length;
       if (m.dealt && sees(m.hexes[1])) v.floats.push({ hex: m.hexes[1], text: "−" + m.dealt, t0 });
       if (m.taken && sees(m.hexes[0])) v.floats.push({ hex: m.hexes[0], text: "−" + m.taken, t0 });
@@ -287,15 +293,80 @@
         t0 += 140;
       }
     }
-    if (!v.floats.length || v.floating) return;
+    return falls;
+  }
+
+  /** Keeps the board redrawn while damage numbers float and destroyed units go. */
+  function runEffects() {
+    if ((!v.floats.length && !v.deaths.length) || v.floating) return;
     v.floating = true;
     const frame = (/** @type {number} */ now) => {
       v.floats = v.floats.filter((/** @type {any} */ f) => now - f.t0 < FLOAT_MS);
-      v.floating = v.floats.length > 0;
+      v.deaths = v.deaths.filter((d) => now - d.t0 < DEATH_MS);
+      v.floating = v.floats.length > 0 || v.deaths.length > 0;
       draw();
       if (v.floating) requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
+  }
+
+  /** How long a destroyed unit takes to go, in ms. */
+  const DEATH_MS = 460;
+
+  /**
+   * A unit just destroyed, `t` of the way from 0 to 1 through its end. Its
+   * token flashes white and swells a little, then breaks up: what is left
+   * of it shrinks away, a ring runs outward, and shards are thrown clear,
+   * all fading as they go.
+   * @param {CanvasRenderingContext2D} ctx @param {any[]} u @param {number} x @param {number} y @param {number} rad @param {number} t
+   */
+  function drawDeath(ctx, u, x, y, rad, t) {
+    /** The share of the time the flash takes. */
+    const FLASH = 0.24;
+    const color = playerColor(u[1]);
+    const token = (/** @type {number} */ r) => {
+      ctx.beginPath();
+      if (hasFlag(u[2], "naval")) ctx.roundRect(x - r, y - r, 2 * r, 2 * r, r * 0.45);
+      else ctx.arc(x, y, r, 0, 2 * Math.PI);
+    };
+    ctx.save();
+    if (t < FLASH) {
+      const k = t / FLASH;
+      const r = rad * (1 + 0.14 * k);
+      drawUnit(ctx, u, x, y, r, false);
+      // It is gone from the game: nothing else is drawn on it.
+      v.unitPos.delete(u[0]);
+      token(r);
+      ctx.globalAlpha = 0.25 + 0.7 * k;
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+    } else {
+      const p = (t - FLASH) / (1 - FLASH);
+      const out = 1 - (1 - p) ** 3;
+      ctx.globalAlpha = (1 - p) ** 2;
+      token(rad * 1.14 * (1 - 0.75 * out));
+      ctx.fillStyle = p < 0.2 ? "#fff" : color;
+      ctx.fill();
+      ctx.globalAlpha = 0.9 * (1 - p);
+      ctx.beginPath();
+      ctx.arc(x, y, rad * (1.1 + 1.5 * out), 0, 2 * Math.PI);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, rad * 0.26 * (1 - p));
+      ctx.stroke();
+      // Eight shards, in the player's color and in white by turns, the white ones thrown farther.
+      const side = Math.max(1.5, rad * 0.3 * (1 - p));
+      for (let i = 0; i < 8; i++) {
+        const turn = (Math.PI / 4) * (i + ((u[0] * 0.37) % 1));
+        const far = rad * (0.5 + (1.5 + 0.5 * (i % 2)) * out);
+        ctx.save();
+        ctx.translate(x + far * Math.cos(turn), y + far * Math.sin(turn));
+        ctx.rotate(turn + p * 3);
+        ctx.fillStyle = i % 2 ? "#fff" : color;
+        ctx.fillRect(-side / 2, -side / 2, side, side);
+        ctx.restore();
+      }
+    }
+    ctx.restore();
   }
 
   /** Draws the damage numbers rising from the units just hit. @param {CanvasRenderingContext2D} ctx */
@@ -413,8 +484,12 @@
     const a = v.anim;
     const hidden = (/** @type {any[]} */ u) => persp && u[1] !== persp && !visibleTo(u[3], u[4], persp);
     // While units slide during playback, the moving ones are drawn on their
-    // own, and units killed on the way stay until the slide ends.
-    const still = a ? v.state.units.filter((/** @type {any[]} */ u) => !a.paths.has(u[0])).concat(a.ghosts) : v.state.units;
+    // own. Units just destroyed keep their place, and their stack its
+    // layout, until their end has played out.
+    const now = performance.now();
+    /** How far through its end each of them is: below 0, it hasn't been hit yet. @type {Map<any[], number>} */
+    const falling = new Map(v.deaths.map((d) => [d.u, (now - d.t0) / DEATH_MS]));
+    const still = (a ? v.state.units.filter((/** @type {any[]} */ u) => !a.paths.has(u[0])) : v.state.units).concat(v.deaths.map((d) => d.u));
     v.unitPos = new Map();
     const picked = v.play && !v.play.over && v.play.sel ? v.play.sel.unit : null;
     /** @type {Map<string, any[]>} */
@@ -431,7 +506,9 @@
       const n = list.length;
       const place = (/** @type {any[]} */ u, /** @type {number} */ j) => {
         const off = n <= 4 ? STACK[n][j] : [0.38 * Math.cos((2 * Math.PI * j) / n), 0.38 * Math.sin((2 * Math.PI * j) / n)];
-        drawUnit(ctx, u, x + off[0] * s, y + off[1] * s, stackRadius(n), n === 1);
+        const t = falling.get(u);
+        if (t !== undefined && t >= 0) drawDeath(ctx, u, x + off[0] * s, y + off[1] * s, stackRadius(n), t);
+        else drawUnit(ctx, u, x + off[0] * s, y + off[1] * s, stackRadius(n), n === 1);
       };
       // The unit picked in a game is drawn last, in its usual place, so its
       // neighbors in the stack don't cover it or its health bar.
@@ -788,7 +865,8 @@
       } else if (t[0] === "A" && from) {
         const target = Number(t[2]);
         const to = at.get(target);
-        const m = { step: i, op: "A", id: Number(t[1]), target, ok, hexes: to ? [from, to] : [from], kill: res[0] === "OK" && res[1] === "0", dealt: 0, taken: 0 };
+        // `kill`: the target was destroyed. `lost`: the attacker was, by the blow struck back.
+        const m = { step: i, op: "A", id: Number(t[1]), target, ok, hexes: to ? [from, to] : [from], kill: res[0] === "OK" && res[1] === "0", lost: res[0] === "OK" && res[2] === "0", dealt: 0, taken: 0 };
         if (res[0] === "OK") {
           m.dealt = Math.max(0, (hp.get(target) || 0) - Number(res[1]));
           m.taken = Math.max(0, (hp.get(m.id) || 0) - Number(res[2]));
@@ -1763,7 +1841,10 @@
   function setPos(k, playing) {
     if (!v.engine || !v.replay) return;
     v.anim = null;
-    if (!playing) v.floats = [];
+    if (!playing) {
+      v.floats = [];
+      v.deaths = [];
+    }
     v.pos = Math.max(0, Math.min(v.steps, k));
     v.state = v.engine.seek(v.pos);
     v.marks = turnMarks();
@@ -1823,14 +1904,28 @@
       for (const [id, path] of paths) if (owner.get(id) !== persp && !path.some(sees)) paths.delete(id);
       ghosts = ghosts.filter((/** @type {any[]} */ u) => u[1] === persp || sees([u[3], u[4]]));
     }
-    const slides = ms >= 40 && (paths.size > 0 || (!movesOnly && ghosts.length > 0));
-    // The numbers wait for units on the move to get most of the way there.
-    if (ms >= 40 && k > from) floatDamage(from, persp, slides && paths.size ? ms * 0.7 : 0);
+    const slides = ms >= 40 && paths.size > 0;
+    if (ms >= 40 && k > from) {
+      // The numbers wait for units on the move to get most of the way there.
+      // A unit an attack destroyed goes as that attack's numbers show, and
+      // any other, such as one that starved, with the first of them.
+      const delay = slides ? ms * 0.7 : 0;
+      const falls = floatDamage(from, persp, delay);
+      const first = performance.now() + delay;
+      for (const ghost of ghosts) {
+        // It goes where it died, which is where it had moved to.
+        const path = paths.get(ghost[0]);
+        const u = ghost.slice();
+        if (path) [u[3], u[4]] = path[path.length - 1];
+        v.deaths.push({ u, t0: falls.get(u[0]) ?? falls.get(u[12]) ?? first });
+      }
+      runEffects();
+    }
     if (!slides) return 0;
     // Every unit moves at the same speed, so the longest path sets the time.
     let len = 1;
     for (const path of paths.values()) len = Math.max(len, path.length - 1);
-    const anim = { from, paths, ghosts, len, p: 0 };
+    const anim = { from, paths, len, p: 0 };
     const t0 = performance.now();
     v.anim = anim;
     const frame = (/** @type {number} */ now) => {
