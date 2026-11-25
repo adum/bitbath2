@@ -443,6 +443,24 @@ Then the new bot played on 10 islands maps, each twice with the sides swapped, a
 
 Then, on 8 Islets maps, each twice with the sides swapped, the naval bot beat Forager 9–7, and on the 6 islands maps of the games above, 9–3. Neither bot sent an invalid order, and neither went more than 4 turns without one. On the islands map every game ended by elimination, in rounds 65 to 369. On Islets only 2 did, in rounds 72 and 73: the other 14 reached round 300 with 2 cities each and were decided on army value, and in those each bot hauled all game, 56 to 116 loads. With these bots, each side holds its small island, and neither presses an invasion home.
 
+**Invasions on Islets**, later on 2026-11-25. Between two Foragers, every Islets game already ended by elimination, in rounds 45 to 74: one side won at sea, ferried the middle's wheat home, and invaded in waves. The naval bot never got that far, and between two naval bots all 8 games reached round 300. Its invasions stalled on bugs, each fixed:
+
+- **A ferry that never landed its wagons.** On Islets the ferry reached the middle island the turn its wagons boarded, when they couldn't land yet. Seeing no one ashore, it sailed them home, and did it again every other turn. Meanwhile the bot counted the middle's 200 wheat a round as income, built the army that would feed, and starved. Its ferries now wait offshore for those wagons to land, as Forager's do.
+- **Wagons in the wrong transport.** A unit boarding on a hex takes the lowest-numbered transport there with room, so wagons boarded troop transports docked by their ferry and landed with the invasion. The naval bot's transports now dock on hexes of their own. Where the port's water is taken, troop transports lie off the coast nearby, where their crews can still walk up and board. Units board only their own transport.
+- **No one to send.** Expeditions left 2 land units for each city on a small home island, and the army was capped at what the bread income fed. Once ships and wagons took their share, the garrison was the whole land army, and nothing sailed, with thousands of bread banked: for 180 rounds in one Islets game, and for the last 400 rounds of one on the islands map. The garrison is now 1 a city while no enemy transport has been seen for 20 rounds. When it still leaves no one to crew a transport, the bot builds the crew from its stockpile, a unit for every 400 bread.
+- **Campaigns that never changed.** A sea's target held as long as it existed, so after a convoy failed against an enemy port, every later one sailed there too, never to the empty middle. Each convoy now picks its own.
+- **Armies of archers.** The bots rate unit types against the enemy units they've met. After sinking enough galleys, only archers rated well, so the naval bot stopped building capturers. In one game 19 archers stood on an enemy island with no defenders left and couldn't take its cities. While fewer than half their units can capture, the supply and naval bots now build capturers whatever they rate.
+- **Galleys parked under archers.** A galley lying off an enemy port within reach of archers was shot every turn and couldn't shoot back. In those 8 games between two naval bots, archers sank 110 galleys. Galleys now lie off a port only out of reach of the archers they can see. In the 12 games below, archers sank 12.
+
+Then, with the sides swapped on each map:
+
+- **Islets, naval bot against Forager:** 24–0 on 12 maps, all by elimination, in rounds 40 to 123, half of them by round 45.
+- **Islets, naval bot against itself:** all 12 games on 6 maps ended by elimination, in rounds 46 to 78, 6 for each side.
+- **The islands map, naval bot against Forager:** 12–4 on 8 maps, all by elimination, in rounds 45 to 83.
+- **Clean play:** no bot sent an invalid order. On Islets 8 units starved in the 24 games, where 41 had in the 16 before.
+- **Time:** the naval bot thought for 13 milliseconds a turn on average on Islets, and at most 84 on the islands map.
+- **Why Forager loses:** with its garrison free to sail, the naval bot lands on the middle island around round 10. In a typical game Forager's first transport comes out in round 15, and its first galley in round 21. By then the naval bot's galleys are out. They sink Forager's transports, kill its units on the middle, and then lie off its port, where Forager builds no more ships.
+
 ### Work
 
 Done in phase 1:
@@ -469,7 +487,7 @@ Done in phase 2:
 - **A naval reference bot,** [bots/naval_bot.py](bots/naval_bot.py): the supply bot, plus convoys of transports that carry the idle part of its army overseas, galleys that sink transports, bombard the coast, escort, and blockade, and wagons that stock its ports with bread for the ships. `--no-bombard` keeps its galleys off land units. Vanguard and the supply bot now cope with enemy ships.
 - **The islands map** (§3), a small map for testing the resources and ships, picked with `map_layout`. For it, the naval bot learned to land by sites overseas, to ferry their wheat home, and to leave a garrison behind (results above).
 - **Forager at sea.** Each of its transports fills up with land units that have nothing left to do at home and sails alone for the best city or site overseas, preferring ones no other transport is after. It ferries wheat from sites overseas as the naval bot does. Its galleys raid enemy transports and otherwise lie off enemy ports. Its wagons carry bread to a port that's saving for a ship, and it keeps a garrison on a small home island.
-- **Islets** (§3), the islands map at 24 × 18, and fixes to both bots for its short crossings and blockades (results above).
+- **Islets** (§3), the islands map at 24 × 18, and fixes to both bots for its short crossings and blockades, and to the naval bot's invasions (results above).
 
 Still to do:
 

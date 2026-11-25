@@ -19,7 +19,9 @@ It plays as the supply bot does on land, and adds a navy:
   bread.
 - Garrisons. If its home is on an island of 4 cities or fewer, expeditions
   leave 2 land units there for each city, so that an enemy landing doesn't
-  find it empty.
+  find it empty, or 1 while it hasn't seen an enemy transport lately. When
+  the garrison leaves no one to crew a transport, it builds the crew from
+  its stockpiled bread.
 - Galleys. Each turn a galley strikes the best target it can reach: a
   transport above all, since everything aboard sinks with it, then enemy
   galleys it would beat, then enemy units on the coast. With nothing to
@@ -97,7 +99,20 @@ GUARD_BREAD = 60
 # Expeditions leave GARRISON land units for each city on the home island,
 # if it has HOME_ISLAND cities or fewer, so that an enemy landing doesn't
 # find it empty. A larger home landmass has the land army to defend it.
-GARRISON, HOME_ISLAND = 2, 4
+# While no enemy transport has been seen for SHIP_MEMORY rounds, they leave
+# CALM_GARRISON. A full garrison could take every land unit the bread
+# income feeds, and then none would ever sail, even for the sites in the
+# middle that would feed more.
+GARRISON, CALM_GARRISON, HOME_ISLAND = 2, 1, 4
+# When the garrison leaves no one to crew a transport, it builds the crew
+# beyond what the bread income feeds, one unit for each this much bread it
+# has stockpiled, in cities and wagons. Otherwise an army the income caps,
+# all of it garrison, never sails again, even for the sites that would feed
+# more.
+CREW_BREAD = 400
+# A troop transport that finds the water next to its port taken lies off the
+# coast instead, at most this far from the port.
+BERTH_RANGE = 4
 
 
 class NavalBot(sb.SupplyBot):
@@ -135,9 +150,11 @@ class NavalBot(sb.SupplyBot):
         self.haulers = {}           # wagon id -> the landmass whose sites it hauls from
         self.hauls_wanted = 0       # wagons the ferries want, for building
         self.ships_seen = {}        # enemy ship id -> round last seen
+        self.transports_seen = {}   # enemy transport id -> round last seen
         self.tally = {"landed": 0, "sunk": 0, "bombarded": 0, "ferried": 0}
         self.stock = {}             # wagon id -> the port it carries bread to
         self.useful = set()         # seas with somewhere worth sailing to
+        self.crew_short = 0         # crew a transport wants that the garrison leaves no one for
 
     def areas(self, open_):
         """{hex: area number} over the hexes open_ accepts, by connected area."""
@@ -224,6 +241,14 @@ class NavalBot(sb.SupplyBot):
             return sites
         held = {self.land.get(c.hex) for c in self.state.my_cities()}
         return [x for x in sites if self.land.get(x.hex) in held]
+
+    def units_fed(self):
+        fed = super().units_fed()
+        if self.naval and self.crew_short:
+            s = self.state
+            stock = sum(c.bread for c in s.my_cities()) + sum(u.bread for u in s.my_units())
+            fed = max(fed, len(s.my_units()) + min(self.crew_short, stock // CREW_BREAD))
+        return fed
 
     def income(self):
         # The sites of a landmass a ferry serves with wagons feed the army
@@ -330,10 +355,17 @@ class NavalBot(sb.SupplyBot):
         for e in s.enemy_units():
             if self.types[e.type].naval:
                 self.ships_seen[e.id] = s.round
+            if self.types[e.type].transport:
+                self.transports_seen[e.id] = s.round
         self.voyages = {t: v for t, v in self.voyages.items() if t in s.units and t not in self.ferries}
         self.crew_of = {u: t for u, t in self.crew_of.items() if u in s.units and t in s.units}
         self.dests = self.destinations()
-        self.campaigns = {sea: key for sea, key in self.campaigns.items() if key in self.dests}
+        # A sea's campaign holds while its convoy sails, so that the convoy
+        # lands together. The next convoy picks its own: one that failed to
+        # take an enemy port shouldn't send every later one there too.
+        sailing = {self.sea.get(t.hex) for t in s.my_units()
+                   if self.voyages.get(t.id, {}).get("phase") == "sail"}
+        self.campaigns = {sea: key for sea, key in self.campaigns.items() if key in self.dests and sea in sailing}
         self.run_galleys()
         self.run_transports()
         self.run_ferries()
@@ -460,6 +492,18 @@ class NavalBot(sb.SupplyBot):
                 out.update(bb.disk(e.hex, t.move + t.range_max))
         return out
 
+    def shore_danger(self):
+        """Water hexes visible enemy land units that can hurt ships, such as
+        archers, could shoot at next turn. A galley lying off an enemy port
+        there is shot every turn and can't shoot back."""
+        out = set()
+        ships = [code for code, t in self.types.items() if t.naval]
+        for e in self.state.enemy_units():
+            t = self.types[e.type]
+            if not t.naval and not e.carrier and any(self.rules.damage[e.type].get(c) for c in ships):
+                out.update(h for h in bb.disk(e.hex, t.move + t.range_max) if h in self.sea)
+        return out
+
     # Galleys.
 
     def run_galleys(self):
@@ -564,10 +608,20 @@ class NavalBot(sb.SupplyBot):
             return
         theirs = [c for c in s.cities if c.owner not in (0, self.player) and sea in self.port_seas[c.id]]
         if theirs:
-            goals = [n for c in theirs for n in bb.neighbors(c.hex) if self.sea.get(n) == sea]
-            if g.hex not in goals:
-                self.sail(g, self.sea_field(goals))
-            return
+            # Off the port, or, where archers would shoot it there, as near
+            # as it can lie out of their reach, to catch what sails out.
+            shore = self.shore_danger()
+            off = [n for c in theirs for n in bb.neighbors(c.hex) if self.sea.get(n) == sea]
+            goals = [n for n in off if n not in shore]
+            if not goals:
+                near = self.sea_field(off)
+                safe = [h for h in near if h not in shore and self.sea.get(h) == sea]
+                low = min((near[h] for h in safe), default=None)
+                goals = [h for h in safe if near[h] == low]
+            if goals:
+                if g.hex not in goals:
+                    self.sail(g, self.sea_field(goals), shore)
+                return
         ships = [e.hex for e in s.enemy_units() if self.types[e.type].naval and self.sea.get(e.hex) == sea]
         if ships:
             self.sail(g, self.distance_field([n for h in ships for n in bb.neighbors(h) if n in self.sea], naval=True))
@@ -670,14 +724,56 @@ class NavalBot(sb.SupplyBot):
                 v["port"] = min(ports, key=lambda c: (c.bread < 2 * PORT_KEEP,
                                                       self.sea_field(self.port_water_of(c, sea)).get(t.hex, 1 << 30),
                                                       c.id)).id
-        goals = self.port_water_of(s.cities[v["port"]], sea)
-        if t.hex in goals or not move:
-            return t.hex in goals
-        self.sail(t, self.sea_field(goals), self.danger())
-        return t.hex in goals
+        port = s.cities[v["port"]]
+        if not move:
+            return t.hex in self.port_water_of(port, sea)
+        berths = self.berths(t, port, sea)
+        if t.hex in berths:
+            return True
+        self.sail(t, self.sea_field(berths), self.danger())
+        return t.hex in berths
+
+    def berths(self, t, port, sea):
+        """Where transport t docks at port: the water next to it, on a hex of
+        its own if one is free. A unit boarding on a hex takes our
+        lowest-numbered transport there with room, so wagons could board a
+        troop transport and sail off to an invasion, or a crew the ferry.
+        A troop transport that finds the port's water taken lies off the
+        coast nearby, where its crew can still walk up and board, unless it's
+        hungry, since ships eat only next to a port. Otherwise, at a port
+        with a single hex of water, the transports there crowd onto it, and
+        crews that won't board the ferry fill the port, where the ferry's
+        wagons would unload."""
+        s = self.state
+        goals = self.port_water_of(port, sea)
+        taken = {u.hex for u in s.my_units() if self.types[u.type].transport and u.id != t.id}
+        free = [h for h in goals if h not in taken]
+        if free or t.id in self.ferries or t.rations < self.ration_max // 3:
+            return free or goals
+        home = self.land.get(port.hex)
+        coast = [h for h in self.coast if self.sea.get(h) == sea and h not in taken
+                 and bb.distance(h, port.hex) <= BERTH_RANGE
+                 and any(self.land.get(n) == home for n in bb.neighbors(h))]
+        if not coast:
+            return goals
+        near = min(bb.distance(h, port.hex) for h in coast)
+        return [h for h in coast if bb.distance(h, port.hex) == near]
 
     def port_water_of(self, city, sea):
         return [n for n in bb.neighbors(city.hex) if self.sea.get(n) == sea]
+
+    def board(self, u, t):
+        """Moves land unit u aboard transport t if it can get there this turn
+        and t is the transport it would board there: our lowest-numbered one
+        on the hex with room. Returns whether t's hex was in reach, in which
+        case u waits by it if it couldn't board."""
+        reach = self.reachable(u)
+        if t.hex not in reach:
+            return False
+        first = self.transport_with_room(t.hex)
+        if first is not None and first.id == t.id:
+            self.go(u, reach[t.hex])
+        return True
 
     def pick_target(self, t):
         """The destination a sailing transport makes for: its sea's campaign,
@@ -930,7 +1026,15 @@ class NavalBot(sb.SupplyBot):
                 if t.id in s.units and t.hex in spots:
                     for w in sorted(s.passengers(t), key=lambda u: u.id):
                         self.hauler_land(w, isle)
-                    f["phase"], f["waited"] = "wait", 0
+                    # Wagons that boarded this turn have no moves left to
+                    # land with. On a short crossing the ferry gets there the
+                    # same turn, and it waits offshore for them to land next
+                    # turn: seeing no one ashore, it would sail them home.
+                    left = s.passengers(t)
+                    if left and all(w.mp <= 0 for w in left) and f["waited"] < 2:
+                        f["waited"] += 1
+                    else:
+                        f["phase"], f["waited"] = "wait", 0
         if f["phase"] == "wait" and t.id in s.units:
             f["waited"] += 1
             for w in mine():
@@ -1008,11 +1112,8 @@ class NavalBot(sb.SupplyBot):
                 self.unload_wheat(w)
                 self.take_bread(w, port)
             return
-        if there:
-            reach = self.reachable(w)
-            if t.hex in reach:
-                self.go(w, reach[t.hex])
-                return
+        if there and self.board(w, t):
+            return
         goals = [n for n in [port.hex] + bb.neighbors(port.hex) if n in self.defense]
         if w.hex not in goals:
             self.walk(w, self.distance_field(goals), sb.WAGON_CAUTION)
@@ -1046,9 +1147,7 @@ class NavalBot(sb.SupplyBot):
             if w.hex == site.hex:
                 self.load_site(w, site)
             return
-        reach = self.reachable(w)
-        if t.hex in reach:
-            self.go(w, reach[t.hex])
+        if self.board(w, t):
             return
         goals = [n for n in bb.neighbors(t.hex) if n in self.defense]
         if goals:
@@ -1097,6 +1196,7 @@ class NavalBot(sb.SupplyBot):
         gathering = [t for t in s.my_units() if t.type == self.transport
                      and self.voyages.get(t.id, {}).get("phase") == "gather" and self.voyages[t.id]["port"] is not None
                      and self.voyages[t.id].get("rest", 0) <= s.round]
+        self.crew_short = 0
         if gathering and self.dests:
             open_land = self.open_land()
             army = [u for u in s.my_units() if not self.types[u.type].naval and not self.types[u.type].carry]
@@ -1110,9 +1210,11 @@ class NavalBot(sb.SupplyBot):
             for u in army:
                 if not u.carrier and u.id not in self.crew_of:
                     spare[self.land.get(u.hex)] = spare.get(self.land.get(u.hex), 0) + 1
+            calm = not any(s.round - r <= SHIP_MEMORY for r in self.transports_seen.values())
             for c in s.my_cities():
                 if self.land.get(c.hex) in self.home_island:
-                    spare[self.land.get(c.hex)] = spare.get(self.land.get(c.hex), 0) - GARRISON
+                    spare[self.land.get(c.hex)] = spare.get(self.land.get(c.hex), 0) - (
+                        CALM_GARRISON if calm else GARRISON)
             busy = self.busy | set(self.crew_of)
             for t in gathering:
                 port = s.cities[self.voyages[t.id]["port"]]
@@ -1144,15 +1246,15 @@ class NavalBot(sb.SupplyBot):
                     self.crew_of[u.id] = t.id
                     busy.add(u.id)
                     want -= 1
+                if want > 0 and spare.get(self.land.get(port.hex), 0) <= 0:
+                    self.crew_short = max(self.crew_short, want)
         for uid, tid in sorted(self.crew_of.items()):
             if self.out_of_time():
                 return
             u, t = s.units.get(uid), s.units.get(tid)
             if u is None or t is None or u.carrier or u.acted or u.fresh or u.mp <= 0:
                 continue
-            reach = self.reachable(u)
-            if t.hex in reach:
-                self.go(u, reach[t.hex])
+            if self.board(u, t):
                 continue
             goals = [n for n in bb.neighbors(t.hex) if n in self.defense]
             if goals:

@@ -429,9 +429,13 @@ class SupplyBot(vb.VanguardBot):
                 continue
             total = sum(n for code, n in count.items() if code in share)
             can_capture = sum(n for code, n in count.items() if code in share and types[code].capture)
-            options = [code for code in share if types[code].cost <= budget and share[code] >= vb.MIN_SHARE]
+            affordable = [code for code in share if types[code].cost <= budget]
+            options = [code for code in affordable if share[code] >= vb.MIN_SHARE]
             if can_capture * 2 < total + 1 or total < vb.EARLY_ARMY:
-                options = [code for code in options if types[code].capture] or options
+                # Capturers, whatever they score: against an enemy seen mostly
+                # at sea only archers score well, and an army of archers can
+                # empty the enemy's cities and never take them.
+                options = [code for code in affordable if types[code].capture] or options
             if not options:
                 continue
             code = max(options, key=lambda c: (share[c] / (count[c] + 1), share[c]))
