@@ -137,11 +137,16 @@ class BotIndex(unittest.TestCase):
 
     def test_play_page(self):
         index = bots()
-        # The web build writes the page's list into web/bot-index.js.
-        page = build_web_bots.page_list(index)
-        listed = json.loads(page.split(" = ", 1)[1].split(";\n", 1)[0])
-        self.assertEqual([b["id"] for b in listed], [bid for bid, b in index.items() if b["play_page"]],
+        ladders = json.loads(RATINGS.read_text(encoding="utf-8"))["ladders"]
+        # The web build writes the page's bots and ratings into web/bot-index.js.
+        page = json.loads(build_web_bots.page_list(index, ladders).split(" = ", 1)[1].split(";\n", 1)[0])
+        self.assertEqual([b["id"] for b in page["bots"]], [bid for bid, b in index.items() if b["play_page"]],
                          "web/bot-index.js should list the bots whose play_page isn't null, in the index's order")
+        self.assertEqual(list(page["ladders"]), list(ladders), "web/bot-index.js should have every ladder")
+        # The dialog names a ladder by its map, and picks it by the map's rules and size.
+        maps = re.findall(r'\bid: "([^"]+)", name: "', text("web/play.js"))
+        for name, ladder in ladders.items():
+            self.assertIn(ladder["map"], maps, f"the Play page should have {name}'s map")
         # web/bots.js plays its own ports, and runs the others in a worker.
         own = re.search(r"const own = \{([^}]*)\}", text("web/bots.js")).group(1)
         self.assertEqual(sorted(re.findall(r'^\s*"?([\w-]+)"?\s*:', own, re.M)),

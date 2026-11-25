@@ -1,5 +1,5 @@
 {
-  "doc": "What we know about each bot. README.md describes the fields under \"The bot index\", and tests/test_bot_index.py checks them against the bots' files, imports, the Play page, and the benchmark. The Play page offers its bots in this order.",
+  "doc": "What we know about each bot. README.md describes the fields under \"The bot index\", and tests/test_bot_index.py checks them against the bots' files, imports, the Play page, and the benchmark. The Play page lists its bots weakest first by their ratings, and the ones without a rating in this order.",
   "bots": {
     "random": {
       "name": "Random",

@@ -10,9 +10,15 @@ var BitbathBots = (function () {
   /** @type {any} */
   const Kit = typeof BitbathKit !== "undefined" ? BitbathKit : require("./kit.js");
   /**
-   * What the page needs to know of its bots, from the bot index. A web build
-   * (scripts/build_web_bots.py) writes it into bot-index.js.
-   * @type {{id: string, name: string, about: string, rules: string[], maps: string[] | "any", play_page: string}[]}
+   * What the page needs to know of its bots, from the bot index and the
+   * ratings (bots/index.json and bots/ratings.json). A web build
+   * (scripts/build_web_bots.py) writes it into bot-index.js: `bots`, the
+   * page's bots, and `ladders`, each ladder's ratings by bot id.
+   * @type {{
+   *   bots: {id: string, name: string, about: string, rules: string[], maps: string[] | "any", play_page: string}[],
+   *   ladders: Record<string, {map: string, rules: string, date: string, anchor: string | null,
+   *     ratings: Record<string, {rating: number, interval: number[] | null, games: number, stale: boolean}>}>,
+   * }}
    */
   const Index = typeof BitbathBotIndex !== "undefined" ? BitbathBotIndex : require("./bot-index.js");
 
@@ -203,13 +209,13 @@ var BitbathBots = (function () {
    * player is. A bot whose `play_page` isn't `js` runs in a worker, in
    * Python with Pyodide or as WebAssembly.
    */
-  const list = Index.map((b) =>
+  const list = Index.bots.map((b) =>
     Object.assign({}, b, {
       create: b.play_page === "js" ? own[b.id] : () => ReferenceOpponent.create(b.id),
     }),
   );
 
-  return { list, RandomBot, GreedyBot };
+  return { list, ladders: Index.ladders, RandomBot, GreedyBot };
 })();
 
 if (typeof module !== "undefined") module.exports = BitbathBots;

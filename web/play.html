@@ -136,12 +136,12 @@
     <label for="player-name">Player name</label>
     <input id="player-name" type="text" maxlength="48" placeholder="Guest" autocomplete="off">
     <div class="hint">Optional. Use the same name to combine your scoreboard results.</div>
-    <label for="opponent">Opponent</label>
-    <select id="opponent"></select>
-    <div class="hint" id="opponent-about"></div>
-    <label for="map-size">Map</label>
-    <select id="map-size"></select>
+    <span id="map-label">Map</span>
+    <div id="map-size" role="radiogroup" aria-labelledby="map-label" aria-describedby="map-about"></div>
     <div class="hint" id="map-about"></div>
+    <label for="opponent">Opponent</label>
+    <select id="opponent" aria-describedby="opponent-about"></select>
+    <div class="hint" id="opponent-about"></div>
     <label for="side-choice">You play</label>
     <select id="side-choice">
       <option value="1">Red, moving first</option>
@@ -149,7 +149,7 @@
     </select>
     <label for="seed">Map seed</label>
     <input id="seed" type="number" min="0" step="1" placeholder="random">
-    <div class="hint">The same seed and map size always give the same map.</div>
+    <div class="hint">The maps above are this seed's. Leave it as it is to play them, or type another. The same seed and map always give the same map.</div>
     <div class="wide" id="new-game-error" role="status"></div>
     <button id="start" class="primary wide">Start</button>
   </div>

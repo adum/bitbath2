@@ -40,7 +40,7 @@ Then open `web/play.html` in a browser and choose a replay file, or drop one on 
 
 Open [the Bitbath homepage](web/index.html) after running `python scripts/build_web.py`. It shows the latest Micro standings, with filters for LLM entries and the full field. **Play Micro** opens match setup on the full-window [Play page](web/play.html). Completing an arena run or rebuilding the web engine refreshes the standings from local results. A fresh checkout includes the last exported standings.
 
-The viewer's page also plays games: you against a bot built into the page. Click **New game**, then pick an opponent, a map size, and a side. The `random` bot is for learning the controls, and `greedy` puts up a fight. Bastion, Smart, and Vanguard run their tournament Python code in a browser worker. Start the local web server or use the hosted site to play them. The page takes its opponents from the [bot index](#the-bot-index).
+The viewer's page also plays games: you against a bot built into the page. Click **New game**, then pick a map, an opponent, and a side. Each map's card draws the map you'll play, for the seed the dialog shows, and the opponents are listed weakest first, with their [ratings](#ratings) on that map. The `random` bot is for learning the controls, and `greedy` puts up a fight. Bastion, Smart, and Vanguard run their tournament Python code in a browser worker. Start the local web server or use the hosted site to play them. The page takes its opponents from the [bot index](#the-bot-index).
 
 On **Micro**, choose **GPT-6 Astra** to play the season 5 tournament entry. Its C++ search and trained value model run in a browser worker. The compiled bot ships with the web assets. To rebuild it from the original submission archive, activate Emscripten 4.0.21 and run `python scripts/build_astra.py`.
 
@@ -147,7 +147,7 @@ target/release/bitbath play --p1 "python bots/bastion_bot.py" --p2 "python bots/
 
 The Play page and `bitbath serve` read the index:
 
-- **The Play page** offers the bots whose `play_page` isn't null, in the index's order. It offers each bot on the maps it's made for, if it knows their rules. The web build writes what the page needs into `web/bot-index.js`. After changing the index, run `python scripts/build_web.py` again, or `python scripts/build_web_bots.py --skip-runtime` to rebuild only the bots.
+- **The Play page** offers the bots whose `play_page` isn't null, weakest first by their ratings, and the ones without a rating in the index's order. It offers each bot on the maps it's made for, if it knows their rules. The web build writes what the page needs into `web/bot-index.js`, with the ratings. After changing the index or the ratings, run `python scripts/build_web.py` again, or `python scripts/build_web_bots.py --skip-runtime` to rebuild only the bots.
 - **The page's Python bots** go into `web/reference-bots.zip` with the files they import and the index. `scripts/browser_bot.py` runs a bot from its first file, which must define one subclass of the kit's `Bot`.
 - **`bitbath serve`** sends the page the record of each bot on disk that the index runs. The page then shows its name and about line, and offers it as it does its own bots.
 
@@ -168,6 +168,8 @@ A rating means something only against the bots it was won from, on one map, so [
 - **islets** and **islands** are played here by the bots that know the strategic rules and are made for the map: every pair on 20 seeds, both ways round, anchored at supply = 1000. `python scripts/ratings.py islets` plays Islets with `target/release/bitbath`, or with the one `--bitbath` names, which mustn't be older than the engine's source. The bots' files and the config must be committed, so that the ladder rates what's in its commit. It builds the Rust bots afresh in the run's folder under `runs/ladders/`, and leaves `target/release` alone.
 
 Each ladder records what was played: its rules, map, seeds, date, commit, anchor, and field, which can include bots outside the index, and its config with the config's hash. Each rating has its 95% interval, record, forfeits, invalid orders, and think times. Its `source` holds the hash of each file it was won with: the bot's files and what they import, or a benchmark entry's submission. Once one of those files changes, `python scripts/ratings.py` shows the rating as stale and names the file, until the ladder is played again. When the config changes, it shows the whole ladder as stale. The index check makes sure each rated bot is in the index and plays its ladder's rules and map. It doesn't check that ratings are current, since a bot can change before its ladders are played again.
+
+The Play page's New game dialog shows each opponent's rating on the map picked, from the web build. A map without a ladder of its own borrows the ladder of the same rules whose map is nearest its size, and the dialog says so. It also says when a rating was won before the bot's latest changes.
 
 ## Rules and maps
 

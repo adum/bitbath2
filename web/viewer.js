@@ -226,6 +226,60 @@
     v.terrain = layer;
   }
 
+  /**
+   * Draws a small picture of a map, from a game's setup lines, as the New
+   * game dialog shows it: the terrain, the sites, and the cities in their
+   * owners' colors, fitted to the canvas's own size in pixels.
+   * @param {HTMLCanvasElement} cv @param {string[]} setup
+   */
+  function drawPreview(cv, setup) {
+    let W = 0;
+    let H = 0;
+    /** @type {string[]} */ const rows = [];
+    /** @type {number[][]} */ const cities = [];
+    for (const line of setup) {
+      const f = line.split(" ");
+      if (f[0] === "MAP") [W, H] = [Number(f[1]), Number(f[2])];
+      else if (f[0] === "ROW") rows.push(f[1]);
+      else if (f[0] === "CITY") cities.push([Number(f[2]), Number(f[3]), Number(f[4])]);
+    }
+    const ctx = /** @type {CanvasRenderingContext2D} */ (cv.getContext("2d"));
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!W || !H || rows.length < H) return;
+    const pad = cv.width * 0.03;
+    const s = Math.min((cv.width - 2 * pad) / (SQ3 * (W + 0.5)), (cv.height - 2 * pad) / (1.5 * H + 0.5));
+    const ox = (cv.width - SQ3 * s * (W + 0.5)) / 2;
+    const oy = (cv.height - s * (1.5 * H + 0.5)) / 2;
+    /** @param {number} col @param {number} r @returns {[number, number]} */
+    const at = (col, r) => [ox + SQ3 * s * (col + 0.5 * (r & 1) + 0.5), oy + s * (1.5 * r + 1)];
+    const pal = v.dark ? TERRAIN.dark : TERRAIN.light;
+    // Hexes a few pixels across keep a gap between them, as on the board.
+    // Smaller ones touch, so a large map isn't lost in its grid.
+    const k = s >= 6 ? 0.93 : 1.05;
+    for (let r = 0; r < H; r++) {
+      for (let col = 0; col < W; col++) {
+        const ch = rows[r][col];
+        const [x, y] = at(col, r);
+        hexPath(ctx, x, y, s * k);
+        ctx.fillStyle = pal[ch] || "#888";
+        ctx.fill();
+        if (ch === "R") {
+          // A site: a dot in the color of the board's ear of wheat.
+          ctx.beginPath();
+          ctx.arc(x, y, Math.max(1.5, s * 0.4), 0, 2 * Math.PI);
+          ctx.fillStyle = v.dark ? "rgba(255,221,128,.8)" : "rgba(112,74,0,.6)";
+          ctx.fill();
+        }
+      }
+    }
+    for (const [q, r, owner] of cities) {
+      const [x, y] = at(q + Math.floor(r / 2), r);
+      hexPath(ctx, x, y, Math.max(s * k, 2.5));
+      ctx.fillStyle = playerColor(owner);
+      ctx.fill();
+    }
+  }
+
   function draw() {
     const cv = $("canvas");
     const ctx = /** @type {CanvasRenderingContext2D} */ (cv.getContext("2d"));
@@ -1987,8 +2041,12 @@
     banner.hidden = !problem;
   }
 
+  /** The engine being created: one for the page, however many wait for it. @type {Promise<BitbathEngine> | null} */
+  let creating = null;
+
   async function engine() {
-    if (!v.engine) v.engine = await BitbathEngine.create();
+    if (!creating) creating = BitbathEngine.create();
+    if (!v.engine) v.engine = await creating;
     return v.engine;
   }
 
@@ -2345,7 +2403,7 @@
   // For play.js, tests and embedding: window.bitbathViewer.open(text).
   /** @type {any} */ (window).bitbathViewer = {
     refreshHover: updateHover,
-    open: openText, state: v, setPos, $, el, engine, openLive, append, finishLive, animateTo, draw, updateSide, STEP_MS,
+    open: openText, state: v, setPos, $, el, engine, openLive, append, finishLive, animateTo, draw, drawPreview, updateSide, STEP_MS,
     center, hexPath, polyline, arrow, centers, playerColor, cssVar, visibleTo, shown, capitalize,
   };
 })();
