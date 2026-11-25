@@ -66,7 +66,7 @@ The default game stays as it is.
   - Everything else is sea. The seed shapes the coasts and terrain, and picks the port and the homes' sites.
   - It needs `neutral_cities = 2`, `sites` of at least 4, and ships. `water_pct` doesn't apply.
   - **Islets** is the same map at 24 × 18, for quicker games: [configs/islets.toml](configs/islets.toml), and the play page's Islets. On maps under 30 hexes high the coasts wobble proportionally less, so a small map keeps the large one's shapes. On any size, the middle island lies out at sea, with water a quarter of the map's height wide or more between it and each home island, and a home stands 2 hexes inland of its island's anchor on a small map as on a large one. On Islets the home islands are 60 to 76 hexes, 4 to 6 hexes of sea part them from the middle island, and homes stand 5 or 6 hexes from the sea. At 40 × 30 the maps are as before.
-    - Islets' sites grow half as much, from 2026-11-25: 30 wheat a round at each home site and 50 at each in the middle, where they were 60 and 100. At the full rate, wheat came in faster than two cities could build with it. They pile up as high as before.
+    - Islets' sites grow and hold half as much, from 2026-11-25. Each home site grows 30 wheat a round and piles up to 850, where it grew 60 and piled up to 1,700. Each site in the middle grows 50 and piles up to 1,500, where it grew 100 and piled up to 3,000. At the full rate, wheat came in faster than two cities could build with it. With the caps halved too, a site still fills in about 30 rounds.
 
 ## 4. Wheat and bread
 
@@ -470,6 +470,12 @@ Then, with the sides swapped on each map:
 - **Clean play:** no unit starved in any of these games, and no bot sent an invalid order.
 - **On the islands map,** whose output didn't change, the ferry fix changed 2 of 16 games: each still had the same winner by elimination, one 11 rounds sooner and one 4 rounds later. The naval bot still beat Forager 12–4, all by elimination, in rounds 45 to 83.
 
+**Islets at half caps**, later on 2026-11-25 (§3). Islets' sites now pile up half as high as well: 850 wheat at each home site and 1,500 at each in the middle, where they held 1,700 and 3,000. At half output a site took about 60 rounds to fill; now it takes about 30, as on the islands map. The maps are otherwise the same, and so are the bots.
+
+- **Little changed.** Against Forager, on the same 12 maps with the sides swapped, 15 of the 24 games went exactly as before. Of the other 9, one ended 11 rounds sooner and eight from 1 to 13 rounds later. The naval bot still won 24–0, all by elimination, in rounds 58 to 108, half of them by round 84.
+- **Between two naval bots**, on the same 6 maps, 8 of the 12 games went exactly as before. The two on one map ended 2 rounds later, and the two on another 1 round sooner. All 12 ended by elimination, in rounds 75 to 103, and player 2 still won on 5 of the 6 maps.
+- **Clean play:** no unit starved in any of these games, and no bot sent an invalid order.
+
 ### Work
 
 Done in phase 1:
@@ -497,6 +503,7 @@ Done in phase 2:
 - **The islands map** (§3), a small map for testing the resources and ships, picked with `map_layout`. For it, the naval bot learned to land by sites overseas, to ferry their wheat home, and to leave a garrison behind (results above).
 - **Forager at sea.** Each of its transports fills up with land units that have nothing left to do at home and sails alone for the best city or site overseas, preferring ones no other transport is after. It ferries wheat from sites overseas as the naval bot does. Its galleys raid enemy transports and otherwise lie off enemy ports. Its wagons carry bread to a port that's saving for a ship, and it keeps a garrison on a small home island.
 - **Islets** (§3), the islands map at 24 × 18, and fixes to both bots for its short crossings and blockades, and to the naval bot's invasions (results above).
+- **Standing ladders** on Islets and the islands map, kept in [bots/ratings.json](bots/ratings.json) (results above).
 
 Still to do:
 
