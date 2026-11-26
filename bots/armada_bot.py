@@ -20,19 +20,23 @@ It wins at sea first and on land afterward:
   it, so they land only to strike: when enemy units are on the island,
   wagons too, and they are the stronger, counting a scout for less than
   its HP. The transport pulls up beside one, a wagon for choice, and they
-  strike as they land. When no one is left to fight they go back aboard,
+  strike as they land, also on the turn the transport arrives and first
+  sees who is there. The first blow counts in their favour when strengths
+  are compared. They go aboard the transport on the turn it is built, so
+  as to be ready to land when it gets there. While they fight ashore the
+  transport stands by. When no one is left to fight they go back aboard,
   and come home with the wagon. Guards built later wait by the port, and
   board for a strike only when enough of them can at once. The scout stays
   on the island to keep watch. A hit on one of its units tells it who
   struck and where, even if that unit died of it.
-- Raids. An enemy whose army is away has left its cities thin. When two or
-  more enemy units that can capture are seen at sea aboard a transport, or
-  landed on the home island (three at sea, since two are what goes to hold
-  the middle island), the transport takes the guards it has aboard
+- Raids. An enemy whose army is away has left its cities thin. When three
+  or more enemy units that can capture are seen at sea aboard a transport,
+  or two landed on the home island, or two on the middle island while no
+  enemy warship has been seen lately, the transport takes the guards it has aboard
   to the enemy's port and lands them on it, whatever else it was doing: a
-  rush on Armada's cities is answered by taking the rusher's. (Units seen
-  on the middle island used to set a raid off too. That is switched off,
-  RAIDS: the transport was sunk far more often than it found a city empty.) A city it
+  rush on Armada's cities is answered by taking the rusher's, and an army
+  sent to the middle island with no warship to cover the sea has left its
+  cities for the taking. A city it
   finds held it leaves alone, for another or for home, unless it has three
   times the strength of the units in it: then it storms it. It starts no
   raid while enemy warships are about and its own galleys aren't out, nor
@@ -76,7 +80,10 @@ It wins at sea first and on land afterward:
   enemy units are on the home island, the army stays to fight them.
 
 In a fight it counts a unit by its cost and by how hard it hits, so that
-it goes for infantry before scouts. It reads the map and the rules from
+it goes for infantry before scouts. In a close fight on land it strikes
+what can hit back before it strikes a wagon; in a one-sided one the wagon
+goes first. Its own wagon works on beside enemy scouts when a guard is
+ashore to see to them. It reads the map and the rules from
 the init message. It needs supply and ships: under other rules it only
 walks at the nearest city.
 
@@ -145,12 +152,18 @@ ARMY = 14
 # can capture are known to be on the middle island, until round RAID_UNTIL.
 # One that finds the port defended is called off for RAID_REST rounds.
 RAID_AWAY = 2
-# Enemy units on the middle island don't set off a raid (RAIDS): against the
-# bots it meets now, a transport sent because of them is sunk on the way far
-# more often than it finds a city empty. An enemy army seen at sea, or
-# landed on the home island, always does (TRADE): its cities are empty then.
-RAIDS = False
+# Enemy units on the middle island set off a raid (RAIDS), but only while no
+# enemy warship has been seen lately: with one about, the transport is sunk
+# on the way far more often than it finds a city empty. An enemy army seen
+# at sea, or landed on the home island, always does (TRADE).
+RAIDS = True
 TRADE = True
+# What striking first is worth when strengths are compared: guards who land
+# beside an enemy get their blow in before it can answer.
+FIRST_BLOW = 1.25
+# A fight on land is close when the enemy has this share of our strength
+# there. In a close one, what can hit back is struck before a wagon is.
+TIGHT = 0.75
 # An army at sea is one coming for the home island if it has this many units
 # that can capture: more than anyone sends to hold the middle island.
 SEA_AWAY = 3
@@ -537,6 +550,14 @@ class ArmadaBot(bb.Bot):
             enter = self.map.navigable if t.naval else self.map.passable
             spots.update((h, d) for h, d in self.reachable(u).items() if enter(h))
         best = None
+        # In a close fight on land, what can hit back comes first: a wagon
+        # left for later does no harm meanwhile. In a one-sided one the wagon
+        # goes first, before it gets away.
+        tight = False
+        if not t.naval and self.isle_of(u) is not None:
+            isle = self.isle_of(u)
+            ours = sum(v.hp for v in s.my_units() if self.isle_of(v) == isle and self.unit_type(v).capture)
+            tight = self.threat_power(isle) >= TIGHT * ours
         for e in near:
             et = self.unit_type(e)
             cargo = sum(self.unit_type(p).cost for p in s.passengers(e)) if et.transport else 0
@@ -550,7 +571,8 @@ class ArmadaBot(bb.Bot):
                     if et.naval and not t.naval:
                         gain *= 2  # only archers can keep ships off the coast
                     score = gain - self.worth(t, u.hp - att_hp, att_hp == 0)
-                    key = (score, self.map.terrain(h).defense, -len(spots[h]))
+                    armed = tight and not et.naval and any(self.rules.damage.get(e.type, {}).values())
+                    key = (armed, score, self.map.terrain(h).defense, -len(spots[h]))
                     if best is None or key > best[0]:
                         best = (key, e, h, spots[h])
         return best
@@ -564,7 +586,7 @@ class ArmadaBot(bb.Bot):
             if not opts:
                 return
             (key, e, h, dirs), u = max(opts, key=lambda x: x[0][0])
-            if key[0] <= (bar(u) if callable(bar) else bar):
+            if key[1] <= (bar(u) if callable(bar) else bar):
                 units = [x for x in units if x is not u and x in [y for _, y in opts]]
                 continue
             if h != u.hex:
@@ -631,6 +653,7 @@ class ArmadaBot(bb.Bot):
         self.capture_all()
         self.fight([u for u in state.my_units() if u.id in state.units], self.bar, move=False)
         self.build_units()
+        self.board_new()
         self.report()
 
     def plain_turn(self):
@@ -828,6 +851,18 @@ class ArmadaBot(bb.Bot):
         far = max(off(x) for x in near)
         return sorted(x for x in near if off(x) >= far - 1)
 
+    def board_new(self):
+        """Guards who have yet to move go aboard a transport built this turn,
+        so that it sails next turn with them ready to land as it arrives."""
+        s = self.state
+        ships = self.mine("transport")
+        if self.ferry is not None or not ships or not self.mid_sites() or self.threat(self.home_isle):
+            return
+        t = ships[0]
+        for u in sorted(s.my_units(), key=lambda u: (not self.unit_type(u).capture, u.id)):
+            if self.roles.get(u.id) == "guard" and not u.carrier and not u.moved and self.can_act(u):
+                self.board(u, t)
+
     def run_ferry(self):
         s = self.state
         w, t = s.units.get(self.midw), s.units.get(self.ferry)
@@ -873,9 +908,19 @@ class ArmadaBot(bb.Bot):
 
         mates = [g for g in takers if there(g)]
 
+        heavy = [eh for eid, (eh, _, _, code) in self.foes.items()
+                 if self.isle[eh] == isle and (eid in s.units or eid not in self.seen_now)
+                 and self.weight.get(code, 1.0) >= 0.5]
+
         def safe(h):
             near = sum(1 for e in threat if bb.distance(h, e) <= WAGON_FEAR)
-            return near == 0 or (near == 1 and len(mates) >= 2 and w is not None and w.hp > WAGON_BRAVE)
+            if near == 0:
+                return True
+            if w is None:
+                return False
+            if mates and w.hp > 40 and not any(bb.distance(h, e) <= WAGON_FEAR for e in heavy):
+                return True  # only scouts about, and a guard ashore to see to them
+            return near == 1 and len(mates) >= 2 and w.hp > WAGON_BRAVE
 
         def rich():
             """The sites worth the wagon's while that it can go to safely."""
@@ -920,12 +965,12 @@ class ArmadaBot(bb.Bot):
                     self.board(g, t)
         riding = any(g.carrier == t.id for g in takers)
         force = [g for g in takers if g.carrier == t.id or there(g) or at_home(g)]
-        strike = (sea or riding) and bool(threat or carts) and hp(force) > theirs
+        strike = (sea or riding) and bool(threat or carts) and hp(force) * FIRST_BLOW > theirs
         # They board only when enough of them can at once: a transport that
         # waits with half a force aboard is a prize for a warship.
         can = [g for g in takers if at_home(g) and g.mp > 0 and self.can_act(g) and t.hex in self.reachable(g)]
         can = can[:max(0, self.rules.passengers_max - len(s.passengers(t)))]
-        ready = strike and hp([g for g in takers if g.carrier == t.id] + can + mates) > theirs
+        ready = strike and hp([g for g in takers if g.carrier == t.id] + can + mates) * FIRST_BLOW > theirs
         if ready and port.owner == self.player and not self.threat(self.home_isle):
             for g in can:
                 self.board(g, t)
@@ -944,14 +989,14 @@ class ArmadaBot(bb.Bot):
         w_aboard = w is not None and w.carrier == t.id
         w_mid = w is not None and not w.carrier and self.isle[w.hex] == isle
         piles = [x for x in sites if self.est[x.id] >= MIN_PILE and not s.enemy_at(x.hex)]
-        strong = hp(g_aboard + ashore) > theirs
+        strong = hp(g_aboard + ashore) * FIRST_BLOW > theirs  # they strike as they land: the first blow is theirs
         at_isle = any(self.isle[h] == isle for h in self.shores.get(t.hex, []))
         # Reasons to be at the island: the wagon is there, or going there;
         # guards are going to clear it; or they have, and want fetching.
         haul = (w_aboard and not w.wheat and bool(piles) and not threat and (sea or at_isle or riding)
                 and (whole or at_isle))  # holed on the way out, it turns back to be mended
         relief = strike and bool(g_aboard) and strong
-        fetch = bool(ashore) and not threat
+        fetch = bool(ashore)  # to take them off, or to stand by them while they fight
         out = w_mid or haul or relief or fetch
         struck = False
         if relief:
@@ -1048,6 +1093,10 @@ class ArmadaBot(bb.Bot):
                 self.sail(t, spots)
         if relief and not struck:
             self.strike_landing(t, isle, strong)
+        elif not struck and riding and not threat:
+            # Arriving, it sees who is there: the guards land and strike at once.
+            if self.threat(isle) and hp(g_aboard) * FIRST_BLOW > self.threat_power(isle):
+                self.strike_landing(t, isle, True)
 
         riders = [u for u in s.passengers(t) if self.roles.get(u.id) == "guard"]
         if any(self.isle[h] == isle for h in self.shores.get(t.hex, [])):
@@ -1180,9 +1229,10 @@ class ArmadaBot(bb.Bot):
         cargo = s.units.get(self.midw)
         coming = self.invasion()
         if cargo is not None and not self.lurking and not (TRADE and coming) and (
-                cargo.carrier == t.id or self.isle.get(cargo.hex) != self.home_isle):
+                (cargo.carrier == t.id and (cargo.wheat or cargo.bread))
+                or (not cargo.carrier and self.isle.get(cargo.hex) != self.home_isle)):
             return False  # the wagon's trip comes first, and its wheat comes home
-        if city is None or (not self.sea_ours() and not s.passengers(t)):
+        if city is None or (not self.sea_ours() and not self.lurking and not (TRADE and coming)):
             # No raid to go on, or none to start while enemy warships are about.
             self.lurking = False
             return False
