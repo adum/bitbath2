@@ -6,16 +6,32 @@ It wins at sea first and on land afterward:
   to the port, which builds a transport at once. From then on the transport
   ferries that wagon between the port and the sites out at sea, which grow
   more than everything on the home island together. A second wagon hauls
-  the home site's wheat to the port.
+  the home site's wheat.
 - Guards. The starting infantry and scout sail with the wagon and stay on
   the middle island. They stand on the sites, which keeps enemy wagons off
-  them, and hunt enemy units that land. If enemy units are ashore when the
-  transport arrives, it pulls up beside one, a wagon for choice, and the
-  guards strike as they land. The wagon stays aboard, or goes back aboard,
-  while enemies that could hurt it are near, though with two guards about
-  it puts up with one. For each enemy seen there the port builds another
-  guard, and the transport takes them over. If the island is lost, the
-  wagon hauls the home site's wheat instead.
+  them. If enemy units are ashore when the transport arrives, it pulls up
+  beside one, a wagon for choice, and the guards strike as they land.
+  Otherwise they land only where the enemy can't strike them first, and
+  come no nearer than that until they can strike. The wagon stays aboard,
+  or goes back aboard, while enemies that could hurt it are near, though
+  with two guards about it puts up with one. For the enemy's strength
+  there the port builds more guards, and the transport takes them over. If
+  the island is lost, the wagon hauls the home site's wheat instead.
+- Raids. An enemy whose army is on the middle island has left its cities
+  empty. When the guards see two or more enemy units that can capture
+  there, the transport takes them to the enemy's port instead, lands them
+  on it, and they take it and march on the home city. It does the same
+  when an enemy warship closes its own port early in the game, since the
+  enemy's waters are then the safer ones: it waits off the enemy's port
+  with the guards and the loaded wagon aboard until the defenders leave,
+  and unloads the wheat in the captured port.
+- Warships. It remembers where enemy warships were last seen. A transport
+  doesn't end its move within their reach, except to bring a load of wheat
+  home, which it lands on the shore nearest the port. While a warship is
+  near the port it builds no ships there, which would be sunk as they are
+  launched. It builds two archers, who shoot at ships from two hexes
+  inland, where a galley can't bombard them. With a warship right next to
+  the port, the home site's wagon unloads in the home city.
 - Galleys. They sink the transports they find, bombard enemy units on the
   shores of the middle island and of the home island, and otherwise take
   station on the water next to the enemy's port. A port launches ships onto
@@ -27,9 +43,10 @@ It wins at sea first and on land afterward:
   transports go back for more until the enemy has no city left. While
   enemy units are on the home island, the army stays to fight them.
 
-It builds nearly everything at the port, since that is where units embark,
-and it reads the map and the rules from the init message. It needs supply
-and ships: under other rules it only walks at the nearest city.
+In a fight it counts a unit by its cost and by how hard it hits, so that
+it goes for infantry before scouts. It reads the map and the rules from
+the init message. It needs supply and ships: under other rules it only
+walks at the nearest city.
 
 Usage: python bots/armada_bot.py
 """
@@ -61,8 +78,14 @@ MEMORY = 20
 # guards about and more than WAGON_BRAVE HP, it puts up with one.
 WAGON_FEAR = 3
 WAGON_BRAVE = 70
-# The ferry goes home when an enemy warship is seen this near.
-SHIP_FEAR = 7
+# An enemy warship is thought to be where it was last seen for this many
+# rounds, unless someone looks and finds it gone.
+SHIP_MEMORY = 6
+# Once an enemy warship has come near the port, it keeps this many archers
+# by the port to shoot at ships, for as long as RAID_MEMORY rounds after
+# the last one was seen there.
+BATTERY = 2
+RAID_MEMORY = 40
 # Galleys it keeps, one more for each enemy warship seen lately up to
 # MAX_GALLEYS, and the HP below which one goes home to heal.
 GALLEYS = 3
@@ -73,6 +96,18 @@ BOMBARD = 2
 # Transports for the invasion, and the land units it keeps for it.
 LIFTS = 2
 ARMY = 14
+# A raid on the enemy's port is on while at least RAID_AWAY of its units that
+# can capture are known to be on the middle island, until round RAID_UNTIL.
+# One that finds the port defended is called off for RAID_REST rounds.
+RAID_AWAY = 2
+RAID_UNTIL = 40
+RAID_REST = 15
+# It also raids when an enemy warship comes near its own port before round
+# LURK_FROM: the enemy's waters are then safer than its own. A raid that
+# finds the port held waits off it until round LURK_UNTIL for the defenders
+# to leave.
+LURK_FROM = 14
+LURK_UNTIL = 18
 # The army's make-up, over and over.
 ARMY_ORDER = "IAI"
 # Bread the port keeps back from building its army, to feed what stands around it.
@@ -118,8 +153,27 @@ class ArmadaBot(bb.Bot):
         self.launched = False
         self.foes = {}      # enemy land unit id -> (hex, round) it was last seen
         self.seen_now = set()
-        self.warships = {}  # enemy warship id -> round it was last seen
+        self.warships = {}  # enemy warship id -> (hex, round) it was last seen
+        self.sighted = {}   # enemy warship id -> round it was last seen, to count them
+        self.raided = -99   # the round an enemy warship was last near the port
+        self.raid_off = 0   # no raid before this round
+        self.lurking = False
         self.want_guards = 0
+        types = self.rules.unit_types.values()
+        # How far a warship strikes in a turn: its move and its range.
+        self.reach = max((t.move + t.range_max for t in types if t.naval and not t.transport), default=0)
+        # What shoots at ships from land: archers.
+        shooters = [t for t in types if not t.naval
+                    and any(self.rules.damage.get(t.code, {}).get(x.code, 0) for x in types if x.naval)]
+        self.shooter = min(shooters, key=lambda t: t.cost).code if shooters else None
+        # How hard each land unit hits, against the cheapest unit that captures.
+        land = [t for t in types if not t.naval]
+
+        def punch(t):
+            return sum(self.rules.damage.get(t.code, {}).get(x.code, 0) for x in land) / max(1, len(land))
+        takers = [t for t in land if t.capture]
+        ref = punch(min(takers, key=lambda t: t.cost)) if takers else 0
+        self.weight = {t.code: min(1.5, max(0.3, punch(t) / ref)) if ref and not t.carry else 1.0 for t in land}
 
     # Fields and movement.
 
@@ -154,12 +208,12 @@ class ArmadaBot(bb.Bot):
             return False
         return bool(self.move(u, best[1]))
 
-    def approach(self, u, hexes):
+    def approach(self, u, hexes, avoid=()):
         """Moves u toward the nearest of some enemy hexes, as close as it can
-        still attack from."""
+        still attack from, and not onto the hexes to avoid."""
         near = self.unit_type(u).range_min
         self.go(u, self.distance_field(hexes, blocked=set()),
-                lambda h: min(bb.distance(h, e) for e in hexes) >= near)
+                lambda h: h not in avoid and min(bb.distance(h, e) for e in hexes) >= near)
 
     def board(self, u, t):
         """Moves u aboard transport t, or toward it. Returns whether it boarded."""
@@ -247,6 +301,88 @@ class ArmadaBot(bb.Bot):
                 out.append(x)
         return sorted(out)
 
+    def sea_danger(self):
+        """Where enemy warships are, or were when last seen."""
+        s = self.state
+        for e in s.enemy_units():
+            t = self.unit_type(e)
+            if t.naval and not t.transport:
+                self.warships[e.id] = (e.hex, s.round)
+        return [h for h, _ in self.warships.values()]
+
+    def exposed(self, h, margin=0):
+        """Whether an enemy warship could strike a ship on h next turn."""
+        return any(bb.distance(h, x) <= self.reach - margin for x in self.sea_danger())
+
+    def sail(self, t, goals):
+        """Moves a transport toward goals without ending where a warship could
+        strike it. If it is within reach where it lies and can't get nearer
+        safely, it runs."""
+        if t.id not in self.state.units or t.mp <= 0 or not self.can_act(t):
+            return False
+        danger = self.sea_danger()
+        field = self.sea_to(goals) if goals else {}
+        if not danger:
+            return self.go(t, field)
+        if self.go(t, field, lambda h: not self.exposed(h)):
+            return True
+        if self.exposed(t.hex):
+            def far(h):
+                return min(bb.distance(h, x) for x in danger)
+            reach = self.reachable(t)
+            best = max(reach, key=lambda h: (far(h), -len(reach[h]), h), default=None)
+            if best is not None and far(best) > far(t.hex):
+                return bool(self.move(t, reach[best]))
+        return False
+
+    def berth(self, port):
+        """Where transports wait and unload at home: the water by the port, or
+        with a warship about, the safe water whose shore is nearest the port."""
+        dock = self.dock(port)
+        if not any(self.exposed(h) for h in dock):
+            return dock
+        field = self.land_to(port.hex)
+        for margin in (0, self.reach - 1):  # out of reach, or failing that not next to one
+            best, out = INF, []
+            for x, land in self.shores.items():
+                if self.exposed(x, margin):
+                    continue
+                d = min((field.get(h, INF) for h in land if self.isle[h] == self.home_isle), default=INF)
+                if d < best:
+                    best, out = d, []
+                if d == best and d < INF:
+                    out.append(x)
+            if out:
+                return out
+        return dock
+
+    def shore_by(self, port):
+        """The water whose shore is nearest the port, wherever enemy ships are."""
+        field = self.land_to(port.hex)
+        taken = {e.hex for e in self.state.enemy_units() if not e.carrier}
+        best, out = INF, []
+        for x, land in self.shores.items():
+            if x in taken:
+                continue
+            d = min((field.get(h, INF) for h in land if self.isle[h] == self.home_isle and h not in taken),
+                    default=INF)
+            if d < best:
+                best, out = d, []
+            if d == best and d < INF:
+                out.append(x)
+        return out or self.dock(port)
+
+    def depot(self):
+        """The city wagons unload in and most units are built in: the port, or
+        the home city while a warship lies next to the port, where it stops
+        the port's bread and bombards what stands in it."""
+        port, home = self.port(), self.state.city_at(self.home)
+        if home.owner != self.player:
+            return port
+        if port is None or any(bb.distance(x, port.hex) <= 1 for x in self.sea_danger()):
+            return home
+        return port
+
     def fighter(self, e):
         """Whether an enemy unit is a land unit, ashore, that can hurt something."""
         return (not e.carrier and e.hex in self.isle and not self.unit_type(e).naval
@@ -259,22 +395,62 @@ class ArmadaBot(bb.Bot):
         out = []
         for e in s.enemy_units():
             if self.fighter(e):
-                self.foes[e.id] = (e.hex, s.round)
+                self.foes[e.id] = (e.hex, s.round, e.hp, e.type)
                 self.seen_now.add(e.id)
                 if self.isle[e.hex] == isle:
                     out.append(e.hex)
-        for eid, (h, _) in self.foes.items():
+        for eid, (h, _, _, _) in self.foes.items():
             if eid not in self.seen_now and self.isle[h] == isle:
                 out.append(h)
         return out
 
+    def threat_hp(self, isle):
+        """The HP of the enemy land units on an island, as far as it's known."""
+        self.threat(isle)
+        return sum(hp for eid, (h, _, hp, _) in self.foes.items() if self.isle[h] == isle
+                   and (eid in self.state.units or eid not in self.seen_now))
+
+    def enemy_reach(self, isle):
+        """The hexes that the enemy land units known on an island could strike
+        next turn: wherever each can walk to, and what it reaches from there."""
+        s = self.state
+        self.threat(isle)
+        slow = max((t.move for t in self.rules.unit_types.values() if t.capture), default=3)
+        out = set()
+        for eid, (h, _, _, _) in self.foes.items():
+            e = s.units.get(eid)
+            if self.isle[h] != isle or (e is None and eid in self.seen_now):
+                continue
+            move = self.unit_type(e).move if e is not None else slow
+            span = self.unit_type(e).range_max if e is not None else 1
+            cost = {h: 0}
+            todo = [h]
+            while todo:
+                x = todo.pop()
+                for y in bb.neighbors(x):
+                    if y in self.isle:
+                        c = cost[x] + self.map.terrain(y).move_cost
+                        if c <= move and c < cost.get(y, INF):
+                            cost[y] = c
+                            todo.append(y)
+            for x in cost:
+                out.update(bb.disk(x, span))
+        return out
+
+    def mid_isles(self):
+        return {self.isle[x.hex] for x in self.mid_sites()}
+
     def mid_threat(self):
-        return sum(len(self.threat(i)) for i in {self.isle[x.hex] for x in self.mid_sites()})
+        return sum(len(self.threat(i)) for i in self.mid_isles())
 
     # Fighting.
 
     def worth(self, utype, hp_lost, dies):
-        return utype.cost * hp_lost / utype.max_hp + (utype.cost if dies else 0)
+        """What a unit's lost HP, or the unit itself, counts for in a fight:
+        its cost, scaled for a land unit by how hard it hits. A scout is
+        cheap to lose and not worth much to kill."""
+        value = utype.cost * self.weight.get(utype.code, 1.0)
+        return value * hp_lost / utype.max_hp + (value if dies else 0)
 
     def best_attack(self, u, move=True):
         """The best attack u can make this turn, as (score, target, hex, dirs), or None."""
@@ -403,12 +579,21 @@ class ArmadaBot(bb.Bot):
         for e in s.enemy_units():
             t = self.unit_type(e)
             if t.naval and not t.transport:
-                self.warships[e.id] = s.round
-        for eid, (h, rnd) in list(self.foes.items()):
+                self.sighted[e.id] = s.round
+        for eid, (h, rnd, _, _) in list(self.foes.items()):
             sight = 2 if self.map.terrain(h).conceal == 0 else 1
             if eid in s.units or s.round - rnd > MEMORY or any(bb.distance(u.hex, h) <= sight for u in mine):
                 del self.foes[eid]
+        for eid, (h, rnd) in list(self.warships.items()):
+            if (eid in s.units or s.round - rnd > SHIP_MEMORY or any(bb.distance(u.hex, h) <= 2 for u in mine)
+                    or any(bb.distance(c.hex, h) <= self.rules.city_vision for c in s.my_cities())):
+                del self.warships[eid]
+        port = self.port()
+        if port is not None and any(bb.distance(x, port.hex) <= self.reach for x in self.sea_danger()):
+            self.raided = s.round
         mid_threat = self.mid_threat()
+        mid_hp = sum(self.threat_hp(i) for i in self.mid_isles())
+        invaded = bool(self.threat(self.home_isle))
 
         ids = {u.id for u in mine}
         wagons, ships = self.mine("carry"), self.mine("transport")
@@ -423,13 +608,15 @@ class ArmadaBot(bb.Bot):
                 self.midw = w.id
             elif self.hauler is None:
                 self.hauler = w.id
-        # With the middle island lost, its wagon hauls at home if no one does.
-        w = s.units.get(self.midw)
-        if (w is not None and self.hauler is None and mid_threat and not w.carrier
-                and self.isle[w.hex] == self.home_isle and not w.wheat):
-            self.hauler, self.midw = self.midw, None
         if self.ferry not in ids:
             self.ferry = ships[0].id if ships else None
+        # With the middle island lost, or no transport to go there in, its
+        # wagon hauls at home if no one does.
+        w = s.units.get(self.midw)
+        idle = mid_threat or (self.ferry is None and s.round > 5)
+        if (w is not None and self.hauler is None and idle and not w.carrier
+                and self.isle[w.hex] == self.home_isle and not w.wheat):
+            self.hauler, self.midw = self.midw, None
         self.lifts = [t for t in ships if t.id != self.ferry]
         self.mode = {t.id: self.mode.get(t.id, "load") for t in self.lifts}
         self.galleys = [u for u in mine if self.unit_type(u).naval and not self.unit_type(u).transport]
@@ -441,7 +628,7 @@ class ArmadaBot(bb.Bot):
         land = [u for u in mine if not self.unit_type(u).naval and not self.unit_type(u).carry]
         posts = [c for c in s.cities if self.isle[c.hex] == self.home_isle]
         posts.sort(key=lambda c: (not self.map.is_port(c.hex), c.id))
-        self.want_guards = min(GUARDS + mid_threat, MAX_GUARDS) if self.mid_sites() else 0
+        self.want_guards = min(GUARDS + -(-mid_hp // 100), MAX_GUARDS) if self.mid_sites() else 0
         for u in sorted(land, key=lambda u: u.id):
             if u.id in self.roles:
                 continue
@@ -450,6 +637,12 @@ class ArmadaBot(bb.Bot):
             role = "army"
             if s.round <= 1 and self.mid_sites():
                 role = "guard"
+            elif not self.unit_type(u).capture:
+                if (u.type == self.shooter and s.round - self.raided <= RAID_MEMORY
+                        and taken.count("battery") < BATTERY):
+                    role = "battery"
+            elif mid_threat and not invaded and taken.count("guard") < self.want_guards:
+                role = "guard"  # the island comes before the garrisons
             elif self.unit_type(u).capture:
                 here = [c for c in lacking if c.hex == u.hex]
                 if here:
@@ -487,10 +680,17 @@ class ArmadaBot(bb.Bot):
             if w is not None:
                 self.stock_port(w)
             return
-        dock = self.dock(port)
+        if w is not None and w.carrier == t.id and w.wheat and not w.moved:
+            for c in s.my_cities():
+                if bb.distance(c.hex, t.hex) == 1 and c is not port and self.land(w, {c.hex: 0}):
+                    self.unload(w)
+                    break
+        if self.run_raid(t):
+            return
+        berth = self.berth(port)
         sites = self.mid_sites()
         if not sites:
-            self.go(t, self.sea_to(dock))
+            self.sail(t, berth)
             return
         anchor = min(sites, key=lambda x: x.id)
         isle = self.isle[anchor.hex]
@@ -517,6 +717,8 @@ class ArmadaBot(bb.Bot):
             if self.isle[w.hex] == self.home_isle:
                 if w.wheat or (w.bread and w.hex != port.hex and not rich()):
                     self.deliver(w, port)
+                elif not rich() and any(bb.distance(x, w.hex) <= 1 for x in self.sea_danger()):
+                    self.go(w, self.land_to(self.home))  # out from under a warship's bombardment
                 elif rich():
                     self.board(w, t)
             elif rich() and safe(w.hex):
@@ -538,39 +740,59 @@ class ArmadaBot(bb.Bot):
         w_aboard = w is not None and w.carrier == t.id
         w_mid = w is not None and not w.carrier and self.isle[w.hex] == isle
         piles = [x for x in sites if self.est[x.id] >= MIN_PILE and not s.enemy_at(x.hex)]
-        strong = len(g_aboard) + len(ashore) > len(threat)
+        ours, theirs = sum(u.hp for u in g_aboard + ashore), self.threat_hp(isle)
+        strong = ours > theirs
         # Three reasons to be at the island: the wagon is there, or going
         # there, or guards are going to hold it or to take it back.
-        holding = len(g_aboard) + len(ashore) >= len(threat) and bool(g_aboard or ashore)
+        holding = ours > 0 and ours >= 0.6 * theirs
         haul = w_aboard and not w.wheat and bool(piles) and (not threat or holding)
+        if haul and threat and not rich() and [g for g in waiting if not g.carrier]:
+            haul = False  # the wagon can't go ashore yet, and more guards wait at home
         left = [g for g in waiting if not g.carrier]
         relief = (bool(g_aboard) and (bool(threat) or not ashore) and strong
                   and (len(aboard) >= self.rules.passengers_max or not left))
         out = w_mid or haul or relief
-        warships = [e for e in s.enemy_units() if self.unit_type(e).naval and not self.unit_type(e).transport
-                    and bb.distance(e.hex, t.hex) <= SHIP_FEAR]
-        if warships and not any(bb.distance(g.hex, t.hex) <= 2 for g in self.galleys):
-            out = False
         at_isle = any(self.isle[h] == isle for h in self.shores.get(t.hex, []))
-        if not out:
-            self.go(t, self.sea_to(dock))
+        struck = False
+        if out and g_aboard:
+            # First see whether the guards can land beside an enemy and strike.
+            before = len(s.passengers(t))
+            self.strike_landing(t, isle, strong)
+            struck = len(s.passengers(t)) < before
+        if struck:
+            pass
+        elif w_aboard and w.wheat and any(self.exposed(h) for h in self.dock(port)):
+            # Loaded, with a warship off the port: the wheat is worth more than
+            # the transport. Straight to the shore nearest the port.
+            self.go(t, self.sea_to(self.shore_by(port)))
+        elif not out:
+            self.sail(t, berth)
         elif not (w_mid and at_isle):
             # Land the wagon by the site it wants. While it is ashore, the
             # transport waits where it is, so that the wagon finds it.
             goal = max(rich(), key=lambda x: (self.est[x.id], -x.id)).hex if w_aboard and rich() else anchor.hex
             spots = self.landing_for(goal)
             if spots:
-                self.go(t, self.sea_to(spots))
+                self.sail(t, spots)
+        elif self.exposed(t.hex, 2):
+            self.sail(t, [])  # a warship is close: out of its way
         if g_aboard:
             self.strike_landing(t, isle, strong)
 
+        if not struck and self.raid_target() is not None and sum(
+                u.hp for u in s.passengers(t) if self.roles.get(u.id) == "guard"
+                and self.unit_type(u).capture) >= self.rules.capture_points / 2:
+            return  # stay aboard: the enemy's army is here, so its port is empty
         if any(self.isle[h] == isle for h in self.shores.get(t.hex, [])):
             for g in [u for u in s.passengers(t) if self.roles.get(u.id) == "guard"]:
                 threat = self.threat(isle)
                 if not threat:
                     self.land(g, self.land_to(self.post_for(g, sites).hex))
                 elif self.unit_type(g).capture:
-                    self.land(g, self.distance_field(threat, blocked=set()))
+                    # Those who didn't land to strike go ashore only where
+                    # the enemy can't strike them first.
+                    reach = self.enemy_reach(isle)
+                    self.land(g, self.distance_field(threat, blocked=set()), lambda h: h not in reach)
                 # A scout stays aboard, and keeps watch, while enemies are about.
             threat = self.threat(isle)
             if w_aboard and w.carrier and not w.wheat and rich():
@@ -578,8 +800,10 @@ class ArmadaBot(bb.Bot):
                 if self.land(w, self.land_to(site.hex), safe) and w.hex == site.hex and site.wheat > 0:
                     self.load(w)
                     self.est[site.id] = site.wheat
-        elif w_aboard and w.carrier and not out and bb.distance(t.hex, port.hex) == 1:
-            if self.land(w, {port.hex: 0}):
+        elif w_aboard and w.carrier and not out and (
+                t.hex in berth or bb.distance(t.hex, port.hex) == 1
+                or (w.wheat and t.hex in self.shore_by(port))):
+            if self.land(w, self.land_to(port.hex), lambda h: self.isle[h] == self.home_isle):
                 self.deliver(w, port)
 
     def strike_landing(self, t, isle, strong):
@@ -614,6 +838,71 @@ class ArmadaBot(bb.Bot):
             # A scout is worth risking to finish off a wagon.
             for u in fighters + (scouts if self.unit_type(e).carry else []):
                 self.land(u, {h: 0 for h in self.shores[x]}, lambda h: bb.distance(h, e.hex) == 1)
+
+    def raid_target(self):
+        """The enemy port to raid: one whose owner's army is known to be away
+        on the middle island, with no defenders known."""
+        s = self.state
+        if s.round > RAID_UNTIL or s.round < self.raid_off:
+            return None
+        ports = [c for c in s.cities if c.owner not in (0, self.player) and self.map.is_port(c.hex)]
+        if not ports:
+            return None
+        isles = self.mid_isles()
+        for i in isles:
+            self.threat(i)
+        away = sum(1 for eid, (h, _, _, code) in self.foes.items()
+                   if self.isle[h] in isles and (eid in s.units or eid not in self.seen_now)
+                   and self.rules.unit_types[code].capture)
+        city = min(ports, key=lambda c: (bb.distance(c.hex, self.home), c.id))
+        closed = s.round - self.raided <= 3 and (s.round <= LURK_FROM or self.lurking)
+        return city if away >= RAID_AWAY or closed else None
+
+    def run_raid(self, t):
+        """Takes the guards to an enemy port left empty and lands them on it.
+        Returns whether the transport is busy with that this turn."""
+        s = self.state
+        city = self.raid_target()
+        if city is None:
+            return False
+        there = self.isle[city.hex]
+
+        def punch(units):
+            return sum(u.hp for u in units if self.unit_type(u).capture)
+        guards = self.units_with("guard")
+        aboard = [u for u in s.passengers(t) if self.roles.get(u.id) == "guard"]
+        near = [g for g in guards if not g.carrier and self.isle[g.hex] != there and g.mp > 0
+                and self.can_act(g) and t.hex in self.reachable(g)]
+        known = self.threat_hp(there)
+        need = self.rules.capture_points / 2 if not known else self.rules.capture_points
+        if punch(aboard) + punch(near) < need:
+            return False  # too few to take a city with
+        for g in near:
+            self.board(g, t)
+        w = s.units.get(self.midw)
+        if w is not None and not w.carrier and self.isle[w.hex] != self.home_isle:
+            self.board(w, t)  # not left behind among the enemy
+        aboard = [u for u in s.passengers(t) if self.roles.get(u.id) == "guard"]
+        if punch(aboard) < need:
+            return False
+        self.lurking = True
+        spots = self.landing_for(city.hex)
+        moved = bool(spots) and self.go(t, self.sea_to(spots))
+        if t.hex in spots or (not moved and any(self.isle[h] == there for h in self.shores.get(t.hex, []))):
+            foes = self.threat_hp(there)
+            if s.enemy_at(city.hex) and punch(aboard) <= 1.2 * foes:
+                # Held, and by too many. Wait off it for them to leave, for a while.
+                if s.round > LURK_UNTIL:
+                    self.raid_off = s.round + RAID_REST
+                    self.lurking = False
+                    return False
+            else:
+                field = self.land_to(city.hex)
+                for u in sorted(aboard, key=lambda u: (not self.unit_type(u).capture, u.id)):
+                    self.land(u, field)
+                self.lurking = False
+        self.debug_text("armada: raiding city %d" % city.id)
+        return True
 
     def deliver(self, w, city):
         """Takes a wagon's goods to a city of ours and unloads them there."""
@@ -651,8 +940,8 @@ class ArmadaBot(bb.Bot):
         w, site = s.units.get(self.hauler), self.home_site()
         if w is None or site is None or w.carrier:
             return
-        city = self.port() or s.city_at(self.home)
-        if city.owner != self.player:
+        city = self.depot()
+        if city is None:
             return
         if w.wheat or w.bread:
             self.deliver(w, city)
@@ -739,7 +1028,7 @@ class ArmadaBot(bb.Bot):
         port, target = self.port(), self.target()
         if port is None:
             return
-        dock = self.dock(port)
+        dock = self.berth(port)
         ferry = s.units.get(self.ferry)
         berth = [h for h in dock if ferry is None or h != ferry.hex] or dock
         size = self.rules.passengers_max
@@ -782,19 +1071,19 @@ class ArmadaBot(bb.Bot):
                 if not s.passengers(t):
                     self.mode[t.id] = "back"
             elif mode == "back":
-                self.go(t, self.sea_to(berth))
+                self.sail(t, berth)
                 if t.hex in dock:
                     self.mode[t.id] = "load"
             else:
-                self.go(t, self.sea_to(berth))
+                self.sail(t, berth)
 
     def run_land(self):
         s = self.state
         port = self.port()
         invaders = self.threat(self.home_isle)
-        loading = [t for t in self.lifts if self.mode[t.id] == "load" and port is not None
-                   and bb.distance(t.hex, port.hex) == 1 and not invaders]
-        stage = None
+        loading = [t for t in self.lifts if self.mode[t.id] == "load" and not invaders
+                   and any(self.isle[h] == self.home_isle for h in self.shores.get(t.hex, []))]
+        stage = battery = None
         for u in sorted(s.my_units(), key=lambda u: u.id):
             role = self.roles.get(u.id)
             if role is None or u.carrier or u.id not in s.units or not self.can_act(u) or u.mp <= 0:
@@ -809,9 +1098,19 @@ class ArmadaBot(bb.Bot):
             elif role == "guard" and isle != self.home_isle and not foreign:
                 sites = [x for x in self.mid_sites() if self.isle[x.hex] == isle]
                 threat = self.threat(isle)
-                mates = [g for g in self.units_with("guard") if self.isle_of(g) == isle]
-                if threat and capture and len(mates) >= len(threat):
-                    self.approach(u, threat)
+                mates = [g for g in self.units_with("guard") if self.isle_of(g) == isle and self.unit_type(g).capture]
+                reach = self.enemy_reach(isle) if threat else set()
+                if threat and capture and sum(g.hp for g in mates) >= self.threat_hp(isle):
+                    # Come as near as can be without giving them the first blow.
+                    self.approach(u, threat, reach)
+                elif threat and u.hex in reach:
+                    # Outmatched: out of their reach, onto the best ground.
+                    spots = {h: d for h, d in self.reachable(u).items() if h in self.isle and h not in reach}
+                    if spots:
+                        best = max(spots, key=lambda h: (self.map.terrain(h).defense, -len(spots[h]), h))
+                        self.move(u, spots[best])
+                elif threat:
+                    pass
                 elif sites:
                     post = self.post_for(u, sites)
                     if u.hex != post.hex:
@@ -826,8 +1125,18 @@ class ArmadaBot(bb.Bot):
                     reach = self.unit_type(u).range_max
                     held = s.enemy_at(city.hex)
                     self.go(u, field, lambda h: h != city.hex and (not held or bb.distance(h, city.hex) >= reach))
-            elif isle == self.home_isle and invaders and role == "army":
+            elif isle == self.home_isle and invaders and role in ("army", "battery"):
                 self.approach(u, invaders)
+            elif role == "battery":
+                # Two hexes from the water by the port: where a ship there can
+                # be shot at, and can't shoot back.
+                if port is not None and battery is None:
+                    dock = self.dock(port)
+                    ring = [h for h, i in self.isle.items() if i == self.home_isle and h != port.hex
+                            and min(bb.distance(h, x) for x in dock) == 2]
+                    battery = self.distance_field(ring or [port.hex], blocked=set())
+                if battery is not None:
+                    self.go(u, battery)
             elif role == "guard" and port is not None:
                 if u.hex != port.hex:
                     self.go(u, self.land_to(port.hex))
@@ -848,9 +1157,9 @@ class ArmadaBot(bb.Bot):
     def build_units(self):
         s = self.state
         types = self.rules.unit_types
-        port = self.port()
-        home = s.city_at(self.home)
+        port, depot = self.port(), self.depot()
         mine = s.my_units()
+        roles = list(self.roles.values())
 
         def count(code):
             return sum(1 for u in mine if u.type == code)
@@ -860,44 +1169,52 @@ class ArmadaBot(bb.Bot):
 
         land = [u for u in mine if not self.unit_type(u).naval and not self.unit_type(u).carry]
         army = [u for u in land if self.roles.get(u.id, "army") == "army"]
-        guards = list(self.roles.values()).count("guard")
         mid_threat = self.mid_threat()
-        seen = sum(1 for r in self.warships.values() if s.round - r <= 30)
+        seen = sum(1 for r in self.sighted.values() if s.round - r <= 30)
         galleys = min(MAX_GALLEYS, max(GALLEYS, seen + 1))
         invaded = bool(self.threat(self.home_isle))
+        # A ship is built only where it could be launched and would live to
+        # move: not with an enemy warship in reach of the port.
+        ships = port is not None and not any(bb.distance(x, port.hex) <= self.reach for x in self.sea_danger())
+        battery = (self.shooter is not None and s.round - self.raided <= RAID_MEMORY
+                   and roles.count("battery") < BATTERY)
+        # Past the opening: there is a transport, or there can't be one now.
+        going = self.ferry is not None or not ships
+        bare = [c for c in s.my_cities() if self.isle[c.hex] == self.home_isle and not garrisoned(c)]
         for city in s.my_cities():
             if city.built or s.enemy_at(city.hex):
                 continue
             want = []  # (unit, bread to keep back), most wanted first
-            if city is port:
-                if invaded:
-                    want.append(("I", 0))
-                if self.ferry is None:
-                    want.append(("T", 0))
+            afloat = ships and city is port
+            if invaded:
+                want.append(("I", 0))
+            if afloat and self.ferry is None:
+                want.append(("T", 0))
+            if city is depot or city is port:
                 if self.midw is None and self.mid_sites() and not mid_threat and self.ferry is not None:
                     want.append(("W", 0))
-                if self.hauler is None and self.home_site() is not None and self.ferry is not None:
+                if self.hauler is None and self.home_site() is not None and going:
                     want.append(("W", 0))
+                if battery:
+                    want.append((self.shooter, 0))
                 if not garrisoned(city):
                     want.append(("I", 0))
-                if self.ferry is not None:
-                    if guards < self.want_guards:
+                if going:
+                    if roles.count("guard") < self.want_guards:
                         want.append(("I", 0))
-                    if count("G") < 2:
+                    if afloat and count("G") < 2:
                         want.append(("G", 0))
-                    if home.owner == self.player and not garrisoned(home):
+                    if bare:
                         want.append(("I", 0))
-                    if count("G") < galleys:
+                    if afloat and count("G") < galleys:
                         want.append(("G", 0))
-                    if len(self.lifts) < LIFTS and len(army) >= 2 * (len(self.lifts) + 1):
+                    if afloat and len(self.lifts) < LIFTS and len(army) >= 2 * (len(self.lifts) + 1):
                         want.append(("T", 0))
                     if len(army) < ARMY:
                         want.append((ARMY_ORDER[len(land) % len(ARMY_ORDER)], KEEP))
-            elif port is None or self.isle[city.hex] != self.home_isle:
-                want.append(("I", KEEP))
-            elif not garrisoned(city) or invaded:
+            elif city in bare:
                 want.append(("I", 0))
-            elif len(army) < ARMY and self.ferry is not None:
+            elif len(army) < ARMY and going:
                 want.append(("I", KEEP))
             for code, keep in want[:1]:
                 if code not in types:
