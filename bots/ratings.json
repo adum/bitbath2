@@ -214,6 +214,22 @@
       },
       "field": ["trident", "armada", "breakwater", "naval", "supply", "forager"],
       "ratings": {
+        "trident": {
+          "rating": 2654.1,
+          "interval": [2552.3, 2785.0],
+          "games": 200,
+          "wins": 181,
+          "draws": 0,
+          "losses": 19,
+          "forfeits": 0,
+          "invalid_pct": 0.0,
+          "avg_think_ms": 18.4,
+          "max_think_ms": 99,
+          "source": {
+            "bots/trident_bot.py": "1edcbb6bf125fd6ba4b67eccb72c240c611ca3ee05335ffd42cccc6c44fb9abf",
+            "kits/python/bitbath.py": "fafcb4e7ebaf237fa0073dc6b3fcf62cdccbc7fb2245707fe85ff466b3e061e4"
+          }
+        },
         "armada": {
           "rating": 2521.9,
           "interval": [2423.6, 2633.3],
@@ -227,6 +243,22 @@
           "max_think_ms": 47,
           "source": {
             "bots/armada_bot.py": "c847b2b5d2a32b2f1a5772f745712bb6585e04e812c5b46db4e68dab21bf8a9a",
+            "kits/python/bitbath.py": "fafcb4e7ebaf237fa0073dc6b3fcf62cdccbc7fb2245707fe85ff466b3e061e4"
+          }
+        },
+        "breakwater": {
+          "rating": 2371.6,
+          "interval": [2279.5, 2459.9],
+          "games": 200,
+          "wins": 138,
+          "draws": 0,
+          "losses": 62,
+          "forfeits": 0,
+          "invalid_pct": 0.0,
+          "avg_think_ms": 5.3,
+          "max_think_ms": 37,
+          "source": {
+            "bots/breakwater_bot.py": "e63afdc0293b8eea1e83fc3e27d20076c347fbd019131a1f0c0dc350a480fb30",
             "kits/python/bitbath.py": "fafcb4e7ebaf237fa0073dc6b3fcf62cdccbc7fb2245707fe85ff466b3e061e4"
           }
         },

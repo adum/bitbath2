@@ -281,6 +281,46 @@
       "play_page": "pyodide",
       "benchmark": null
     },
+    "trident": {
+      "name": "Trident",
+      "about": "Shuttles starting bread to launch early transports, ferries middle-island wheat, and presses fast naval invasions.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Gemini 4 Neon"],
+        "how": "Written from scratch in Python for the Islets and Islands strategic maps to beat Naval.",
+        "created": "2026-11-25",
+        "commit": null
+      },
+      "language": "python",
+      "files": ["bots/trident_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/trident_bot.py",
+      "build": null,
+      "rules": ["strategic"],
+      "maps": ["islets", "islands"],
+      "play_page": "pyodide",
+      "benchmark": null
+    },
+    "breakwater": {
+      "name": "Breakwater",
+      "about": "Patrols the central wheat crossing with its first galley, intercepts returning transports at the rival port, and ferries an escorted wagon to fund landings.",
+      "kind": "reference",
+      "made": {
+        "by": ["OpenAI Codex"],
+        "how": "Built independently in Python for Islets and tested in side-swapped matches against Trident and Armada.",
+        "created": "2026-11-25",
+        "commit": null
+      },
+      "language": "python",
+      "files": ["bots/breakwater_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/breakwater_bot.py",
+      "build": null,
+      "rules": ["strategic"],
+      "maps": ["islets"],
+      "play_page": "pyodide",
+      "benchmark": null
+    },
     "forager": {
       "name": "Forager",
       "about": "Spreads out to take cities, raids supply with cavalry and scouts, and ferries wheat, in a few milliseconds a turn.",
