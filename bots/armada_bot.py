@@ -8,7 +8,12 @@ It wins at sea first and on land afterward:
   which grow more than everything on the home island together, and waits
   for the wagon on the side of the island away from the enemy, or, once a
   warship has been seen, on the side farthest from that. When the wagon
-  has all it can carry, the transport comes round to it. A second
+  has all it can carry, the transport comes round to it: if it is whole,
+  whatever lies off the island, since it can take one blow from a warship
+  and still sail, and a loaded wagon left ashore is lost to the next
+  landing. The wagon is landed on the side of the island away from the
+  enemy to begin with. A transport holed on its way out turns back, lands
+  everyone, and is mended in port before it tries again. A second
   wagon hauls the home site's wheat.
 - Guards. The starting infantry sail with the wagon and stay aboard beside
   the island. A unit on the island is struck first by whoever lands beside
@@ -122,6 +127,10 @@ GALLEY_HOME_HP = 45
 GALLEYS_FIRST = 4
 # Galleys that bombard one enemy unit at a time.
 BOMBARD = 2
+# The wagon is landed on the side of the island farthest from the enemy's
+# cities, where its galley comes last, if that costs it no more than this
+# much more walking to the site.
+LEE_SLACK = 2
 # The sea is ours when no enemy warship has been seen for SEA_CLEAR rounds,
 # or when ESCORT galleys of our own are out. Until then the transport makes
 # no new trips, and a galley alone waits by the port for a second.
@@ -794,6 +803,31 @@ class ArmadaBot(bb.Bot):
         to hold the middle island, or RAID_AWAY of them landed at home."""
         return len(self.seaborne) >= SEA_AWAY or len(self.intruders) >= RAID_AWAY
 
+    def landing_lee(self, goal, slack):
+        """Like landing_for, but on the side of the island farthest from the
+        enemy's cities, where its galley comes last, if that costs the wagon
+        no more than slack more walking."""
+        theirs = [c.hex for c in self.state.cities if c.owner not in (0, self.player)]
+        if not theirs:
+            return self.landing_for(goal)
+        field = self.land_to(goal)
+        isle = self.isle[goal]
+        taken = {e.hex for e in self.state.enemy_units() if not e.carrier}
+        cost = {}
+        for x, land in self.shores.items():
+            free = sorted(field.get(h, INF) for h in land if self.isle[h] == isle and h not in taken)
+            if free and free[0] < INF and x not in taken:
+                cost[x] = free[0] + (0 if len(free) > 1 else 2)
+        if not cost:
+            return []
+        best = min(cost.values())
+        near = [x for x in cost if cost[x] <= best + slack]
+
+        def off(x):
+            return min(bb.distance(x, c) for c in theirs)
+        far = max(off(x) for x in near)
+        return sorted(x for x in near if off(x) >= far - 1)
+
     def run_ferry(self):
         s = self.state
         w, t = s.units.get(self.midw), s.units.get(self.ferry)
@@ -824,6 +858,9 @@ class ArmadaBot(bb.Bot):
         guards = self.units_with("guard")
         takers = [g for g in guards if self.unit_type(g).capture]
         sea = self.sea_ours()
+        blow = max((self.rules.damage.get(k.code, {}).get(t.type, 0) for k in self.rules.unit_types.values()
+                    if k.naval), default=0)
+        whole = t.hp > blow  # it can take a warship's blow and still sail
 
         def at_home(g):
             return not g.carrier and self.isle[g.hex] == self.home_isle
@@ -857,7 +894,7 @@ class ArmadaBot(bb.Bot):
                     self.deliver(w, port)
                 elif not rich() and any(bb.distance(x, w.hex) <= 1 for x in self.sea_danger()):
                     self.go(w, self.land_to(self.home))  # out from under a warship's bombardment
-                elif rich() and sea:
+                elif rich() and sea and whole:
                     self.board(w, t)
                 else:
                     self.stock_port(w)  # nowhere to sail: the home city's bread, to where ships are built
@@ -911,7 +948,8 @@ class ArmadaBot(bb.Bot):
         at_isle = any(self.isle[h] == isle for h in self.shores.get(t.hex, []))
         # Reasons to be at the island: the wagon is there, or going there;
         # guards are going to clear it; or they have, and want fetching.
-        haul = w_aboard and not w.wheat and bool(piles) and not threat and (sea or at_isle or riding)
+        haul = (w_aboard and not w.wheat and bool(piles) and not threat and (sea or at_isle or riding)
+                and (whole or at_isle))  # holed on the way out, it turns back to be mended
         relief = strike and bool(g_aboard) and strong
         fetch = bool(ashore) and not threat
         out = w_mid or haul or relief or fetch
@@ -948,7 +986,28 @@ class ArmadaBot(bb.Bot):
             calm = [x for x in ring if not near(x)]
             theirs_ = [c.hex for c in s.cities if c.owner not in (0, self.player)]
             done = w_mid and not rich()
-            if not calm:
+            hit = max((self.rules.damage.get(k.code, {}).get(t.type, 0) for k in self.rules.unit_types.values()
+                       if k.naval), default=0)
+            if done and w.wheat and t.hp > hit:
+                # A wagon full of wheat is waiting, and the transport can take
+                # a warship's blow and still sail: in for it, whatever lies off
+                # the island, to the water it can reach that is farthest from
+                # the warships. Left there, the wagon is lost to the next landing.
+                taken = {e.hex for e in s.enemy_units() if not e.carrier}
+                pool = calm or [x for x in ring if x not in taken]
+                walk = self.land_to(w.hex)
+                cost = {x: min(walk.get(h, INF) for h in self.shores[x] if self.isle[h] == isle) for x in pool}
+                handy = [x for x in pool if cost[x] <= max(min(cost.values()), self.unit_type(w).move - 1)] if cost else []
+                danger = self.sea_danger()
+                if handy and danger:
+                    far = max(min(bb.distance(x, d) for d in danger) for x in handy)
+                    handy = [x for x in handy if min(bb.distance(x, d) for d in danger) >= far - 1]
+                if handy and t.hex not in handy:
+                    field = self.sea_to(handy)
+                    if not (self.go(t, field, lambda h: not self.exposed(h))
+                            or self.go(t, field, lambda h: not near(h))):
+                        self.go(t, field)
+            elif not calm:
                 self.sail(t, [])
             elif done:
                 # The wagon has all it can carry: round to the water it can
@@ -984,7 +1043,7 @@ class ArmadaBot(bb.Bot):
         else:
             # Land the wagon by the site it wants, or the guards by the enemy.
             goal = max(rich(), key=lambda x: (self.est[x.id], -x.id)).hex if w_aboard and rich() else anchor.hex
-            spots = self.landing_for(goal)
+            spots = self.landing_lee(goal, LEE_SLACK) if haul and not relief else self.landing_for(goal)
             if spots:
                 self.sail(t, spots)
         if relief and not struck:
