@@ -1418,6 +1418,10 @@ class ArmadaBot(bb.Bot):
                 if self.hauler is None and self.home_site() is not None and going and wagon_city in (None, city.id):
                     wagon_city = city.id  # one home wagon, not one from each city
                     want.append(("W", 0))
+                if seen > 0 and city is port and self.launch_hex(city) is None and self.shooter is not None:
+                    # An enemy ship lies on the only water by the port: nothing
+                    # can be launched until archers have cleared it.
+                    want.append((self.shooter, 0) if roles.count("battery") < BATTERY else (None, 0))
                 if navy and city is port:
                     # Whatever lies off the port: a galley struck as it is
                     # launched still has the second one to answer for it.
@@ -1449,7 +1453,11 @@ class ArmadaBot(bb.Bot):
                 want.append(("I", 0))
             elif len(army) < ARMY and going:
                 want.append(("I", KEEP))
-            for code, keep in want[:1]:
+            for code, keep in want:
+                # The first thing wanted that can be built here: now if there
+                # is bread for it, and if not, nothing, so that it is saved for.
+                if code is None:
+                    break
                 if code not in types:
                     continue
                 if types[code].naval:
@@ -1459,6 +1467,7 @@ class ArmadaBot(bb.Bot):
                     continue
                 if city.bread >= types[code].cost + keep and self.build(city, code):
                     mine = s.my_units()
+                break
 
     def report(self):
         s = self.state
