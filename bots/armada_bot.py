@@ -21,8 +21,9 @@ It wins at sea first and on land afterward:
   aboard a transport, or landed on the home island, the transport takes
   the guards to the enemy's port instead and lands them on it. A city it
   finds held it leaves alone, for another or for home, unless it has three
-  times the strength of the units in it: then it storms it. It doesn't
-  raid in a transport that one more hit would sink.
+  times the strength of the units in it: then it storms it. It starts no
+  raid while enemy warships are about and its own galleys aren't out, nor
+  with wheat still aboard: that comes home first.
 - A new home. If the enemy takes the home island while Armada holds
   cities elsewhere, the island of those cities is home from then on: the
   wagons, the port, the garrisons and the army work from there, and the
@@ -33,13 +34,16 @@ It wins at sea first and on land afterward:
   the wagon behind. Loaded, with a warship off the port, it runs for the
   shore nearest the port; with one lying close to the port, it lands the
   wagon out of the warship's reach instead, and the wagon walks to the
-  home city. Until the sea is its own again, which means no warship seen
-  for a while or two galleys out, the transport makes no new trips. While
-  a warship is near the port it builds no transport there. With one too
-  close to launch a galley past, it builds an archer, who shoots at ships
-  from two hexes inland, where a galley can't bombard it.
+  port, where ships are built. Until the sea is its own again, which
+  means no warship seen for a while or two galleys out, the transport
+  makes no new trips. While a warship is near the port it builds no
+  transport there. Once it has its galleys it builds two archers, who
+  shoot at ships from two hexes inland, where a galley can't bombard them.
 - Galleys. Once the enemy has shown a warship, two galleys come before a
-  new transport. One alone waits by the port for the second. The first two
+  new transport, before the archers, and before any infantry the home city
+  would build. They are launched whatever lies off the port: one that is
+  struck as it appears has the second to answer for it. One alone waits by
+  the port for the second. A warship it sinks is forgotten. The first two
   keep to the water off the middle island, where the enemy's transport has
   to come, its archers can't reach, and its galleys don't heal. They sink
   the transports they find and bombard enemy units on the shores of the
@@ -362,7 +366,7 @@ class ArmadaBot(bb.Bot):
         dock = self.dock(port)
         if not any(self.exposed(h) for h in dock):
             return dock
-        field = self.land_to((self.depot() or port).hex)
+        field = self.land_to(port.hex)
         for margin in range(self.reach):  # out of reach, or failing that as far off as can be
             best, out = INF, []
             for x, land in self.shores.items():
@@ -525,6 +529,10 @@ class ArmadaBot(bb.Bot):
                 self.move(u, dirs)
             if u.hex == h and u.id in self.state.units:
                 self.attack(u, e)
+                if e.id not in self.state.units:
+                    # Sunk: not a warship to keep out of the way of any more.
+                    self.warships.pop(e.id, None)
+                    self.sighted.pop(e.id, None)
             units = [x for x in units if x is not u]
 
     def bar(self, u):
@@ -803,16 +811,16 @@ class ArmadaBot(bb.Bot):
         # Boarding comes first, since the transport sails afterward.
         if w is not None and not w.carrier:
             if self.isle[w.hex] == self.home_isle:
-                depot = self.depot() or port
                 if w.wheat:
-                    self.deliver(w, depot)
+                    # To the port, where ships are built, whatever lies off it.
+                    self.deliver(w, port)
                 elif w.bread and w.hex != port.hex and not (rich() and sea):
-                    self.deliver(w, port if depot is port else depot)
+                    self.deliver(w, port)
                 elif not rich() and any(bb.distance(x, w.hex) <= 1 for x in self.sea_danger()):
                     self.go(w, self.land_to(self.home))  # out from under a warship's bombardment
                 elif rich() and sea:
                     self.board(w, t)
-                elif depot is port:
+                else:
                     self.stock_port(w)  # nowhere to sail: the home city's bread, to where ships are built
             elif rich() and safe(w.hex):
                 site = max(rich(), key=lambda x: (x.hex == w.hex, self.est[x.id], -x.id))
@@ -927,10 +935,9 @@ class ArmadaBot(bb.Bot):
         elif not out and (t.hex in berth or bb.distance(t.hex, port.hex) == 1
                           or (w_aboard and w.wheat and t.hex in self.shore_by(port))):
             # Home: the wagon unloads, and the guards go back to the port.
-            depot = self.depot() or port
-            if w_aboard and w.carrier and self.land(w, self.land_to(depot.hex),
+            if w_aboard and w.carrier and self.land(w, self.land_to(port.hex),
                                                     lambda h: self.isle[h] == self.home_isle):
-                self.deliver(w, depot)
+                self.deliver(w, port)
             if not strike:
                 for g in riders:
                     self.land(g, self.land_to(port.hex), lambda h: self.isle[h] == self.home_isle)
@@ -1033,10 +1040,12 @@ class ArmadaBot(bb.Bot):
         busy with that this turn."""
         s = self.state
         city = self.raid_target()
-        hit = max((self.rules.damage.get(k.code, {}).get(t.type, 0) for k in self.rules.unit_types.values()
-                   if k.naval), default=0)
-        if city is None or (t.hp <= hit and not self.sea_ours() and not s.passengers(t)):
-            # No raid to go on, or a transport that one more hit would sink.
+        cargo = s.units.get(self.midw)
+        if cargo is not None and cargo.carrier == t.id and (cargo.wheat or cargo.bread):
+            self.lurking = False
+            return False  # the wheat comes home first
+        if city is None or (not self.sea_ours() and not s.passengers(t)):
+            # No raid to go on, or none to start while enemy warships are about.
             self.lurking = False
             return False
         there = self.isle[city.hex]
@@ -1379,11 +1388,6 @@ class ArmadaBot(bb.Bot):
         ships = port is not None and not any(bb.distance(x, port.hex) <= self.reach for x in danger)
         if port is not None and roles.count("battery") >= BATTERY:
             ships = True  # the archers cover the water by the port
-        # A galley can be launched with a warship farther off than CLOSE, which
-        # won't see it, or with an archer by the port to help it.
-        launch = port is not None and (roles.count("battery") >= 1
-                                       or not any(bb.distance(x, port.hex) <= CLOSE for x in danger))
-        camped = port is not None and not launch
         battery = (self.shooter is not None and s.round - self.raided <= RAID_MEMORY
                    and roles.count("battery") < BATTERY)
         # The enemy has warships: galleys come before a new transport.
@@ -1391,6 +1395,7 @@ class ArmadaBot(bb.Bot):
         # Past the opening: there is a transport, or there can't be one now.
         going = self.ferry is not None or not ships or navy
         bare = [c for c in s.my_cities() if self.isle[c.hex] == self.home_isle and not garrisoned(c)]
+        wagon_city = None
         for city in s.my_cities():
             if city.built or s.enemy_at(city.hex):
                 continue
@@ -1403,12 +1408,15 @@ class ArmadaBot(bb.Bot):
             if city is depot or city is port:
                 if self.midw is None and self.mid_sites() and not mid_threat and self.ferry is not None:
                     want.append(("W", 0))
-                if self.hauler is None and self.home_site() is not None and going:
+                if self.hauler is None and self.home_site() is not None and going and wagon_city in (None, city.id):
+                    wagon_city = city.id  # one home wagon, not one from each city
                     want.append(("W", 0))
-                if camped and self.shooter is not None and navy:
-                    want.append((self.shooter, 0))
-                if navy and launch and city is port:
+                if navy and city is port:
+                    # Whatever lies off the port: a galley struck as it is
+                    # launched still has the second one to answer for it.
                     want.append(("G", 0))
+                if navy and not invaded and city is not port:
+                    want.append((None, 0))  # what bread there is goes to the port, for galleys
                 if battery and not navy:
                     want.append((self.shooter, 0))
                 if not garrisoned(city):
@@ -1426,6 +1434,8 @@ class ArmadaBot(bb.Bot):
                         want.append(("T", 0))
                     if len(army) < ARMY:
                         want.append((ARMY_ORDER[len(land) % len(ARMY_ORDER)], KEEP))
+            elif navy and not invaded:
+                pass  # what bread there is goes to the port, for galleys
             elif city in bare:
                 want.append(("I", 0))
             elif len(army) < ARMY and going:
