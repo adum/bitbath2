@@ -278,7 +278,7 @@
       "build": null,
       "rules": ["strategic"],
       "maps": ["islets"],
-      "play_page": null,
+      "play_page": "pyodide",
       "benchmark": null
     },
     "forager": {

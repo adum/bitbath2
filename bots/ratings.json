@@ -204,27 +204,43 @@
         "configs/islets.toml": "e6c91c9a42137e8a15b1d049fceee96b2b8e2f5c9c7ff3d32b9e7dc0c3e523c4"
       },
       "from": "bitbath tournament",
-      "date": "2026-11-25",
-      "commit": "5763392",
+      "date": "2026-11-26",
+      "commit": "50d21bb",
       "seeds": "1-20",
-      "games": 120,
+      "games": 600,
       "anchor": {
         "bot": "supply",
         "rating": 1000.0
       },
-      "field": ["naval", "supply", "forager"],
+      "field": ["trident", "armada", "breakwater", "naval", "supply", "forager"],
       "ratings": {
-        "naval": {
-          "rating": 1816.9,
-          "interval": [1751.9, 1882.8],
-          "games": 80,
-          "wins": 80,
+        "armada": {
+          "rating": 2521.9,
+          "interval": [2423.6, 2633.3],
+          "games": 200,
+          "wins": 161,
           "draws": 0,
-          "losses": 0,
+          "losses": 39,
           "forfeits": 0,
           "invalid_pct": 0.0,
-          "avg_think_ms": 8.3,
-          "max_think_ms": 34,
+          "avg_think_ms": 13.9,
+          "max_think_ms": 47,
+          "source": {
+            "bots/armada_bot.py": "c847b2b5d2a32b2f1a5772f745712bb6585e04e812c5b46db4e68dab21bf8a9a",
+            "kits/python/bitbath.py": "fafcb4e7ebaf237fa0073dc6b3fcf62cdccbc7fb2245707fe85ff466b3e061e4"
+          }
+        },
+        "naval": {
+          "rating": 1696.2,
+          "interval": [1622.8, 1767.8],
+          "games": 200,
+          "wins": 80,
+          "draws": 0,
+          "losses": 120,
+          "forfeits": 0,
+          "invalid_pct": 0.0,
+          "avg_think_ms": 5.5,
+          "max_think_ms": 28,
           "source": {
             "bots/naval_bot.py": "eee57da410e49e347d0e40931827cc08f0de5f62d9d41a591f85827560527f1f",
             "bots/supply_bot.py": "5d90e96c14aff0f0675a9b325fdf22a2337c5bdaf8b99de305f1098d3e1cdbf6",
@@ -235,14 +251,14 @@
         "supply": {
           "rating": 1000.0,
           "interval": [1000.0, 1000.0],
-          "games": 80,
+          "games": 200,
           "wins": 30,
           "draws": 0,
-          "losses": 50,
+          "losses": 170,
           "forfeits": 0,
           "invalid_pct": 0.0,
-          "avg_think_ms": 3.8,
-          "max_think_ms": 16,
+          "avg_think_ms": 2.9,
+          "max_think_ms": 14,
           "source": {
             "bots/supply_bot.py": "5d90e96c14aff0f0675a9b325fdf22a2337c5bdaf8b99de305f1098d3e1cdbf6",
             "bots/vanguard_bot.py": "c74ad3a0e1c0a95957869702dfcbe95aa5dd1c0360ba34636ea91f243e806976",
@@ -250,16 +266,16 @@
           }
         },
         "forager": {
-          "rating": 814.1,
-          "interval": [543.1, 968.5],
-          "games": 80,
+          "rating": 814.7,
+          "interval": [589.4, 969.0],
+          "games": 200,
           "wins": 10,
           "draws": 0,
-          "losses": 70,
+          "losses": 190,
           "forfeits": 0,
           "invalid_pct": 0.0,
           "avg_think_ms": 0.0,
-          "max_think_ms": 1,
+          "max_think_ms": 2,
           "source": {
             "bots/forager_bot.rs": "bf829f807fdde1b8bb93cd69066f3a119be79a1d875cf605d8ff7808f8eb64ed"
           }
