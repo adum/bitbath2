@@ -52,10 +52,14 @@ It wins at sea first and on land afterward:
 - Warships. It remembers where enemy warships were last seen. A transport
   doesn't end its move within their reach. One waiting for its wagon by
   the island keeps a few hexes from them and no more, so as not to leave
-  the wagon behind. Loaded, with a warship off the port, it runs for the
-  shore nearest the port; with one lying close to the port, it lands the
-  wagon out of the warship's reach instead, and the wagon walks to the
-  port, where ships are built. If every way to that shore lies within the
+  the wagon behind. Loaded, it makes for the shore that is the shortest
+  walk from the port, leaving out water a warship lies right beside: the
+  wheat is ashore the turn it arrives, whatever becomes of the transport,
+  and a load that comes home five rounds late loses the game. A holed
+  transport, which the next blow would sink with all aboard, lands
+  everyone on whatever shore of the home island it can reach that turn,
+  and the wagon walks to the port, where ships are built; if it can reach
+  none, it goes the safe way round, out of the warship's reach. If every way to that shore lies within the
   warship's reach, it keeps a few hexes off and goes all the same, sooner
   than wait at sea. Until the sea is its own again, which
   means no warship seen for a while or two galleys out, the transport
@@ -874,6 +878,24 @@ class ArmadaBot(bb.Bot):
             if self.roles.get(u.id) == "guard" and not u.carrier and not u.moved and self.can_act(u):
                 self.board(u, t)
 
+    def quay(self, port):
+        """Where a loaded transport lands its wagon: the water whose shore is
+        the shortest walk from the port, leaving out water an enemy warship
+        lies right beside, where it would be stopped short. The wheat is ashore
+        the turn it arrives, whatever becomes of the transport afterward."""
+        danger = self.sea_danger()
+        walk = self.land_to(port.hex)
+        taken = {e.hex for e in self.state.enemy_units() if not e.carrier}
+        cost = {}
+        for x, land in self.shores.items():
+            if x in taken or any(bb.distance(x, d) <= 1 for d in danger):
+                continue
+            c = min((walk.get(h, INF) for h in land if self.isle[h] == self.home_isle and h not in taken),
+                    default=INF)
+            if c < INF:
+                cost[x] = c
+        return cost
+
     def run_ferry(self):
         s = self.state
         w, t = s.units.get(self.midw), s.units.get(self.ferry)
@@ -1016,8 +1038,27 @@ class ArmadaBot(bb.Bot):
             before = len(s.passengers(t))
             self.strike_landing(t, isle, strong)
             struck = len(s.passengers(t)) < before
+        quay = []
+        if w_aboard and w.wheat and not out:
+            cost = self.quay(port)
+            if not whole:
+                # Holed, it is sunk by the next blow with all aboard: whatever
+                # shore of the home island it can reach this very turn, and
+                # everyone ashore there. The wagon walks the rest.
+                reach = set(self.reachable(t)) | {t.hex}
+                cost = {x: c for x, c in cost.items() if x in reach}
+            if cost:
+                best = min(cost.values())
+                quay = [x for x in cost if cost[x] <= best]
         if struck:
             pass
+        elif quay:
+            # Loaded: straight for the nearest shore to the port that no
+            # warship lies beside, by water none lies beside if it can.
+            danger = self.sea_danger()
+            field = self.sea_to(quay)
+            if not self.go(t, field, lambda h: all(bb.distance(h, d) > 1 for d in danger)):
+                self.go(t, field)
         elif (w_aboard and w.wheat and any(self.exposed(h) for h in self.dock(port))
               and not any(bb.distance(x, port.hex) <= CLOSE for x in self.sea_danger())):
             # Loaded, with a warship off the port but not close to it: the
@@ -1129,7 +1170,7 @@ class ArmadaBot(bb.Bot):
                 if self.land(w, self.land_to(site.hex), safe) and w.hex == site.hex and site.wheat > 0:
                     self.load(w)
                     self.est[site.id] = site.wheat
-        elif not out and (t.hex in berth or bb.distance(t.hex, port.hex) == 1
+        elif not out and (t.hex in berth or bb.distance(t.hex, port.hex) == 1 or t.hex in quay
                           or (w_aboard and w.wheat and t.hex in self.shore_by(port))):
             # Home: the wagon unloads, and the guards go back to the port.
             if w_aboard and w.carrier and self.land(w, self.land_to(port.hex),
