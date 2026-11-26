@@ -21,7 +21,8 @@ It wins at sea first and on land afterward:
   wagons too, and they are the stronger, counting a scout for less than
   its HP. The transport pulls up beside one, a wagon for choice, and they
   strike as they land, also on the turn the transport arrives and first
-  sees who is there. The first blow counts in their favour when strengths
+  sees who is there. If no one is in sight from where it lies, it goes
+  round to where they were last seen. The first blow counts in their favour when strengths
   are compared. They go aboard the transport on the turn it is built, so
   as to be ready to land when it gets there. While they fight ashore the
   transport stands by. When no one is left to fight they go back aboard,
@@ -1135,6 +1136,20 @@ class ArmadaBot(bb.Bot):
         prey = [e for e in s.enemy_units() if not e.carrier and self.isle.get(e.hex) == isle
                 and (strong or self.unit_type(e).carry)]
         fighters = [u for u in s.passengers(t) if self.unit_type(u).capture and not u.moved]
+        if not prey and strong and fighters and t.mp > 0 and self.can_act(t):
+            # No one in sight from here, but someone was seen on the island:
+            # round to the water by where that was, and look again.
+            marks = self.threat(isle)
+            best = None
+            for x, dirs in self.reachable(t).items():
+                if any(self.isle.get(h) == isle and bb.distance(h, m) <= 1
+                       for h in self.shores.get(x, []) for m in marks):
+                    key = (len(dirs), x)
+                    if best is None or key < best[0]:
+                        best = (key, dirs)
+            if best is not None:
+                self.move(t, best[1])
+                prey = [e for e in s.enemy_units() if not e.carrier and self.isle.get(e.hex) == isle]
         if not prey or not fighters:
             return
         scouts = [u for u in s.passengers(t) if self.roles.get(u.id) == "guard" and u not in fighters and not u.moved]
