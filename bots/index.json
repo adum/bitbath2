@@ -269,7 +269,7 @@
         "by": ["adum", "Claude Fable 5.2"],
         "how": "Written with Claude Code from scratch on the kit, to beat naval on Islets.",
         "created": "2026-11-25",
-        "commit": null
+        "commit": "fbb89f8"
       },
       "language": "python",
       "files": ["bots/armada_bot.py"],
