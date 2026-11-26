@@ -4,7 +4,7 @@ It wins at sea first and on land afterward:
 
 - The middle island's wheat. Its first wagon carries the home city's bread
   to the port, which builds a transport at once. The transport takes that
-  wagon, the scout and the starting infantry to the sites out at sea,
+  wagon and the starting infantry to the sites out at sea,
   which grow more than everything on the home island together, and waits
   for the wagon on the side of the island away from the enemy, or, once a
   warship has been seen, on the side farthest from that. When the wagon
@@ -20,15 +20,18 @@ It wins at sea first and on land afterward:
   it, so they land only to strike: when enemy units are on the island,
   wagons too, and they are the stronger, counting a scout for less than
   its HP. The transport pulls up beside one, a wagon for choice, and they
-  strike as they land, also on the turn the transport arrives and first
+  strike as they land, from the best ground beside him, also on the turn
+  the transport arrives and first
   sees who is there. If no one is in sight from where it lies, it goes
   round to where they were last seen. The first blow counts in their favour when strengths
   are compared. They go aboard the transport on the turn it is built, so
   as to be ready to land when it gets there. While they fight ashore the
   transport stands by. When no one is left to fight they go back aboard,
   and come home with the wagon. Guards built later wait by the port, and
-  board for a strike only when enough of them can at once. The scout stays
-  on the island to keep watch. A hit on one of its units tells it who
+  board for a strike only when enough of them can at once, and not in a
+  transport that one more hit would sink. The scout stays in the port:
+  with everyone else away it keeps a landing from walking straight in,
+  and sees it, so that the transport comes back with the guards. A hit on one of its units tells it who
   struck and where, even if that unit died of it.
 - Raids. An enemy whose army is away has left its cities thin. When three
   or more enemy units that can capture are seen at sea aboard a transport,
@@ -135,6 +138,11 @@ GALLEY_HOME_HP = 45
 GALLEYS_FIRST = 4
 # Galleys that bombard one enemy unit at a time.
 BOMBARD = 2
+# The scout stays in the port when the others sail. An empty port is taken
+# by the first two infantry to land on it, and bots do land there by round
+# 6. This costs games against a bot that fights for the middle island, where
+# the scout was a third pair of hands; it costs fewer than the empty port.
+SCOUT_HOME = True
 # The wagon is landed on the side of the island farthest from the enemy's
 # cities, where its galley comes last, if that costs it no more than this
 # much more walking to the site.
@@ -861,6 +869,8 @@ class ArmadaBot(bb.Bot):
             return
         t = ships[0]
         for u in sorted(s.my_units(), key=lambda u: (not self.unit_type(u).capture, u.id)):
+            if SCOUT_HOME and not self.unit_type(u).capture:
+                continue  # the scout stays to mind the port
             if self.roles.get(u.id) == "guard" and not u.carrier and not u.moved and self.can_act(u):
                 self.board(u, t)
 
@@ -971,15 +981,16 @@ class ArmadaBot(bb.Bot):
         # waits with half a force aboard is a prize for a warship.
         can = [g for g in takers if at_home(g) and g.mp > 0 and self.can_act(g) and t.hex in self.reachable(g)]
         can = can[:max(0, self.rules.passengers_max - len(s.passengers(t)))]
-        ready = strike and hp([g for g in takers if g.carrier == t.id] + can + mates) * FIRST_BLOW > theirs
+        ready = strike and whole and hp([g for g in takers if g.carrier == t.id] + can + mates) * FIRST_BLOW > theirs
         if ready and port.owner == self.player and not self.threat(self.home_isle):
             for g in can:
                 self.board(g, t)
         if not threat:
             for g in mates:
                 self.board(g, t)  # nothing left for them to fight there
-        # A scout goes with the wagon, and keeps watch on the island.
-        if w is not None and w.carrier == t.id and not w.wheat:
+        # The scout stays in the port. With everyone else away, it is what
+        # keeps an enemy landing from walking straight in, and what sees it.
+        if not SCOUT_HOME and w is not None and w.carrier == t.id and not w.wheat:
             for g in guards:
                 if at_home(g) and not self.unit_type(g).capture:
                     self.board(g, t)
@@ -996,7 +1007,7 @@ class ArmadaBot(bb.Bot):
         # guards are going to clear it; or they have, and want fetching.
         haul = (w_aboard and not w.wheat and bool(piles) and not threat and (sea or at_isle or riding)
                 and (whole or at_isle))  # holed on the way out, it turns back to be mended
-        relief = strike and bool(g_aboard) and strong
+        relief = strike and bool(g_aboard) and strong and (whole or at_isle)
         fetch = bool(ashore)  # to take them off, or to stand by them while they fight
         out = w_mid or haul or relief or fetch
         struck = False
@@ -1162,7 +1173,9 @@ class ArmadaBot(bb.Bot):
             for e in prey:
                 beside = [h for h in self.shores.get(x, []) if h not in taken and bb.distance(h, e.hex) == 1]
                 if beside:
-                    key = (self.unit_type(e).carry, -self.map.terrain(e.hex).defense, min(len(beside), 2), -len(dirs))
+                    ground = max(self.map.terrain(h).defense for h in beside)
+                    key = (self.unit_type(e).carry, -self.map.terrain(e.hex).defense, ground, min(len(beside), 2),
+                           -len(dirs))
                     if best is None or key > best[0]:
                         best = (key, x, dirs, e)
         if best is None:
@@ -1173,7 +1186,9 @@ class ArmadaBot(bb.Bot):
         if t.hex == x:
             # A scout is worth risking to finish off a wagon.
             for u in fighters + (scouts if self.unit_type(e).carry else []):
-                self.land(u, {h: 0 for h in self.shores[x]}, lambda h: bb.distance(h, e.hex) == 1)
+                # On the best ground there is beside him: he strikes back at it.
+                self.land(u, {h: -self.map.terrain(h).defense for h in self.shores[x]},
+                          lambda h: bb.distance(h, e.hex) == 1)
 
     def note_seaborne(self):
         """Remembers the enemy units that can capture and are aboard transports."""
