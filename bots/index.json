@@ -289,7 +289,7 @@
         "by": ["adum", "Gemini 4 Neon"],
         "how": "Written from scratch in Python for the Islets and Islands strategic maps to beat Naval.",
         "created": "2026-11-25",
-        "commit": null
+        "commit": "b72a35b"
       },
       "language": "python",
       "files": ["bots/trident_bot.py"],
@@ -309,7 +309,7 @@
         "by": ["OpenAI Codex"],
         "how": "Built independently in Python for Islets and tested in side-swapped matches against Trident and Armada.",
         "created": "2026-11-25",
-        "commit": null
+        "commit": "b72a35b"
       },
       "language": "python",
       "files": ["bots/breakwater_bot.py"],
