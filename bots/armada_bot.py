@@ -17,14 +17,18 @@ It wins at sea first and on land afterward:
   with two guards about it puts up with one. For the enemy's strength
   there the port builds more guards, and the transport takes them over. If
   the island is lost, the wagon hauls the home site's wheat instead.
-- Raids. An enemy whose army is on the middle island has left its cities
-  empty. When the guards see two or more enemy units that can capture
-  there, the transport takes them to the enemy's port instead, lands them
-  on it, and they take it and march on the home city. It does the same
-  when an enemy warship closes its own port early in the game, since the
-  enemy's waters are then the safer ones: it waits off the enemy's port
-  with the guards and the loaded wagon aboard until the defenders leave,
-  and unloads the wheat in the captured port.
+- Raids. An enemy whose army is away has left its cities empty. When two
+  or more enemy units that can capture are seen on the middle island, at
+  sea aboard a transport, or landed on the home island, the transport
+  takes the guards to the enemy's port instead and lands them on it. They
+  take it and march on the home city. A raid that finds the port held waits
+  off it for a while for the defenders to leave. With enemy units landed
+  at home and the guards still aboard, it first goes back and lands them
+  in the port.
+- A new home. If the enemy takes the home island while Armada holds
+  cities elsewhere, the island of those cities is home from then on: the
+  wagons, the port, the garrisons and the army work from there, and the
+  old home island is the enemy's, to be invaded like any other.
 - Warships. It remembers where enemy warships were last seen. A transport
   doesn't end its move within their reach, except to bring a load of wheat
   home, which it lands on the shore nearest the port. While a warship is
@@ -59,7 +63,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import bitbath as bb  # noqa: E402
 
 INF = float("inf")
-
 # A wagon in the middle goes on loading while a site there holds MIN_PILE,
 # and once it carries a FAIR_LOAD, only while one holds BIG_PILE.
 MIN_PILE = 100
@@ -102,12 +105,12 @@ ARMY = 14
 RAID_AWAY = 2
 RAID_UNTIL = 40
 RAID_REST = 15
-# It also raids when an enemy warship comes near its own port before round
-# LURK_FROM: the enemy's waters are then safer than its own. A raid that
-# finds the port held waits off it until round LURK_UNTIL for the defenders
-# to leave.
-LURK_FROM = 14
+# A raid that finds the port held waits off it until round LURK_UNTIL for
+# the defenders to leave.
 LURK_UNTIL = 18
+# Enemy units that can capture, seen on the home island, are counted for
+# this many rounds: an enemy who sent that many has few left at home.
+INTRUDER_MEMORY = 15
 # The army's make-up, over and over.
 ARMY_ORDER = "IAI"
 # Bread the port keeps back from building its army, to feed what stands around it.
@@ -157,6 +160,8 @@ class ArmadaBot(bb.Bot):
         self.sighted = {}   # enemy warship id -> round it was last seen, to count them
         self.raided = -99   # the round an enemy warship was last near the port
         self.raid_off = 0   # no raid before this round
+        self.intruders = {}  # enemy unit that can capture, seen on the home island -> round
+        self.seaborne = {}   # enemy unit that can capture, seen aboard a transport -> round
         self.lurking = False
         self.want_guards = 0
         types = self.rules.unit_types.values()
@@ -568,6 +573,15 @@ class ArmadaBot(bb.Bot):
         """Updates what it remembers, and gives every unit its job."""
         s = self.state
         mine = s.my_units()
+        held = s.my_cities()
+        if held and not any(self.isle[c.hex] == self.home_isle for c in held):
+            # Driven off the home island, but holding cities elsewhere: that
+            # island is home now, and the old one is the enemy's to be taken.
+            isles = [self.isle[c.hex] for c in held]
+            self.home_isle = max(set(isles), key=lambda i: (isles.count(i), -i))
+            here = [c for c in held if self.isle[c.hex] == self.home_isle]
+            self.home = min(here, key=lambda c: (self.map.is_port(c.hex), c.id)).hex
+            self.roles = {}
         for x in s.sites:
             self.est[x.id] = min(x.cap, self.est[x.id] + x.output)
             if any(bb.distance(u.hex, x.hex) <= 2 for u in mine) or \
@@ -594,6 +608,12 @@ class ArmadaBot(bb.Bot):
         mid_threat = self.mid_threat()
         mid_hp = sum(self.threat_hp(i) for i in self.mid_isles())
         invaded = bool(self.threat(self.home_isle))
+        for e in s.enemy_units():
+            if self.fighter(e) and self.isle[e.hex] == self.home_isle and self.unit_type(e).capture:
+                self.intruders[e.id] = s.round
+        self.intruders = {i: r for i, r in self.intruders.items() if s.round - r <= INTRUDER_MEMORY}
+        self.note_seaborne()
+        self.seaborne = {i: r for i, r in self.seaborne.items() if s.round - r <= SHIP_MEMORY}
 
         ids = {u.id for u in mine}
         wagons, ships = self.mine("carry"), self.mine("transport")
@@ -676,6 +696,8 @@ class ArmadaBot(bb.Bot):
         s = self.state
         w, t = s.units.get(self.midw), s.units.get(self.ferry)
         port = self.port()
+        if t is not None and port is None and self.run_raid(t):
+            return  # no port of our own any more: all the more reason to take theirs
         if t is None or port is None:
             if w is not None:
                 self.stock_port(w)
@@ -685,7 +707,7 @@ class ArmadaBot(bb.Bot):
                 if bb.distance(c.hex, t.hex) == 1 and c is not port and self.land(w, {c.hex: 0}):
                     self.unload(w)
                     break
-        if self.run_raid(t):
+        if self.defend_home(t) or self.run_raid(t):
             return
         berth = self.berth(port)
         sites = self.mid_sites()
@@ -731,8 +753,9 @@ class ArmadaBot(bb.Bot):
             else:
                 self.board(w, t)  # nothing left to load, or an enemy too near
         if port.owner == self.player and not self.foreign_cities(self.home_isle):
-            for g in waiting:
-                self.board(g, t)
+            if not self.threat(self.home_isle):  # with invaders ashore, they stay to fight
+                for g in waiting:
+                    self.board(g, t)
 
         aboard = s.passengers(t)
         g_aboard = [u for u in aboard if self.roles.get(u.id) == "guard" and self.unit_type(u).capture]
@@ -839,24 +862,57 @@ class ArmadaBot(bb.Bot):
             for u in fighters + (scouts if self.unit_type(e).carry else []):
                 self.land(u, {h: 0 for h in self.shores[x]}, lambda h: bb.distance(h, e.hex) == 1)
 
+    def note_seaborne(self):
+        """Remembers the enemy units that can capture and are aboard transports."""
+        s = self.state
+        for e in s.enemy_units():
+            if e.carrier and self.unit_type(e).capture:
+                self.seaborne[e.id] = s.round
+
+    def defend_home(self, t):
+        """With enemy units landed on the home island and the guards still
+        aboard: back to the port, into it if it is empty, and at them. Returns
+        whether the transport is busy with that this turn."""
+        s = self.state
+        port = self.port()
+        if port is None or s.round > RAID_UNTIL or not self.threat(self.home_isle):
+            return False
+        if self.lurking or self.isle[port.hex] != self.home_isle:
+            return False  # a raid is under way, or the home port is already lost
+        aboard = [u for u in s.passengers(t) if self.roles.get(u.id) == "guard" and self.unit_type(u).capture]
+        if not aboard:
+            return False
+        self.go(t, self.sea_to(self.shore_by(port)))
+        if any(self.isle[h] == self.home_isle for h in self.shores.get(t.hex, [])):
+            field = self.land_to(port.hex)
+            for u in sorted(s.passengers(t), key=lambda u: (not self.unit_type(u).capture, u.id)):
+                if self.roles.get(u.id) == "guard":
+                    self.land(u, field, lambda h: self.isle[h] == self.home_isle)
+        self.debug_text("armada: back to defend the port")
+        return True
+
     def raid_target(self):
         """The enemy port to raid: one whose owner's army is known to be away
         on the middle island, with no defenders known."""
         s = self.state
         if s.round > RAID_UNTIL or s.round < self.raid_off:
             return None
-        ports = [c for c in s.cities if c.owner not in (0, self.player) and self.map.is_port(c.hex)]
+        ports = [c for c in s.cities if c.owner not in (0, self.player) and self.map.is_port(c.hex)
+                 and self.isle[c.hex] != self.home_isle]
         if not ports:
             return None
         isles = self.mid_isles()
         for i in isles:
             self.threat(i)
-        away = sum(1 for eid, (h, _, _, code) in self.foes.items()
-                   if self.isle[h] in isles and (eid in s.units or eid not in self.seen_now)
-                   and self.rules.unit_types[code].capture)
+        gone = {eid for eid, (h, _, _, code) in self.foes.items()
+                if self.isle[h] in isles and (eid in s.units or eid not in self.seen_now)
+                and self.rules.unit_types[code].capture}
+        # Also those seen at sea, and those that landed on our island.
+        self.note_seaborne()
+        gone |= set(self.seaborne) | set(self.intruders)
+        away = len(gone)
         city = min(ports, key=lambda c: (bb.distance(c.hex, self.home), c.id))
-        closed = s.round - self.raided <= 3 and (s.round <= LURK_FROM or self.lurking)
-        return city if away >= RAID_AWAY or closed else None
+        return city if away >= RAID_AWAY else None
 
     def run_raid(self, t):
         """Takes the guards to an enemy port left empty and lands them on it.
@@ -872,6 +928,7 @@ class ArmadaBot(bb.Bot):
         guards = self.units_with("guard")
         aboard = [u for u in s.passengers(t) if self.roles.get(u.id) == "guard"]
         near = [g for g in guards if not g.carrier and self.isle[g.hex] != there and g.mp > 0
+                and not self.foreign_cities(self.isle[g.hex])
                 and self.can_act(g) and t.hex in self.reachable(g)]
         known = self.threat_hp(there)
         need = self.rules.capture_points / 2 if not known else self.rules.capture_points
@@ -1165,7 +1222,7 @@ class ArmadaBot(bb.Bot):
             return sum(1 for u in mine if u.type == code)
 
         def garrisoned(city):
-            return "garrison %d" % city.id in self.roles.values()
+            return "garrison %d" % city.id in roles
 
         land = [u for u in mine if not self.unit_type(u).naval and not self.unit_type(u).carry]
         army = [u for u in land if self.roles.get(u.id, "army") == "army"]
@@ -1176,6 +1233,8 @@ class ArmadaBot(bb.Bot):
         # A ship is built only where it could be launched and would live to
         # move: not with an enemy warship in reach of the port.
         ships = port is not None and not any(bb.distance(x, port.hex) <= self.reach for x in self.sea_danger())
+        if port is not None and roles.count("battery") >= BATTERY:
+            ships = True  # the archers cover the water by the port
         battery = (self.shooter is not None and s.round - self.raided <= RAID_MEMORY
                    and roles.count("battery") < BATTERY)
         # Past the opening: there is a transport, or there can't be one now.
