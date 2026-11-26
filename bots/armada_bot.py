@@ -11,9 +11,9 @@ It wins at sea first and on land afterward:
 - Guards. The starting infantry wait in the port, which no one can then
   walk into. A unit on the middle island is struck first by whoever lands
   beside it, so they sail only to strike: when enemy units are seen on the
-  island, wagons too, and there are more of them than of those. The
-  transport pulls up beside one, a wagon for choice, and they strike as
-  they land. When no one is left to fight they go back aboard. The scout
+  island, wagons too, and there are more of them than of those. They
+  board only when enough of them can at once. The transport pulls up
+  beside one, a wagon for choice, and they strike as they land. When no one is left to fight they go back aboard. The scout
   stays on the island to keep watch. A hit on one of its units tells it
   who struck and where, even if that unit died of it.
 - Raids. An enemy whose army is away has left its cities thin. When two or
@@ -41,7 +41,8 @@ It wins at sea first and on land afterward:
   shoot at ships from two hexes inland, where a galley can't bombard them.
 - Galleys. Once the enemy has shown a warship, two galleys come before a
   new transport, before the archers, and before any infantry the home city
-  would build. They are launched whatever lies off the port: one that is
+  would build, and four before any more infantry at all: the side with
+  more galleys keeps the middle island. They are launched whatever lies off the port: one that is
   struck as it appears has the second to answer for it. One alone waits by
   the port for the second. A warship it sinks is forgotten. The first two
   keep to the water off the middle island, where the enemy's transport has
@@ -103,6 +104,9 @@ RAID_MEMORY = 40
 GALLEYS = 3
 MAX_GALLEYS = 5
 GALLEY_HOME_HP = 45
+# While enemy warships have been seen lately, it builds this many galleys
+# before any more infantry: the side with more of them keeps the island.
+GALLEYS_FIRST = 4
 # Galleys that bombard one enemy unit at a time.
 BOMBARD = 2
 # The sea is ours when no enemy warship has been seen for SEA_CLEAR rounds,
@@ -837,10 +841,14 @@ class ArmadaBot(bb.Bot):
                  and self.unit_type(e).carry]
         force = [g for g in takers if g.carrier == t.id or there(g) or at_home(g)]
         strike = sea and bool(threat or carts) and hp(force) > theirs
-        if strike and port.owner == self.player and not self.threat(self.home_isle):
-            for g in takers:
-                if at_home(g):
-                    self.board(g, t)
+        # They board only when enough of them can at once: a transport that
+        # waits with half a force aboard is a prize for a warship.
+        can = [g for g in takers if at_home(g) and g.mp > 0 and self.can_act(g) and t.hex in self.reachable(g)]
+        can = can[:max(0, self.rules.passengers_max - len(s.passengers(t)))]
+        ready = strike and hp([g for g in takers if g.carrier == t.id] + can + mates) > theirs
+        if ready and port.owner == self.player and not self.threat(self.home_isle):
+            for g in can:
+                self.board(g, t)
         if not threat:
             for g in mates:
                 self.board(g, t)  # nothing left for them to fight there
@@ -861,8 +869,7 @@ class ArmadaBot(bb.Bot):
         # Reasons to be at the island: the wagon is there, or going there;
         # guards are going to clear it; or they have, and want fetching.
         haul = w_aboard and not w.wheat and bool(piles) and not threat and (sea or at_isle)
-        left = [g for g in takers if at_home(g)]
-        relief = strike and bool(g_aboard) and strong and (len(aboard) >= self.rules.passengers_max or not left)
+        relief = strike and bool(g_aboard) and strong
         fetch = bool(ashore) and not threat
         out = w_mid or haul or relief or fetch
         struck = False
@@ -938,7 +945,7 @@ class ArmadaBot(bb.Bot):
             if w_aboard and w.carrier and self.land(w, self.land_to(port.hex),
                                                     lambda h: self.isle[h] == self.home_isle):
                 self.deliver(w, port)
-            if not strike:
+            if not relief:
                 for g in riders:
                     self.land(g, self.land_to(port.hex), lambda h: self.isle[h] == self.home_isle)
 
@@ -1414,6 +1421,8 @@ class ArmadaBot(bb.Bot):
                 if navy and city is port:
                     # Whatever lies off the port: a galley struck as it is
                     # launched still has the second one to answer for it.
+                    want.append(("G", 0))
+                if seen > 0 and city is port and count("G") < GALLEYS_FIRST:
                     want.append(("G", 0))
                 if navy and not invaded and city is not port:
                     want.append((None, 0))  # what bread there is goes to the port, for galleys
