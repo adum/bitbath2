@@ -1585,17 +1585,29 @@
     return [String(r.rating), text + "." + elsewhere];
   }
 
-  /** Says what the map and the opponent picked are, and how the opponent rates there. */
+  /**
+   * The mark in the opponent menu on a bot that knows the rules with ships
+   * and food: an anchor, asked for as text so it is drawn in the menu's
+   * own color and not as a picture. A menu's options can hold nothing but text.
+   */
+  const NAVAL = "⚓︎";
+
+  /** Whether a bot is known to know the rules with ships and food. One on disk that the index doesn't know isn't. @param {any} bot */
+  const knowsNaval = (bot) => Array.isArray(bot.rules) && bot.rules.includes("strategic");
+
+  /** Says what the map and the opponent picked are, what the opponent's mark means, and how it rates there. */
   function describe() {
     const map = pickedMap();
     const kind = opponents.find((b) => b.id === $("opponent").value) || opponents[0];
     $("map-about").textContent = map.about;
-    $("opponent-about").textContent = [kind.about, rating(kind, map)[1]].filter(Boolean).join(" ");
+    const naval = knowsNaval(kind) ? NAVAL + " Knows the rules with ships and food." : "";
+    $("opponent-about").textContent = [kind.about, naval, rating(kind, map)[1]].filter(Boolean).join(" ");
   }
 
   /**
    * Offers the opponents that can play the map picked, each with its rating
-   * there, and picks one of them if the one picked can't. The bots built in
+   * there and an anchor if it knows the rules with ships and food, and
+   * picks one of them if the one picked can't. The bots built in
    * come first, then the ones on disk, each weakest first, and the ones
    * without a rating after those, in the index's order.
    */
@@ -1612,7 +1624,7 @@
       const kind = opponents.find((b) => b.id === option.value);
       if (!kind) continue;
       const [number] = rating(kind, map);
-      option.textContent = (kind.label || kind.name) + (number ? " · " + number : "");
+      option.textContent = (kind.label || kind.name) + (knowsNaval(kind) ? " " + NAVAL : "") + (number ? " · " + number : "");
       option.hidden = option.disabled = !fits(option.value);
       order.push([option, kind.id.startsWith("disk:") ? 1 : 0, number ? Number(number) : Infinity, opponents.indexOf(kind)]);
     }
