@@ -261,6 +261,26 @@
       "play_page": "pyodide",
       "benchmark": null
     },
+    "armada": {
+      "name": "Armada",
+      "about": "Ferries the middle island's wheat home, blockades the enemy port with galleys, and invades with two full transports.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Fable 5.2"],
+        "how": "Written with Claude Code from scratch on the kit, to beat naval on Islets.",
+        "created": "2026-11-25",
+        "commit": null
+      },
+      "language": "python",
+      "files": ["bots/armada_bot.py"],
+      "depends": ["kits/python/bitbath.py"],
+      "run": "python bots/armada_bot.py",
+      "build": null,
+      "rules": ["strategic"],
+      "maps": ["islets"],
+      "play_page": null,
+      "benchmark": null
+    },
     "forager": {
       "name": "Forager",
       "about": "Spreads out to take cities, raids supply with cavalry and scouts, and ferries wheat, in a few milliseconds a turn.",
