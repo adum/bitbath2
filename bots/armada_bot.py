@@ -7,7 +7,8 @@ It wins at sea first and on land afterward:
   wagon, the scout and the starting infantry to the sites out at sea,
   which grow more than everything on the home island together, and waits
   for the wagon on the side of the island away from the enemy, or, once a
-  warship has been seen, on the side farthest from that. A second
+  warship has been seen, on the side farthest from that. When the wagon
+  has all it can carry, the transport comes round to it. A second
   wagon hauls the home site's wheat.
 - Guards. The starting infantry sail with the wagon and stay aboard beside
   the island. A unit on the island is struck first by whoever lands beside
@@ -21,7 +22,8 @@ It wins at sea first and on land afterward:
   struck and where, even if that unit died of it.
 - Raids. An enemy whose army is away has left its cities thin. When two or
   more enemy units that can capture are seen at sea aboard a transport, or
-  landed on the home island, the transport takes the guards it has aboard
+  landed on the home island (three at sea, since two are what goes to hold
+  the middle island), the transport takes the guards it has aboard
   to the enemy's port and lands them on it, whatever else it was doing: a
   rush on Armada's cities is answered by taking the rusher's. (Units seen
   on the middle island used to set a raid off too. That is switched off,
@@ -140,6 +142,9 @@ RAID_AWAY = 2
 # landed on the home island, always does (TRADE): its cities are empty then.
 RAIDS = False
 TRADE = True
+# An army at sea is one coming for the home island if it has this many units
+# that can capture: more than anyone sends to hold the middle island.
+SEA_AWAY = 3
 RAID_UNTIL = 40
 RAID_REST = 15
 # An enemy city seen with a unit in it is thought to be held for this many
@@ -783,6 +788,12 @@ class ArmadaBot(bb.Bot):
         rnd = self.state.round
         return len(self.galleys) >= ESCORT or not any(rnd - r <= SEA_CLEAR for r in self.sighted.values())
 
+    def invasion(self):
+        """Whether an enemy army is on its way to the home island, or on it:
+        SEA_AWAY units that can capture seen aboard a transport, more than go
+        to hold the middle island, or RAID_AWAY of them landed at home."""
+        return len(self.seaborne) >= SEA_AWAY or len(self.intruders) >= RAID_AWAY
+
     def run_ferry(self):
         s = self.state
         w, t = s.units.get(self.midw), s.units.get(self.ferry)
@@ -936,8 +947,20 @@ class ArmadaBot(bb.Bot):
             ring = [x for x, land in self.shores.items() if any(self.isle[h] == isle for h in land)]
             calm = [x for x in ring if not near(x)]
             theirs_ = [c.hex for c in s.cities if c.owner not in (0, self.player)]
+            done = w_mid and not rich()
             if not calm:
                 self.sail(t, [])
+            elif done:
+                # The wagon has all it can carry: round to the water it can
+                # reach soonest, so that it is aboard next turn.
+                walk = self.land_to(w.hex)
+                cost = {x: min(walk.get(h, INF) for h in self.shores[x] if self.isle[h] == isle) for x in calm}
+                best = min(cost.values())
+                handy = [x for x in calm if cost[x] <= max(best, self.unit_type(w).move - 1)]
+                if t.hex not in handy:
+                    field = self.sea_to(handy)
+                    if not self.go(t, field, lambda h: not self.exposed(h)):
+                        self.go(t, field, lambda h: not near(h))
             elif self.sea_danger() and (w_mid or not at_isle):
                 # A warship has been seen: on the side of the island farthest
                 # from it, out of its reach if any of the island's water is.
@@ -1085,8 +1108,7 @@ class ArmadaBot(bb.Bot):
             gone = set()  # its units on the middle island don't set off a raid
         # Those seen at sea, and those that landed on our island.
         self.note_seaborne()
-        gone |= set(self.seaborne) | set(self.intruders)
-        if len(gone) < RAID_AWAY:
+        if len(gone) < RAID_AWAY and not self.invasion():
             return None
         return min(cities, key=lambda c: (not self.map.is_port(c.hex), bb.distance(c.hex, self.home), c.id))
 
@@ -1097,7 +1119,7 @@ class ArmadaBot(bb.Bot):
         s = self.state
         city = self.raid_target()
         cargo = s.units.get(self.midw)
-        coming = len(set(self.seaborne) | set(self.intruders)) >= RAID_AWAY
+        coming = self.invasion()
         if cargo is not None and not self.lurking and not (TRADE and coming) and (
                 cargo.carrier == t.id or self.isle.get(cargo.hex) != self.home_isle):
             return False  # the wagon's trip comes first, and its wheat comes home
