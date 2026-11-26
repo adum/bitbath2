@@ -6,7 +6,8 @@ It wins at sea first and on land afterward:
   to the port, which builds a transport at once. The transport takes that
   wagon, the scout and the starting infantry to the sites out at sea,
   which grow more than everything on the home island together, and waits
-  for the wagon on the side of the island away from the enemy. A second
+  for the wagon on the side of the island away from the enemy, or, once a
+  warship has been seen, on the side farthest from that. A second
   wagon hauls the home site's wheat.
 - Guards. The starting infantry sail with the wagon and stay aboard beside
   the island. A unit on the island is struck first by whoever lands beside
@@ -18,7 +19,9 @@ It wins at sea first and on land afterward:
   board for a strike only when enough of them can at once. The scout stays
   on the island to keep watch. A hit on one of its units tells it who
   struck and where, even if that unit died of it.
-- Raids. An enemy whose army is away has left its cities thin. When two or
+- Raids, which are switched off at present (RAIDS): against the bots it
+  meets now the transport is sunk on the way far more often than it finds
+  a city empty. An enemy whose army is away has left its cities thin. When two or
   more enemy units that can capture are seen on the middle island, at sea
   aboard a transport, or landed on the home island, the transport takes
   the guards to the enemy's port instead and lands them on it. A city it
@@ -130,6 +133,9 @@ ARMY = 14
 # can capture are known to be on the middle island, until round RAID_UNTIL.
 # One that finds the port defended is called off for RAID_REST rounds.
 RAID_AWAY = 2
+# Raids are off. Against the bots it meets now, the transport is sunk on the
+# way far more often than it finds a city empty, and the guards with it.
+RAIDS = False
 RAID_UNTIL = 40
 RAID_REST = 15
 # An enemy city seen with a unit in it is thought to be held for this many
@@ -928,6 +934,17 @@ class ArmadaBot(bb.Bot):
             theirs_ = [c.hex for c in s.cities if c.owner not in (0, self.player)]
             if not calm:
                 self.sail(t, [])
+            elif self.sea_danger() and (w_mid or not at_isle):
+                # A warship has been seen: on the side of the island farthest
+                # from it, out of its reach if any of the island's water is.
+                danger = self.sea_danger()
+                open_ = [x for x in calm if not self.exposed(x)] or calm
+                far = max(min(bb.distance(x, d) for d in danger) for x in open_)
+                side = [x for x in open_ if min(bb.distance(x, d) for d in danger) >= far - 1]
+                if t.hex not in side:
+                    field = self.sea_to(side)
+                    if not self.go(t, field, lambda h: not self.exposed(h)):
+                        self.go(t, field, lambda h: not near(h))
             elif theirs_ and (w_mid or not at_isle):
                 # On the side of the island away from the enemy, where a
                 # warship coming from its port sees the transport last.
@@ -1042,7 +1059,7 @@ class ArmadaBot(bb.Bot):
         and that no one has been seen standing in. A port first, since the
         guards can land right on it."""
         s = self.state
-        if s.round > RAID_UNTIL or s.round < self.raid_off:
+        if not RAIDS or s.round > RAID_UNTIL or s.round < self.raid_off:
             return None
         have = sum(g.hp for g in self.units_with("guard") if self.unit_type(g).capture
                    and (g.carrier or self.isle[g.hex] == self.home_isle))
