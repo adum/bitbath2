@@ -19,12 +19,13 @@ It wins at sea first and on land afterward:
   board for a strike only when enough of them can at once. The scout stays
   on the island to keep watch. A hit on one of its units tells it who
   struck and where, even if that unit died of it.
-- Raids, which are switched off at present (RAIDS): against the bots it
-  meets now the transport is sunk on the way far more often than it finds
-  a city empty. An enemy whose army is away has left its cities thin. When two or
-  more enemy units that can capture are seen on the middle island, at sea
-  aboard a transport, or landed on the home island, the transport takes
-  the guards to the enemy's port instead and lands them on it. A city it
+- Raids. An enemy whose army is away has left its cities thin. When two or
+  more enemy units that can capture are seen at sea aboard a transport, or
+  landed on the home island, the transport takes the guards it has aboard
+  to the enemy's port and lands them on it, whatever else it was doing: a
+  rush on Armada's cities is answered by taking the rusher's. (Units seen
+  on the middle island used to set a raid off too. That is switched off,
+  RAIDS: the transport was sunk far more often than it found a city empty.) A city it
   finds held it leaves alone, for another or for home, unless it has three
   times the strength of the units in it: then it storms it. It starts no
   raid while enemy warships are about and its own galleys aren't out, nor
@@ -133,9 +134,12 @@ ARMY = 14
 # can capture are known to be on the middle island, until round RAID_UNTIL.
 # One that finds the port defended is called off for RAID_REST rounds.
 RAID_AWAY = 2
-# Raids are off. Against the bots it meets now, the transport is sunk on the
-# way far more often than it finds a city empty, and the guards with it.
+# Enemy units on the middle island don't set off a raid (RAIDS): against the
+# bots it meets now, a transport sent because of them is sunk on the way far
+# more often than it finds a city empty. An enemy army seen at sea, or
+# landed on the home island, always does (TRADE): its cities are empty then.
 RAIDS = False
+TRADE = True
 RAID_UNTIL = 40
 RAID_REST = 15
 # An enemy city seen with a unit in it is thought to be held for this many
@@ -1059,7 +1063,7 @@ class ArmadaBot(bb.Bot):
         and that no one has been seen standing in. A port first, since the
         guards can land right on it."""
         s = self.state
-        if not RAIDS or s.round > RAID_UNTIL or s.round < self.raid_off:
+        if not (RAIDS or TRADE) or s.round > RAID_UNTIL or s.round < self.raid_off:
             return None
         have = sum(g.hp for g in self.units_with("guard") if self.unit_type(g).capture
                    and (g.carrier or self.isle[g.hex] == self.home_isle))
@@ -1077,7 +1081,9 @@ class ArmadaBot(bb.Bot):
         gone = {eid for eid, (h, _, _, code) in self.foes.items()
                 if self.isle[h] in isles and (eid in s.units or eid not in self.seen_now)
                 and self.rules.unit_types[code].capture}
-        # Also those seen at sea, and those that landed on our island.
+        if not RAIDS:
+            gone = set()  # its units on the middle island don't set off a raid
+        # Those seen at sea, and those that landed on our island.
         self.note_seaborne()
         gone |= set(self.seaborne) | set(self.intruders)
         if len(gone) < RAID_AWAY:
@@ -1091,7 +1097,8 @@ class ArmadaBot(bb.Bot):
         s = self.state
         city = self.raid_target()
         cargo = s.units.get(self.midw)
-        if cargo is not None and not self.lurking and (
+        coming = len(set(self.seaborne) | set(self.intruders)) >= RAID_AWAY
+        if cargo is not None and not self.lurking and not (TRADE and coming) and (
                 cargo.carrier == t.id or self.isle.get(cargo.hex) != self.home_isle):
             return False  # the wagon's trip comes first, and its wheat comes home
         if city is None or (not self.sea_ours() and not s.passengers(t)):
