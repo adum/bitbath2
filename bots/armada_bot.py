@@ -49,14 +49,19 @@ its army is seen away from them:
   else it was doing, and without waiting for the wagon: if the wagon is
   loaded and can come aboard that same turn it is fetched on the way, and
   one already aboard goes along. It starts no raid with a warship known
-  near where it would land. A transport that one more hit would sink, and
-  that has no load to bring home, goes on such a raid unbidden: it makes
-  no more trips for wheat, and has nothing better left to do. The guards
-  land on the port if no one stands in it, and take it at once. A city
-  found held they leave for the other one, unless they have three times
-  the strength in it. Ashore they walk into an empty city before they
-  fight for a held one: every hit taken is strength they can't capture
-  with.
+  near where it would land. Two kinds of transport go on such a raid
+  unbidden. One has the guards and the loaded wagon aboard after an enemy
+  warship has been seen: the warship lies in wait by the port, and the
+  wheat is worth as much in a city taken from the enemy. The other is one
+  that one more hit would sink and that has no load to bring home: it
+  makes no more trips for wheat, and has nothing better left to do. On its
+  way in the transport first goes to where it can see into the city, and
+  if someone stands in it, makes for the other one with the moves it has
+  left. The guards land on the port if no one stands in it, and take it at
+  once. A city found held they leave for the other one, unless they have
+  three times the strength in it. Ashore they walk into an empty city
+  before they fight for a held one: every hit taken is strength they can't
+  capture with.
 - A city across the sea. The loaded wagon lands behind the guards and
   unloads in the first city they take: its wheat buys infantry there, one
   a turn, sooner than it could be carried home past a warship. One unit
@@ -226,6 +231,11 @@ ASSAULT_BAR = -40
 WAIT = 4
 
 
+# From round LADEN on, once an enemy warship has been seen, a transport with
+# the guards and a wagon carrying LADEN_LOAD wheat aboard takes them to the
+# enemy's cities and not home: the warship lies in wait by the port.
+LADEN = 8
+LADEN_LOAD = 300
 # Until round ALARM, an enemy transport seen with two or more units aboard
 # that can capture brings the guards back into the port, if it is within
 # ALARM_NEAR hexes of the port or no one stands in it: a rush lands by then.
@@ -1543,7 +1553,7 @@ class ArmadaBot(bb.Bot):
             gone = set()  # its units on the middle island don't set off a raid
         # Those seen at sea, and those that landed on our island.
         self.note_seaborne()
-        if len(gone) < RAID_AWAY and not self.invasion() and not self.forlorn():
+        if len(gone) < RAID_AWAY and not self.invasion() and not self.forlorn() and not self.laden():
             return None
         return min(cities, key=lambda c: (not self.map.is_port(c.hex), bb.distance(c.hex, self.home), c.id))
 
@@ -1562,6 +1572,19 @@ class ArmadaBot(bb.Bot):
             return False
         return (w is None or (w.carrier == t.id and not w.wheat)
                 or (not w.carrier and self.isle.get(w.hex) == self.home_isle and not w.wheat))
+
+    def laden(self):
+        """Whether the transport has the loaded wagon and the guards aboard
+        while an enemy warship is about: the way home leads past it, and the
+        wheat is worth as much in a city taken from the enemy."""
+        s = self.state
+        t, w = s.units.get(self.ferry), s.units.get(self.midw)
+        if t is None or w is None or s.round < LADEN or not self.sighted:
+            return False
+        if w.carrier != t.id or w.wheat < LADEN_LOAD:
+            return False
+        guards = sum(u.hp for u in s.passengers(t) if self.roles.get(u.id) == "guard" and self.unit_type(u).capture)
+        return guards >= self.rules.capture_points
 
     def run_raid(self, t):
         """Takes the guards to an enemy city left empty and lands them on it,
@@ -1612,6 +1635,28 @@ class ArmadaBot(bb.Bot):
             self.lurking = False
             return False
         self.lurking = True
+        if spots and t.hex not in spots:
+            # First to where it can see into the city, if no one of ours can
+            # yet: a city found held is left for the other one while there
+            # are still moves to get there with.
+            sight = self.unit_type(t).vision
+            seen = any(not u.carrier and bb.distance(u.hex, city.hex) <= self.unit_type(u).vision
+                       for u in s.my_units())
+            if not seen:
+                reach = self.reachable(t)
+                look = {h: d for h, d in reach.items() if self.map.navigable(h)
+                        and bb.distance(h, city.hex) <= sight and len(d) < t.mp}
+                if look:
+                    h = min(look, key=lambda h: (len(look[h]), field.get(h, INF), h))
+                    self.move(t, look[h])
+                    inside = sum(e.hp for e in s.enemy_units() if e.hex == city.hex and not e.carrier)
+                    if inside and punch(aboard) < 3 * inside:
+                        self.held[city.id] = (s.round, inside)
+                        other = self.raid_target()
+                        if other is not None and other.id != city.id:
+                            city, there = other, self.isle[other.hex]
+                            spots = self.landing_for(city.hex)
+                            field = self.sea_to(spots) if spots else {}
         # Around the warships it knows of if it can, and past them if it can't.
         moved = bool(spots) and (self.go(t, field, lambda h: not self.exposed(h)) or self.go(t, field))
         if t.hex in spots or (not moved and any(self.isle[h] == there for h in self.shores.get(t.hex, []))):
