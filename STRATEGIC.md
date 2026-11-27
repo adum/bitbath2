@@ -67,6 +67,7 @@ The default game stays as it is.
   - It needs `neutral_cities = 2`, `sites` of at least 4, and ships. `water_pct` doesn't apply.
   - **Islets** is the same map at 24 × 18, for quicker games: [configs/islets.toml](configs/islets.toml), and the play page's Islets. On maps under 30 hexes high the coasts wobble proportionally less, so a small map keeps the large one's shapes. On any size, the middle island lies out at sea, with water a quarter of the map's height wide or more between it and each home island, and a home stands 2 hexes inland of its island's anchor on a small map as on a large one. On Islets the home islands are 60 to 76 hexes, 4 to 6 hexes of sea part them from the middle island, and homes stand 5 or 6 hexes from the sea. At 40 × 30 the maps are as before.
     - Islets' sites grow and hold half as much, from 2026-11-25. Each home site grows 30 wheat a round and piles up to 850, where it grew 60 and piled up to 1,700. Each site in the middle grows 50 and piles up to 1,500, where it grew 100 and piled up to 3,000. At the full rate, wheat came in faster than two cities could build with it. With the caps halved too, a site still fills in about 30 rounds.
+    - Islets' clock gives 1 second a turn, from 2026-11-27, where the strategic preset gives 2. The bank is that preset's: 10 seconds to start with, and 20 at most. With both bots using all their time, a 300-round game lasts about 10 minutes at the most, where it could last 20.
 
 ## 4. Wheat and bread
 
@@ -580,3 +581,8 @@ Settled on 2026-11-24:
 Settled on 2026-11-25:
 
 - **Islets is the small map to work on** (§3): the islands map at 24 × 18, with the generator keeping the larger map's shapes, so that it offers the same play in quicker games.
+
+Settled on 2026-11-27:
+
+- **Islets' clock gives 1 second a turn** (§3), with the bank it had. The other strategic presets keep 2 seconds a turn.
+  - *Why:* a tournament on Islets takes at most half as long. The bots that play the map answer in about a tenth of a second at the most, so their games don't change, and the limit is for slower bots to come.

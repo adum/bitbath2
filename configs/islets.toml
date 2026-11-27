@@ -6,7 +6,8 @@
 # by transport can harvest. The Play page's Islets map is this one.
 #
 # The rest is the strategic preset (configs/strategic.toml) as it stands,
-# except that the sites grow and hold half as much.
+# except that the sites grow and hold half as much, and the clock gives half
+# as long for a turn.
 
 map_layout = "islands"
 map_width = 24
@@ -15,9 +16,11 @@ neutral_cities = 2         # one port on each home island
 sites = 4                  # one near each home, and the pair in the middle
 round_limit = 300          # the tiebreak counts cities, then armies
 
-# The large preset's clock, as in the strategic preset.
+# The clock (SPEC §7): 1 second a turn, where the strategic preset gives 2,
+# so that a tournament's games take at most half as long. The bank starts
+# as large as that preset's, and holds as much.
 time_bank_ms = 10000
-time_increment_ms = 2000
+time_increment_ms = 1000
 time_bank_cap_ms = 20000
 
 # Supply (STRATEGIC.md §4, §5, §10). There's no gold: units cost bread.

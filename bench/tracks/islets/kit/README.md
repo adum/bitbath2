@@ -32,7 +32,7 @@ This builds your bot, plays it against itself on an Islets map, and fails if eit
 - **Games.** Each pair of bots plays each map twice, with the sides swapped.
 - **Maps.** Every game is on a map like those of `configs/islets.toml`: 24 by 18 hexes, mostly sea, with a 300-round limit. Each player starts on an island in its own corner, with a resource site near its home city and a neutral port on its coast. Only a port builds ships. A third island in the middle has no city and the two richest sites. The map seeds are ones you haven't seen.
 - **Rules.** The rules are those of `configs/islets.toml`. The engine sends the rules at the start of each game, so read them from that message instead of writing them into your bot.
-- **Time.** The clock in SPEC §7 is enforced, with this preset's numbers: a bank of 10 seconds to start with, 2 seconds more each turn, and at most 20 seconds banked. A bot that crashes, hangs, or runs out of memory forfeits the game.
+- **Time.** The clock in SPEC §7 is enforced, with this preset's numbers: a bank of 10 seconds to start with, 1 second more each turn, and at most 20 seconds banked. A bot that crashes, hangs, or runs out of memory forfeits the game.
 - **Isolation.** Your bot has no network. It starts each game in an empty working directory, so nothing it writes carries over from one game to the next.
 - **Scoring.** Bots are rated from all the games together, with supply's rating fixed at 1000. A draw counts as half a win.
 

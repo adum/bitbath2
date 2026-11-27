@@ -220,6 +220,7 @@ A track is one game to build a bot for. Each has a directory in [bench/tracks/](
 - **`kit.txt`** lists the repository paths in the track's kit, and `kit/` holds the kit's own files: its README, which is the task a model reads, and a placeholder bot.
 - **Islets' kit has fewer, larger bots.** Naval does everything the map asks for, and it is built on Supply, which is built on Vanguard, so those two files come with it. Forager is there as a bot in one Rust file that doesn't use the Python kit. It is the weakest bot on this map.
 - **Islets' results are lopsided.** In 16 of the 21 pairs among its seven reference bots, one bot won all 40 games. So the prompt and the kit's README give the held-back bots' results against Naval, and not their ratings, which move with the field: adding Brigantine to the ladder raised the three bots above it by about 320 points each.
+- **Both tracks give a bot 1 second a turn.** Micro plays the default clock ([SPEC.md](SPEC.md) §7), whose bank starts at 5 seconds and holds 10. Islets' preset starts the bank at 10 seconds and lets it hold 20. With both bots using all their time, a 300-round Islets game lasts about 10 minutes at the most, and an 80-round Micro game under 3.
 
 ### The image
 
