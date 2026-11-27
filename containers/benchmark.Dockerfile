@@ -46,9 +46,13 @@ RUN chmod 0555 /opt/bench/claude-bwrap /opt/bench/agy-policy \
 # The kit, with the runner built. A container's /workspace is a new volume,
 # which Docker fills from this directory, owner included. Building here also
 # leaves the crates the kit needs in /opt/cargo, for building without a
-# network later.
+# network later. A sample bot in Rust is built too, beside the runner:
+# bots/forager_bot.rs as target/release/forager_bot.
 COPY --chown=1000:1000 kit /workspace
 RUN cd /workspace && cargo build --release && cargo test --release --no-run \
+    && for bot in bots/*_bot.rs; do \
+         if [ -f "$bot" ]; then rustc -O "$bot" -o "target/release/$(basename "$bot" .rs)" || exit 1; fi; \
+       done \
     && chown -R 1000:1000 /workspace && chmod -R a+rX /opt/cargo /opt/rustup
 
 ENV HOME=/home/bench CARGO_NET_OFFLINE=true PYTHONDONTWRITEBYTECODE=1 \

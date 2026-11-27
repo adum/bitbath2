@@ -1,5 +1,5 @@
-"""The arena: sealed entries and the reference bots play a tournament in one
-container with no network. Each bot's files belong to a user of its own
+"""The arena: a track's sealed entries and reference bots play a tournament in
+one container with no network. Each bot's files belong to a user of its own
 there, so no bot can read another's code, working files, or the replays."""
 
 import hashlib
@@ -8,12 +8,14 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from . import tracks
 from .leaderboard import refresh as refresh_leaderboard
 from .process import run_process
 from .run import ENTRIES, now, write_json
 from .sandbox import ROOT, BenchmarkError, Docker, archive_of, extract_archive
 
-SETTINGS = ROOT / "bench" / "arena.json"
+# What a season keeps of its track's settings: what was played.
+SETTINGS = ("references", "python_kit", "maps", "check_config", "anchor")
 SEASONS = ROOT / "arena"
 HOME = "/workspace/arena"
 BITBATH = "/workspace/target/release/bitbath"
@@ -33,24 +35,42 @@ def committed(commit, path):
     return done.stdout
 
 
+def reference_files(spec, read, kit):
+    """A reference bot's directory as {name: contents}: its files side by
+    side, the Python kit beside them if any of them is Python, and a bot.toml
+    with its commands. `read` gives a repository file's contents."""
+    paths, run, build = tracks.reference(spec)
+    files = {Path(path).name: read(path) for path in paths}
+    if len(files) < len(paths):
+        raise BenchmarkError(f"two of these files have one name: {', '.join(paths)}")
+    if any(path.endswith(".py") for path in paths):
+        files["bitbath.py"] = read(kit)
+    manifest = f'run = "{run}"\n' + (f'build = "{build}"\n' if build else "")
+    files["bot.toml"] = manifest.encode()
+    return files
+
+
 def reference_bots(settings, commit):
-    """The reference bots, each as a bot directory with the Python kit beside it."""
-    kit = committed(commit, settings["kit"])
+    """The reference bots, each as a bot directory."""
     bots = {}
-    for name, path in settings["references"].items():
-        file = Path(path).name
-        archive = archive_of({file: committed(commit, path), "bitbath.py": kit,
-                              "bot.toml": f'run = "python {file}"\n'.encode()})
-        bots[name] = {"kind": "reference", "source": path, "archive": archive}
+    for name, spec in settings["references"].items():
+        files = reference_files(spec, lambda path: committed(commit, path), settings["python_kit"])
+        bots[name] = {"kind": "reference", "source": tracks.reference(spec)[0][0], "archive": archive_of(files)}
     return bots
 
 
 def sealed_entries(only, image, allow_other_kits):
-    """The sealed entries, or those named in `only`, as bots by name."""
+    """The image's track's sealed entries, or those named in `only`, as bots by name."""
     bots = {}
     for path in sorted(ENTRIES.glob("*/entry.json")):
         record = json.loads(path.read_text(encoding="utf-8"))
         if only and record["id"] not in only:
+            continue
+        built_for = record.get("track", tracks.FIRST)
+        if built_for != image["track"]:
+            # A bot built for another game has no place in this tournament.
+            if only:
+                raise BenchmarkError(f"entry {record['id']} was built for the {built_for} track")
             continue
         if not record.get("sealed"):
             if only:
@@ -99,10 +119,11 @@ def download(container, season):
 
 def arena(args):
     """Plays the tournament, or the games of it that the season doesn't have yet."""
-    settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
+    track = tracks.load(args.track)
+    settings = {key: track[key] for key in SETTINGS}
     jobs = args.jobs or max(1, int(args.cpus) // 2)
-    docker = Docker(args.image, cpus=args.cpus, memory=args.memory)
-    image = docker.preflight()
+    docker = Docker(args.image or tracks.image(track["name"]), cpus=args.cpus, memory=args.memory)
+    image = docker.preflight(track["name"])
     commit = image["kit_commit"]
 
     bots = {} if args.no_references else reference_bots(settings, commit)
@@ -117,15 +138,18 @@ def arena(args):
 
     # A season's games are only comparable if each name always meant the
     # same bot, playing on the same engine.
-    season = SEASONS / args.season
+    season = SEASONS / (args.season or track["name"])
     state_path = season / "arena.json"
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {"bots": {}}
+    if state["bots"] and state.get("track", tracks.FIRST) != track["name"]:
+        raise BenchmarkError(f"season '{season.name}' is of the {state.get('track', tracks.FIRST)} track: "
+                             "start a new --season")
     if state.get("kit_sha256", image["kit_sha256"]) != image["kit_sha256"]:
-        raise BenchmarkError(f"season '{args.season}' was played with another kit: start a new --season")
+        raise BenchmarkError(f"season '{season.name}' was played with another kit: start a new --season")
     for name, bot in bots.items():
         known = state["bots"].get(name)
         if known and known["sha256"] != bot["sha256"]:
-            raise BenchmarkError(f"'{name}' isn't the bot that season '{args.season}' has games for: "
+            raise BenchmarkError(f"'{name}' isn't the bot that season '{season.name}' has games for: "
                                  "start a new --season")
     season.mkdir(parents=True, exist_ok=True)
 
@@ -163,8 +187,8 @@ def arena(args):
         if len(playing) < 2:
             raise BenchmarkError("fewer than two bots passed their checks")
 
-        state.update(kit_sha256=image["kit_sha256"], kit_commit=commit, image=image["id"], updated=now(),
-                     settings=settings, failed_checks=failed)
+        state.update(track=track["name"], kit_sha256=image["kit_sha256"], kit_commit=commit, image=image["id"],
+                     updated=now(), settings=settings, failed_checks=failed)
         state["bots"].update({name: {k: bots[name][k] for k in ("kind", "source", "sha256")} for name in playing})
         write_json(state_path, state)
 

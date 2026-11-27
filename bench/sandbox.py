@@ -13,8 +13,8 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 from .process import run_process
+from .tracks import FIRST as FIRST_TRACK
 
-DEFAULT_IMAGE = "bitbath-bench:local"
 ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_SECCOMP = ROOT / "containers" / "claude-seccomp.json"
 # The user a model and its bot run as in a build container.
@@ -119,7 +119,7 @@ def archive_of(files):
 class Docker:
     """Starts, fills, and removes the benchmark's containers."""
 
-    def __init__(self, image=DEFAULT_IMAGE, *, cpus=4, memory="8g"):
+    def __init__(self, image, *, cpus=4, memory="8g"):
         if not shutil.which("docker"):
             raise BenchmarkError("Docker is required: install and start Docker Desktop or Docker Engine")
         if not re.fullmatch(r"[1-9][0-9]*[mgMG]", memory):
@@ -135,8 +135,10 @@ class Docker:
     def call(self, *args, **kwargs):
         return checked(["docker", *args], **kwargs)
 
-    def preflight(self):
-        """The image's id and the kit it was built with."""
+    def preflight(self, track=None):
+        """The image's id and the kit it was built with. With `track`, the
+        image must be that track's."""
+        build = "python benchmark.py build" + (f" --track {track}" if track else "")
         try:
             self.call("info", "--format", "{{.ServerVersion}}", timeout=30)
         except BenchmarkError:
@@ -144,11 +146,17 @@ class Docker:
         try:
             data = json.loads(self.call("image", "inspect", self.image, "--format", "{{json .}}", timeout=30))
         except BenchmarkError:
-            raise BenchmarkError(f"no image {self.image}: run python benchmark.py build") from None
+            raise BenchmarkError(f"no image {self.image}: run {build}") from None
         labels = data.get("Config", {}).get("Labels") or {}
         if "bitbath.kit.commit" not in labels:
-            raise BenchmarkError(f"{self.image} isn't a benchmark image: run python benchmark.py build")
-        return {"id": data["Id"], "kit_commit": labels["bitbath.kit.commit"], "kit_sha256": labels["bitbath.kit.sha256"]}
+            raise BenchmarkError(f"{self.image} isn't a benchmark image: run {build}")
+        # Images from before there were tracks hold the first track's kit.
+        built_for = labels.get("bitbath.track", FIRST_TRACK)
+        if track and built_for != track:
+            raise BenchmarkError(f"{self.image} holds the {built_for} track's kit, and this is the {track} track: "
+                                 f"run {build}, or name that track's image with --image")
+        return {"id": data["Id"], "track": built_for, "kit_commit": labels["bitbath.kit.commit"],
+                "kit_sha256": labels["bitbath.kit.sha256"]}
 
     def base(self, name, *, network="none", user=AGENT_USER, caps=(), pids=512, workspace=None):
         """The `docker run` arguments every benchmark container shares.

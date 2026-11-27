@@ -1,0 +1,43 @@
+{
+  "about": "The classic rules on Micro maps. The kit has six small sample bots, and four stronger reference bots are held back.",
+  "python_kit": "kits/python/bitbath.py",
+  "check_config": "configs/micro.toml",
+  "practice": {
+    "bots": {
+      "random": "python bots/random_bot.py",
+      "greedy": "python bots/greedy_bot.py",
+      "turtle": "python bots/turtle_bot.py",
+      "volley": "python bots/volley_bot.py",
+      "raider": "python bots/raider_bot.py",
+      "rush": "python bots/rush_bot.py"
+    },
+    "config": "configs/micro.toml",
+    "seeds": "1-4",
+    "anchor": "greedy=1000"
+  },
+  "references": {
+    "random": "bots/random_bot.py",
+    "greedy": "bots/greedy_bot.py",
+    "turtle": "bots/turtle_bot.py",
+    "volley": "bots/volley_bot.py",
+    "raider": "bots/raider_bot.py",
+    "rush": "bots/rush_bot.py",
+    "smart": "bots/smart_bot.py",
+    "vanguard": "bots/vanguard_bot.py",
+    "solid": "bots/solid_bot.py",
+    "bastion": "bots/bastion_bot.py"
+  },
+  "maps": [
+    {"config": "configs/micro.toml", "seeds": "1001-1020"}
+  ],
+  "anchor": "greedy=1000",
+  "prompt": {
+    "opposition": [
+      "The kit's bots/ directory holds six of the reference bots. They are simple samples, and greedy is the best of them.",
+      "Four more reference bots are held back, so you can't see them. On the scale where greedy is rated 1000 they are rated from about 1400 to 1650. The weakest of them wins about nine games in ten against greedy, and the strongest nearly every game. None of them is close to perfect play: they are hand-written heuristics, and a better bot can beat them all.",
+      "So a bot that only edges out greedy finishes in the bottom half. Winning nine games in ten against greedy is the first real milestone, and doing well means going well beyond that. A copy of a sample bot, or a sample bot with its numbers tuned, scores about what that bot scores: getting further takes a design of your own."
+    ],
+    "practice": "the kit's six bots on micro maps, with greedy's rating fixed at 1000",
+    "caveat": "These six are the weakest bots in the real tournament, and the four reference bots you can't see are rated about 1400 to 1650 on this scale. Coming first here is not a good result yet: a strong bot wins nearly every game in this table. It is also only four seeds, so it is a rough guide and not a measurement."
+  }
+}

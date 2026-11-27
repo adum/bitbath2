@@ -2,7 +2,10 @@
 work, and nothing else. What it leaves in submission/ is checked, and then
 sealed as an entry for the tournament. The time can be used in several
 sittings: between them the entry is paused, and its workspace waits in a
-Docker volume."""
+Docker volume.
+
+The kit, the check, the practice games between sessions, and what the prompt
+says about the opposition are the track's (bench/tracks.py)."""
 
 import datetime as dt
 import hashlib
@@ -14,6 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
+from . import tracks
 from .harnesses import PROVIDERS, Harness, activity, auth_secrets, error_message, failure_kind, usage_records
 from .process import run_process
 from .sandbox import CLAUDE_SECCOMP, ROOT, BenchmarkError, Docker, extract_archive
@@ -28,7 +32,7 @@ IDLE_SESSIONS = 3
 IDLE_SECONDS = 120
 # Waits before retrying a session that failed for a passing reason.
 RETRY_DELAYS = (15, 30, 60, 120)
-CHECK = ["target/release/bitbath", "check", "submission", "--config", "configs/micro.toml"]
+BITBATH = "target/release/bitbath"
 
 TASK = """This is a competition. You are in /workspace, which holds the Bitbath starter \
 kit, and your task is to build the strongest bot you can and leave it in submission/. \
@@ -39,18 +43,7 @@ What you are up against:
 - When your time is over, your bot plays a tournament against bots that other AI \
 models built from this same kit, and against reference bots. Your bot's rating in \
 that tournament is the only result of this work.
-- The kit's bots/ directory holds six of the reference bots. They are simple \
-samples, and greedy is the best of them.
-- Four more reference bots are held back, so you can't see them. On the scale \
-where greedy is rated 1000 they are rated from about 1400 to 1650. The weakest of \
-them wins about nine games in ten against greedy, and the strongest nearly every \
-game. None of them is close to perfect play: they are hand-written heuristics, \
-and a better bot can beat them all.
-- So a bot that only edges out greedy finishes in the bottom half. Winning nine \
-games in ten against greedy is the first real milestone, and doing well means \
-going well beyond that. A copy of a sample bot, or a sample bot with its numbers \
-tuned, scores about what that bot scores: getting further takes a design of your own.
-
+{opposition}
 How the work is run:
 
 - You have {hours} of working time in all. {remaining} of it is left, and this \
@@ -64,7 +57,7 @@ sessions before it. Keep notes for yourself in /workspace/NOTES.md as you go, on
 what you tried, what the results were, and what to do next. Read them first if \
 they exist.
 {sitting}- This container has {cpus} CPUs, whatever `nproc` says: it reports the host's.
-- Every tournament game is on a map like those of configs/micro.toml, on a seed \
+- Every tournament game is on a map like those of {config}, on a seed \
 you haven't seen.
 - Nobody is there to answer questions, so don't ask any. Decide for yourself.
 - There is no internet access. Work only inside /workspace.
@@ -78,15 +71,11 @@ up the time that is left.
 FIRST = "Where things stand: this is the first session, and submission/ holds the kit's placeholder bot.\n"
 
 STANDING = """How submission/ stands now. After the last session the benchmark played it, as \
-"mine", against the kit's six bots on micro maps, with greedy's rating fixed at 1000:
+"mine", against {practice}:
 
 {table}
 
-Read this table for what it is. These six are the weakest bots in the real \
-tournament, and the four reference bots you can't see are rated about 1400 to \
-1650 on this scale. Coming first here is not a good result yet: a strong bot wins \
-nearly every game in this table. It is also only four seeds, so \
-it is a rough guide and not a measurement.
+Read this table for what it is. {caveat}
 """
 
 NO_STANDING = """The benchmark tried to play submission/ against the kit's bots after the last \
@@ -201,7 +190,20 @@ def session(docker, agent, harness, prompt, directory, *, timeout, secrets, vers
     return outcome
 
 
-def check(docker, archive, directory):
+def check_command(track):
+    """The check that admits a submission to the track's tournament, as the
+    model runs it in /workspace."""
+    return [BITBATH, "check", "submission", "--config", track["check_config"]]
+
+
+def task(track, **fields):
+    """The prompt of a working session on a track."""
+    opposition = "".join(f"- {line}\n" for line in track["prompt"]["opposition"])
+    return TASK.format(opposition=opposition, config=" and ".join(m["config"] for m in track["maps"]),
+                       check=" ".join(check_command(track)), **fields)
+
+
+def check(docker, archive, directory, track):
     """Checks a submission in a fresh container with no network: the kit as
     the image has it, and only the submission added. Returns whether it
     passed, and the check's output."""
@@ -209,7 +211,7 @@ def check(docker, archive, directory):
     try:
         docker.put(container, archive, "/workspace/submission")
         out, err = directory / "check.stdout.txt", directory / "check.stderr.txt"
-        done = run_process(["docker", "exec", "--workdir", "/workspace", container, *CHECK],
+        done = run_process(["docker", "exec", "--workdir", "/workspace", container, *check_command(track)],
                            stdout=out, stderr=err, timeout=1800)
         text = out.read_text(errors="replace") + err.read_text(errors="replace")
         if done.stop:
@@ -219,24 +221,28 @@ def check(docker, archive, directory):
         docker.remove(container)
 
 
-SAMPLES = ("random", "greedy", "turtle", "volley", "raider", "rush")
+def practice_command(track, jobs):
+    """The tournament between a model's sessions: its submission, as "mine",
+    against the track's practice bots, which are the kit's."""
+    practice = track["practice"]
+    command = [BITBATH, "tournament", "--bot", "mine=submission"]
+    for name, bot in practice["bots"].items():
+        command += ["--bot", f"{name}={bot}"]
+    return command + ["--config", practice["config"], "--seeds", practice["seeds"], "--jobs", str(jobs),
+                      "--anchor", practice["anchor"], "--bootstrap", "0", "--out", "/tmp/standing"]
 
 
-def standing(docker, archive, jobs):
+def standing(docker, archive, jobs, track):
     """Plays a submission against the kit's bots, in a fresh container
     with no network, and returns the ratings table. The model could run the
     same tournament itself: it learns nothing here that the kit doesn't hold."""
     container = docker.offline("standing-" + uuid.uuid4().hex[:6])
     try:
         docker.put(container, archive, "/workspace/submission")
-        command = ["target/release/bitbath", "tournament", "--bot", "mine=submission"]
-        for name in SAMPLES:
-            command += ["--bot", f"{name}=python bots/{name}_bot.py"]
-        command += ["--config", "configs/micro.toml", "--seeds", "1-4", "--jobs", str(jobs),
-                    "--anchor", "greedy=1000", "--bootstrap", "0", "--out", "/tmp/standing"]
-        output = docker.run(container, *command, workdir="/workspace", timeout=900)
+        output = docker.run(container, *practice_command(track, jobs), workdir="/workspace", timeout=1800)
         table = output[output.rindex("  #  bot"):].split("\n\n")[0]
-        return STANDING.format(table=table.rstrip())
+        return STANDING.format(table=table.rstrip(), practice=track["prompt"]["practice"],
+                               caveat=track["prompt"]["caveat"])
     except (BenchmarkError, ValueError) as e:
         return NO_STANDING.format(error=str(e)[-1500:])
     finally:
@@ -316,17 +322,19 @@ def sitting_seconds(at_a_time):
 
 def run(args):
     """Starts the build phase for one model. Returns the entry's directory."""
+    track = tracks.load(args.track)
     harness = Harness(args.harness, args.model, args.effort)
     limit = sitting_seconds(args.at_a_time)
     access = credentials_for(harness, args.auth_file)
-    docker = Docker(args.image, cpus=args.cpus, memory=args.memory)
-    image = docker.preflight()
+    docker = Docker(args.image or tracks.image(track["name"]), cpus=args.cpus, memory=args.memory)
+    image = docker.preflight(track["name"])
     name = bot_name(args.name or args.model)
     entry_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S-") + name
     entry = ENTRIES / entry_id
     entry.mkdir(parents=True)
     record = {
-        "id": entry_id, "name": name, "harness": harness.name, "model": harness.model, "effort": harness.effort,
+        "id": entry_id, "name": name, "track": track["name"],
+        "harness": harness.name, "model": harness.model, "effort": harness.effort,
         "image": image, "started": now(), "sealed": False, "state": "working", "volume": "bitbath-" + entry_id,
         "rounds": [], "sittings": [],
         "conditions": {"hours": args.hours, "max_sessions": args.max_sessions, "fix_minutes": args.fix_minutes,
@@ -334,9 +342,9 @@ def run(args):
                        "hosts": harness.hosts},
     }
     write_json(entry / "entry.json", record)
-    print(f"Entry {entry_id}: {harness.name} / {harness.model}, {duration(args.hours * 3600)}, "
-          f"kit {image['kit_commit'][:12]}")
-    return sit(entry, record, harness, docker, image, access, limit=limit)
+    print(f"Entry {entry_id}: the {track['name']} track, {harness.name} / {harness.model}, "
+          f"{duration(args.hours * 3600)}, kit {image['kit_commit'][:12]}")
+    return sit(entry, record, harness, docker, image, access, track, limit=limit)
 
 
 def resume(args):
@@ -348,14 +356,15 @@ def resume(args):
         raise BenchmarkError(f"no entry {args.entry} in {ENTRIES}") from None
     if record.get("state") not in ("paused", "working"):
         raise BenchmarkError(f"{args.entry} isn't a paused entry")
+    track = tracks.load(record.get("track", tracks.FIRST))
     harness = Harness(record["harness"], record["model"], record["effort"])
     limit = sitting_seconds(args.at_a_time)
     access = credentials_for(harness, args.auth_file)
     conditions = record["conditions"]
-    docker = Docker(args.image, cpus=conditions["cpus"], memory=conditions["memory"])
-    image = docker.preflight()
+    docker = Docker(args.image or tracks.image(track["name"]), cpus=conditions["cpus"], memory=conditions["memory"])
+    image = docker.preflight(track["name"])
     if image["kit_sha256"] != record["image"]["kit_sha256"]:
-        raise BenchmarkError(f"{args.image} holds another kit than the one this entry started from "
+        raise BenchmarkError(f"{docker.image} holds another kit than the one this entry started from "
                              f"(commit {record['image']['kit_commit'][:12]})")
     if not docker.volume_exists(record["volume"]):
         raise BenchmarkError(f"the entry's workspace, the Docker volume {record['volume']}, is gone")
@@ -367,12 +376,12 @@ def resume(args):
         print("Note: the image was rebuilt since this entry started. The kit is the same, "
               "but the harness may be another version.")
     used = sum(r["seconds"] for r in record["rounds"] if not r.get("fix"))
-    print(f"Entry {record['id']}: sitting {len(record['sittings']) + 1}, "
+    print(f"Entry {record['id']}: the {track['name']} track, sitting {len(record['sittings']) + 1}, "
           f"{duration(conditions['hours'] * 3600 - used)} of {duration(conditions['hours'] * 3600)} left")
-    return sit(entry, record, harness, docker, image, access, limit=limit, seal=args.seal)
+    return sit(entry, record, harness, docker, image, access, track, limit=limit, seal=args.seal)
 
 
-def sit(entry, record, harness, docker, image, access, *, limit=None, seal=False):
+def sit(entry, record, harness, docker, image, access, track, *, limit=None, seal=False):
     """One sitting of an entry's build phase: sessions until the working time
     or the sitting's own time is used up. The entry is then either paused,
     with its workspace kept in a Docker volume, or checked and sealed.
@@ -471,14 +480,14 @@ def sit(entry, record, harness, docker, image, access, *, limit=None, seal=False
                     if same and "standing" in rounds[-2]:
                         rounds[-1]["standing"] = rounds[-2]["standing"]
                     else:
-                        rounds[-1]["standing"] = standing(docker, archive, cpus)
+                        rounds[-1]["standing"] = standing(docker, archive, cpus, track)
                     save()
                     print(rounds[-1]["standing"], flush=True)
                 several = limit or len(record["sittings"]) > 1
-                prompt = TASK.format(hours=duration(budget), remaining=duration(left), deadline=clock_after(here),
-                                     session=number, check=" ".join(CHECK), cpus=cpus,
-                                     sitting=sitting_note(len(record["sittings"]), limit and here) if several else "",
-                                     history=history(rounds, before, rounds[-1]["standing"] if rounds else ""))
+                prompt = task(track, hours=duration(budget), remaining=duration(left), deadline=clock_after(here),
+                              session=number, cpus=cpus,
+                              sitting=sitting_note(len(record["sittings"]), limit and here) if several else "",
+                              history=history(rounds, before, rounds[-1]["standing"] if rounds else ""))
                 print(f"Session {number}: {duration(left)} left" + (f", {duration(here)} of it now" if limit else ""),
                       flush=True)
                 archive, outcome = work(number, prompt, here, f"session {number}")
@@ -499,16 +508,17 @@ def sit(entry, record, harness, docker, image, access, *, limit=None, seal=False
                     raise BenchmarkError("the model left submission/ as the kit had it, so there is nothing to seal"
                                          + (f": {error}" if error else ""))
 
-                passed, output = check(docker, archive, entry)
+                passed, output = check(docker, archive, entry, track)
                 print(f"Check: {'passed' if passed else 'failed'}", flush=True)
                 fixed = any(r.get("fix") and r["stop"] != "interrupted" for r in rounds)
                 if not passed and conditions["fix_minutes"] > 0 and not fixed:
                     # One more session, with the check's output and nothing else new.
                     record["fix_session"] = True
                     seconds = conditions["fix_minutes"] * 60
-                    prompt = FIX.format(deadline=clock_after(seconds), check=" ".join(CHECK), output=output)
+                    prompt = FIX.format(deadline=clock_after(seconds), check=" ".join(check_command(track)),
+                                        output=output)
                     archive, _ = work(len(rounds) + 1, prompt, seconds, "fix session", fix=True)
-                    passed, output = check(docker, archive, entry)
+                    passed, output = check(docker, archive, entry, track)
                     print(f"Check after the fix session: {'passed' if passed else 'failed'}", flush=True)
                 record["check"] = {"passed": passed, "output": output}
                 (entry / "submission.tar").write_bytes(archive)
@@ -560,15 +570,16 @@ def clock(seconds):
 
 
 def summary(record):
-    """One entry as a row of the list: its id, harness, status, time used
-    and left, sessions, sittings, and when it was last worked on."""
+    """One entry as a row of the list: its id, track, harness, status, time
+    used and left, sessions, sittings, and when it was last worked on."""
     rounds = record.get("rounds", [])
     used = sum(r["seconds"] for r in rounds if not r.get("fix"))
     budget = record.get("conditions", {}).get("hours", 0) * 3600
     open_ = status(record) in ("paused", "working")
     sittings = record.get("sittings") or [{}]
     last = sittings[-1].get("ended") or record.get("finished") or record.get("started") or ""
-    return [record.get("id", "?"), record.get("harness", "?"), status(record), clock(used), clock(budget),
+    return [record.get("id", "?"), record.get("track", tracks.FIRST), record.get("harness", "?"), status(record),
+            clock(used), clock(budget),
             clock(budget - used) if open_ else "-", str(len(rounds)), str(len(sittings)),
             last[:16].replace("T", " ")]
 
@@ -586,10 +597,10 @@ def listing(args):
     if not records:
         print("No entries." if args.all else "No sealed or paused entries. --all also lists the failed ones.")
         return
-    head = ["entry", "harness", "status", "used", "of", "left", "sessions", "sittings", "last worked (UTC)"]
+    head = ["entry", "track", "harness", "status", "used", "of", "left", "sessions", "sittings", "last worked (UTC)"]
     rows = [head] + [summary(r) for r in records]
     widths = [max(len(row[i]) for row in rows) for i in range(len(head))]
-    right = {3, 4, 5, 6, 7}
+    right = {4, 5, 6, 7, 8}
     for row in rows:
         print("  ".join(c.rjust(w) if i in right else c.ljust(w) for i, (c, w) in enumerate(zip(row, widths))).rstrip())
     counts = {}

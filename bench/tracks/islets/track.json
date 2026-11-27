@@ -1,0 +1,50 @@
+{
+  "about": "The strategic rules on Islets maps. The kit has Naval, with Supply, which it is built on, and Forager, and four stronger reference bots are held back.",
+  "python_kit": "kits/python/bitbath.py",
+  "check_config": "configs/islets.toml",
+  "practice": {
+    "bots": {
+      "naval": "python bots/naval_bot.py",
+      "supply": "python bots/supply_bot.py",
+      "forager": "target/release/forager_bot"
+    },
+    "config": "configs/islets.toml",
+    "seeds": "1-4",
+    "anchor": "supply=1000"
+  },
+  "references": {
+    "supply": {
+      "files": ["bots/supply_bot.py", "bots/vanguard_bot.py"],
+      "run": "python supply_bot.py"
+    },
+    "naval": {
+      "files": ["bots/naval_bot.py", "bots/supply_bot.py", "bots/vanguard_bot.py"],
+      "run": "python naval_bot.py"
+    },
+    "forager": {
+      "files": ["bots/forager_bot.rs"],
+      "build": "rustc -O forager_bot.rs -o forager_bot",
+      "run": "forager_bot"
+    },
+    "brigantine": {
+      "files": ["bots/brigantine_bot.py", "bots/naval_bot.py", "bots/supply_bot.py", "bots/vanguard_bot.py"],
+      "run": "python brigantine_bot.py"
+    },
+    "breakwater": "bots/breakwater_bot.py",
+    "armada": "bots/armada_bot.py",
+    "trident": "bots/trident_bot.py"
+  },
+  "maps": [
+    {"config": "configs/islets.toml", "seeds": "1001-1020"}
+  ],
+  "anchor": "supply=1000",
+  "prompt": {
+    "opposition": [
+      "The kit's bots/ directory holds three of the reference bots: naval, supply, and forager. Naval is by far the best of them: it won every game against the other two.",
+      "Four more reference bots are held back, so you can't see them. Each of them won all 40 of its games against naval, and the strongest three won 115 of their 120 games against the fourth. None of them is close to perfect play: they are hand-written heuristics, and a better bot can beat them all.",
+      "So a bot that only beats naval finishes in the bottom half. Beating naval in every game is the first real milestone, and doing well means going well beyond that. A copy of naval scores what naval scores: no wins against those four."
+    ],
+    "practice": "the kit's three bots on Islets maps, with supply's rating fixed at 1000",
+    "caveat": "These three are the weakest bots in the real tournament, and each of the four reference bots you can't see won every game against naval. Coming first here is not a good result yet: a strong bot wins every game in this table. It is also only four seeds, so it is a rough guide and not a measurement."
+  }
+}

@@ -141,7 +141,7 @@ target/release/bitbath play --p1 "python bots/bastion_bot.py" --p2 "python bots/
 | `rules` | The rule sets it knows: `classic`, `strategic` ([STRATEGIC.md](STRATEGIC.md)), or both. |
 | `maps` | `"any"`, or the maps it's made for, by preset or Play page name. Naval plays the classic rules as Vanguard does, but it's made for the maps with ships. |
 | `play_page` | How the Play page runs it: `js` (a port in web/bots.js), `pyodide`, or `wasm`. Null if the Play page doesn't offer it, though `bitbath serve` still runs it from disk. |
-| `benchmark` | `kit` if the benchmark's starter kit includes it, `held back` for the other reference bots the benchmark plays, `entry`, or null. |
+| `benchmark` | Its part in each benchmark track that uses it, by the track's name: `kit` if the track's starter kit has it as a bot to practise against, `held back` for the other reference bots the track plays, or `entry`. Empty if no track uses it. A kit also holds the files its bots import, so Vanguard's file is in the Islets kit though Vanguard has no part there. |
 
 `made.by` is who git credits: the person who committed the bot, and the model named as co-author of that commit. For a benchmark entry, `session` copies the main facts from its run's record in `entries/`, which isn't in git.
 
@@ -157,7 +157,7 @@ The Play page and `bitbath serve` read the index:
 - A Python bot's `depends` must match what it imports.
 - `web/bots.js` must have a port for each `js` bot.
 - Each `pyodide` bot must be Python and define one bot, and the browser worker must load each `wasm` bot.
-- `bench/arena.json` and `bench/starter.txt` must agree with the index.
+- Each benchmark track's `track.json` and `kit.txt` must agree with the index: the reference bots the track plays, the files it packs for each, and the bots in its kit.
 - Each `commit` must be one that added the bot's files.
 
 ### Ratings
@@ -200,16 +200,30 @@ target/release/bitbath tournament --bot random="python bots/random_bot.py" --bot
 The benchmark gives a model a starter kit and time to build a bot, then plays the bots that different models built against each other and against the reference bots. It needs Docker and Python 3.10 or later. [benchmark.py](benchmark.py) runs each step:
 
 ```bash
-python benchmark.py build
-python benchmark.py run --harness claude --model <model id> --hours 4
-python benchmark.py arena
+python benchmark.py build --track islets
+python benchmark.py run --track islets --harness claude --model <model id> --hours 4
+python benchmark.py arena --track islets
 ```
 
-All three steps have been run under Docker, `run` with a script standing in for the model. A real model's session through each of the three harnesses is the part that hasn't been run yet.
+Real models have built bots on the micro track through the `claude`, `codex`, and `agy` harnesses. `opencode` hasn't been run with a model. On the Islets track every step has been run under Docker, `run` with a script standing in for the model, and no model has built a bot there yet.
+
+### Tracks
+
+A track is one game to build a bot for. Each has a directory in [bench/tracks/](bench/tracks) that holds its starter kit, the bots a model practises against, and the tournament its entries play. `build`, `run`, `arena`, and `export` take `--track`. An entry belongs to the track it was built on, and plays only that track's tournaments.
+
+| Track | Rules and maps | Practice bots, in the kit | Reference bots held back |
+|---|---|---|---|
+| `micro` | the classic rules, on Micro maps | random, greedy, turtle, volley, raider, rush | smart, vanguard, solid, bastion |
+| `islets` | the strategic rules ([STRATEGIC.md](STRATEGIC.md)), on Islets maps | naval, supply, forager | brigantine, breakwater, armada, trident |
+
+- **`track.json`** names the rule preset of the check, the practice bots and their seeds, the reference bots with the files each one needs, the tournament's presets and seeds, the rating anchor, and what the prompt says about the opposition.
+- **`kit.txt`** lists the repository paths in the track's kit, and `kit/` holds the kit's own files: its README, which is the task a model reads, and a placeholder bot.
+- **Islets' kit has fewer, larger bots.** Naval does everything the map asks for, and it is built on Supply, which is built on Vanguard, so those two files come with it. Forager is there as a bot in one Rust file that doesn't use the Python kit. It is the weakest bot on this map.
+- **Islets' results are lopsided.** In 16 of the 21 pairs among its seven reference bots, one bot won all 40 games. So the prompt and the kit's README give the held-back bots' results against Naval, and not their ratings, which move with the field: adding Brigantine to the ladder raised the three bots above it by about 320 points each.
 
 ### The image
 
-`build` exports the starter kit from `HEAD` and builds one image around it, `bitbath-bench:local`: the kit with the runner built, Python, Rust, g++, and the Codex, Claude Code, and OpenCode command lines at pinned versions. Both later steps use this image, so every bot is built against, and then plays on, the same engine. Build it again after the engine or the kit changes, and start a new season with it.
+`build` exports the track's starter kit from `HEAD` and builds one image around it, `bitbath-bench:<track>`: the kit with the runner built, Python, Rust, g++, and the Codex, Claude Code, OpenCode, and Antigravity command lines at pinned versions. A sample bot in Rust, such as Islets' Forager, is built there too. Both later steps use this image, so every bot is built against, and then plays on, the same engine. Build it again after the engine or the kit changes, and start a new season with it. An image built before there were tracks, as `bitbath-bench:local`, holds the micro kit: `docker tag bitbath-bench:local bitbath-bench:micro` gives it its track's name.
 
 ### Building a bot
 
@@ -221,7 +235,7 @@ All three steps have been run under Docker, `run` with a script standing in for 
 - **What it can't reach.** The container's network goes through a proxy that connects only to the model provider's hosts. The harness's web search and fetch tools are off, and none of your own settings, memory, or history are copied in. Other entries and the held-back reference bots are not in the container at all.
 - **Time.** `--hours` is the working time, counted over the model's sessions. A model that ends a session early gets another, starting where the files were left, until the time is used. The run also ends once three sessions in a row have each stopped within two minutes without changing the bot. Creating a `FINISHED` file ends the work for good and gives up the time that is left.
 - **Sittings.** The time needn't be used in one go. `--at-a-time 2` pauses the entry after two hours of working time, and `python benchmark.py resume <entry id>` goes on with it, with `--at-a-time` again or until the time is used. Between sittings the entry's `/workspace` waits in a Docker volume named `bitbath-<entry id>`, so the model finds its notes, tools and saved versions as it left them, in a new container. Each sitting starts a new session, and the prompt tells the model about the sittings and how much of this one is left. A run that is interrupted, or that fails on a bad key, is paused the same way, and an interrupted session's time still counts. With sittings, three idle sessions end the sitting and not the entry. `resume <entry id> --seal` gives up the time that is left and seals the bot as it stands. `resume` refuses an image that holds another kit. A paused entry isn't sealed, so it plays no tournament, and the volume is removed once the entry is sealed. `python benchmark.py list` shows every sealed and paused entry with its status, the time it has used and has left, and when it was last worked on; `--all` adds the entries that failed. To drop a paused entry, delete its directory and run `docker volume rm bitbath-<entry id>`.
-- **Feedback.** Between sessions the benchmark plays the submission against the kit's six sample bots and puts the ratings table in the next session's prompt, with a reminder that the hidden bots are stronger, with how long the last session ran and whether it changed the bot. The model could run those games itself, so this tells it nothing the kit doesn't hold.
+- **Feedback.** Between sessions the benchmark plays the submission against the track's practice bots, which are the kit's, and puts the ratings table in the next session's prompt, with a reminder that the hidden bots are stronger, with how long the last session ran and whether it changed the bot. The model could run those games itself, so this tells it nothing the kit doesn't hold.
 - **The check.** What the model leaves in `submission/` is checked with `bitbath check` in a fresh container that has no network. If that fails, the model gets one short session with the check's output to fix it (`--fix-minutes`), and it is checked again.
 - **The entry.** A run leaves `entries/<time>-<name>/`: the submission as `submission.tar` and unpacked beside it, `entry.json` with the model, the kit, each session, and the submission's hash, and every session's prompt and output under `rounds/`. An entry that passed its check is sealed. `entries/` isn't committed, since it holds bots that shouldn't be public while a season runs.
 
@@ -229,18 +243,18 @@ The credential has to be inside the container for the harness to work, so use a 
 
 ### The arena
 
-`arena` plays every sealed entry and the reference bots in one container that has no network at all.
+`arena` plays a track's sealed entries and reference bots in one container that has no network at all.
 
 - **Bots can't see each other.** Each bot's files belong to a user of its own, and its programs run as that user. A bot can't read another bot's code or working directory, the replay being written, or the results. It can't write to its own directory either, and gets an empty working directory each game, so it keeps nothing from one game to the next.
-- **What is played.** [bench/arena.json](bench/arena.json) names the reference bots, which are the kit's six sample bots and four that are held back, the rule presets with the seeds to play under each, and the rating anchor. For now every game is on a micro map, as are the practice games between a model's sessions. The seeds there are the held-out ones, so change them before a season that counts if the repository is public.
-- **Results.** `arena/<season>/` gets `games.jsonl`, `ratings.json`, and every replay. Run `arena` again to continue a season that was interrupted, or to add new entries: only the missing games are played. A season refuses a bot whose name it knows with different contents, and an image with another kit.
+- **What is played.** The track's `track.json` names the reference bots, which are the kit's practice bots and the ones that are held back, the rule presets with the seeds to play under each, and the rating anchor. Each track plays one preset for now, and the practice games between a model's sessions use it too. The seeds there are the held-out ones, so change them before a season that counts if the repository is public.
+- **Results.** `arena/<season>/` gets `games.jsonl`, `ratings.json`, and every replay. `--season` names it, and without one it is the track's name. Run `arena` again to continue a season that was interrupted, or to add new entries: only the missing games are played. A season refuses a bot whose name it knows with different contents, an image with another kit, and another track.
 - **Failed checks.** Every bot is built and checked in the arena first. An entry that fails sits the tournament out, and `arena.json` in the season says why.
 
 ### The starter kit
 
-`python benchmark.py export <directory>` writes the kit on its own, to read what a model is given.
+`python benchmark.py export --track <track> <directory>` writes a track's kit on its own, to read what a model is given.
 
-- **Contents.** The kit holds only what [bench/starter.txt](bench/starter.txt) lists: the engine and runner, the Python kit, six sample bots (random, greedy, turtle, volley, raider, and rush), three rule presets, and SPEC.md. The other bots in `bots/` are left out, so that they can serve as opponents no model has seen. The prompt and the kit's README tell the model roughly how they rate against greedy, so that it knows the scale without seeing their code. Two runs with one of them in the kit both submitted that bot with a number or two changed. [bench/starter/](bench/starter) adds the kit's own README, which is the task a model reads, and a placeholder bot.
+- **Contents.** A kit holds only what its track's `kit.txt` lists. Micro's has the engine and runner, the Python kit, six sample bots (random, greedy, turtle, volley, raider, and rush), three rule presets, and SPEC.md. Islets' has STRATEGIC.md as well, and its bots are Naval, with Supply and Vanguard, and Forager. The other bots in `bots/` are left out, so that they can serve as opponents no model has seen. The prompt and the kit's README tell the model how strong they are, so that it knows what it is up against without seeing their code: micro's by how they rate against greedy, and Islets' by their results against Naval. Two micro runs with a held-back bot in the kit both submitted that bot with a number or two changed. Each track's `kit/` adds the kit's own README, which is the task a model reads, and a placeholder bot.
 - **Source.** The files come from a commit, `HEAD` unless `--rev` names another, and not from the files on disk. Changes that aren't committed don't reach the kit, and `export` warns about them.
 - **Identity.** `export` prints the commit and a hash over every file in the kit. The image carries both, and every entry records them.
 
@@ -270,7 +284,7 @@ bots/           Reference and sample bots, index.json, what's known about each, 
 tests/vectors/  Golden test vectors shared by the engine and kits.
 configs/        Rule presets.
 scripts/        Viewer build and server, the bots' ratings, and the test vector generator.
-bench/          The benchmark: the starter kit, the containers, model runs, the arena.
+bench/          The benchmark: its tracks and their starter kits, the containers, model runs, the arena.
 benchmark.py    The benchmark's command line.
 containers/     The benchmark image, and the seccomp profile for Claude Code's sandbox.
 ```

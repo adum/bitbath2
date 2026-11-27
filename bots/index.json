@@ -19,7 +19,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": "js",
-      "benchmark": "kit"
+      "benchmark": {"micro": "kit"}
     },
     "greedy": {
       "name": "Greedy",
@@ -39,7 +39,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": "js",
-      "benchmark": "kit"
+      "benchmark": {"micro": "kit"}
     },
     "bastion": {
       "name": "Bastion",
@@ -59,7 +59,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": "pyodide",
-      "benchmark": "held back"
+      "benchmark": {"micro": "held back"}
     },
     "smart": {
       "name": "Smart",
@@ -79,7 +79,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": "pyodide",
-      "benchmark": "held back"
+      "benchmark": {"micro": "held back"}
     },
     "vanguard": {
       "name": "Vanguard",
@@ -99,7 +99,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": "pyodide",
-      "benchmark": "held back"
+      "benchmark": {"micro": "held back"}
     },
     "solid": {
       "name": "Solid",
@@ -119,7 +119,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": "held back"
+      "benchmark": {"micro": "held back"}
     },
     "apex": {
       "name": "Apex",
@@ -139,7 +139,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": null
+      "benchmark": {}
     },
     "turtle": {
       "name": "Turtle",
@@ -159,7 +159,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": "kit"
+      "benchmark": {"micro": "kit"}
     },
     "volley": {
       "name": "Volley",
@@ -179,7 +179,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": "kit"
+      "benchmark": {"micro": "kit"}
     },
     "raider": {
       "name": "Raider",
@@ -199,7 +199,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": "kit"
+      "benchmark": {"micro": "kit"}
     },
     "rush": {
       "name": "Rush",
@@ -219,7 +219,7 @@
       "rules": ["classic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": "kit"
+      "benchmark": {"micro": "kit"}
     },
     "supply": {
       "name": "Supply",
@@ -239,7 +239,7 @@
       "rules": ["classic", "strategic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": null
+      "benchmark": {"islets": "kit"}
     },
     "naval": {
       "name": "Naval",
@@ -259,7 +259,7 @@
       "rules": ["classic", "strategic"],
       "maps": ["islets", "islands", "seas", "strategic"],
       "play_page": "pyodide",
-      "benchmark": null
+      "benchmark": {"islets": "kit"}
     },
     "armada": {
       "name": "Armada",
@@ -279,7 +279,7 @@
       "rules": ["strategic"],
       "maps": ["islets"],
       "play_page": "pyodide",
-      "benchmark": null
+      "benchmark": {"islets": "held back"}
     },
     "trident": {
       "name": "Trident",
@@ -299,7 +299,7 @@
       "rules": ["strategic"],
       "maps": ["islets", "islands"],
       "play_page": "pyodide",
-      "benchmark": null
+      "benchmark": {"islets": "held back"}
     },
     "breakwater": {
       "name": "Breakwater",
@@ -319,7 +319,7 @@
       "rules": ["strategic"],
       "maps": ["islets"],
       "play_page": "pyodide",
-      "benchmark": null
+      "benchmark": {"islets": "held back"}
     },
     "brigantine": {
       "name": "Brigantine",
@@ -339,7 +339,7 @@
       "rules": ["strategic"],
       "maps": ["islets"],
       "play_page": "pyodide",
-      "benchmark": null
+      "benchmark": {"islets": "held back"}
     },
     "forager": {
       "name": "Forager",
@@ -359,7 +359,7 @@
       "rules": ["classic", "strategic"],
       "maps": "any",
       "play_page": null,
-      "benchmark": null
+      "benchmark": {"islets": "kit"}
     },
     "gpt-6-astra": {
       "name": "GPT-6 Astra",
@@ -389,7 +389,7 @@
       "rules": ["classic"],
       "maps": ["micro"],
       "play_page": "wasm",
-      "benchmark": "entry"
+      "benchmark": {"micro": "entry"}
     }
   }
 }

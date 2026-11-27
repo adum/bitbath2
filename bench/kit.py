@@ -1,7 +1,8 @@
 """The starter kit: the files a model gets to build its bot from.
 
-The kit holds the paths that bench/starter.txt lists, as they are in one
-commit, and the files in bench/starter/.
+Each track (bench/tracks.py) has a kit of its own. It holds the paths that
+the track's kit.txt lists, as they are in one commit, and the files in the
+track's kit/ directory.
 """
 
 import hashlib
@@ -13,9 +14,9 @@ import sys
 import tarfile
 from pathlib import Path
 
+from . import tracks
+
 ROOT = Path(__file__).resolve().parents[1]
-ALLOWLIST = "bench/starter.txt"
-OVERLAY = "bench/starter"
 
 
 def git(*args):
@@ -37,7 +38,7 @@ def unpack(archive, dest):
             tar.extractall(dest)
 
 
-def read_allowlist(text):
+def read_allowlist(text, name="the allowlist"):
     """The allowlist's paths, and its copies as {destination: source}."""
     include, copies = [], {}
     for raw in text.splitlines():
@@ -49,7 +50,7 @@ def read_allowlist(text):
             include.append(line)
     for target, source in copies.items():
         if not any(source == path or source.startswith(path + "/") for path in include):
-            raise SystemExit(f"{ALLOWLIST}: {target} copies {source}, which isn't listed")
+            raise SystemExit(f"{name}: {target} copies {source}, which isn't listed")
     return include, copies
 
 
@@ -66,17 +67,18 @@ def workspace_manifest(commit, members):
     return cargo[: listed.start()] + f"members = {json.dumps(kept)}" + cargo[listed.end() :]
 
 
-def export(dest, rev):
-    """Writes the starter kit to `dest` and returns its manifest."""
+def export(dest, rev, track):
+    """Writes a track's starter kit to `dest` and returns its manifest."""
     dest = Path(dest)
     if dest.exists() and any(dest.iterdir()):
         raise SystemExit(f"{dest} isn't empty")
+    allowlist, overlay = (tracks.load(track)[key] for key in ("allowlist", "overlay"))
     commit = git("rev-parse", "--verify", f"{rev}^{{commit}}").decode().strip()
-    include, copies = read_allowlist(git("show", f"{commit}:{ALLOWLIST}").decode())
+    include, copies = read_allowlist(git("show", f"{commit}:{allowlist}").decode(), allowlist)
 
     # The kit comes from the commit, not from the files on disk, so that
     # work in progress here never reaches it.
-    changed = git("status", "--porcelain", "--", *include, ALLOWLIST, OVERLAY).decode().splitlines()
+    changed = git("status", "--porcelain", "--", *include, allowlist, overlay).decode().splitlines()
     if changed and rev == "HEAD":
         print("warning: these have changes that aren't committed, and so aren't in the kit:", file=sys.stderr)
         for line in changed:
@@ -84,7 +86,7 @@ def export(dest, rev):
 
     dest.mkdir(parents=True, exist_ok=True)
     unpack(git("archive", "--format=tar", commit, "--", *include), dest)
-    unpack(git("archive", "--format=tar", f"{commit}:{OVERLAY}"), dest)
+    unpack(git("archive", "--format=tar", f"{commit}:{overlay}"), dest)
     for target, source in copies.items():
         (dest / target).parent.mkdir(parents=True, exist_ok=True)
         (dest / target).write_bytes((dest / source).read_bytes())
@@ -94,4 +96,4 @@ def export(dest, rev):
     for path in sorted(p for p in dest.rglob("*") if p.is_file()):
         files[path.relative_to(dest).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     listing = "".join(f"{h}  {name}\n" for name, h in files.items())
-    return {"commit": commit, "sha256": hashlib.sha256(listing.encode()).hexdigest(), "files": files}
+    return {"track": track, "commit": commit, "sha256": hashlib.sha256(listing.encode()).hexdigest(), "files": files}

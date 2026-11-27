@@ -1,5 +1,5 @@
 """Checks bots/index.json, the bot index (README: The bot index), against the
-bots' files and imports, what the Play page needs, and the benchmark's list,
+bots' files and imports, what the Play page needs, and the benchmark's tracks,
 and checks bots/ratings.json (README: Ratings) against the index.
 
 Usage: python tests/test_bot_index.py
@@ -21,11 +21,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "bots" / "index.json"
 RATINGS = ROOT / "bots" / "ratings.json"
-# The web build's scripts and the ratings', and the bots and kit they use.
-sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "bots"), str(ROOT / "kits" / "python")]
+# The web build's scripts and the ratings', the bots and kit they use, and the benchmark.
+sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "bots"), str(ROOT / "kits" / "python"), str(ROOT)]
 import browser_bot  # noqa: E402
 import build_web_bots  # noqa: E402
 import ratings  # noqa: E402
+from bench import tracks  # noqa: E402
 
 FIELDS = {"name", "about", "kind", "made", "language", "files", "depends", "run", "build", "rules", "maps",
           "play_page", "benchmark"}
@@ -34,7 +35,8 @@ KINDS = {"reference", "sample", "entry"}
 LANGUAGES = {"python", "rust", "c++"}
 RULES = {"classic", "strategic"}
 PLAY_PAGE = {None, "js", "pyodide", "wasm"}
-BENCHMARK = {None, "kit", "held back", "entry"}
+# A bot's part in a benchmark track.
+PARTS = {"kit", "held back", "entry"}
 LADDER = {"about", "rules", "map", "config", "from", "date", "commit", "seeds", "games", "anchor", "field", "ratings"}
 RATING = set(ratings.STATS) | {"source"}
 
@@ -113,8 +115,11 @@ class BotIndex(unittest.TestCase):
                 self.assertTrue(b["maps"] == "any" or (b["maps"] and set(b["maps"]) <= maps),
                                 f"maps: \"any\", or some of {sorted(maps)}")
                 self.assertIn(b["play_page"], PLAY_PAGE)
-                self.assertIn(b["benchmark"], BENCHMARK)
-                self.assertEqual(b["kind"] == "entry", b["benchmark"] == "entry",
+                parts = b["benchmark"]
+                self.assertIsInstance(parts, dict, "benchmark: its part in each track that uses it")
+                self.assertTrue(set(parts) <= set(tracks.names()), f"benchmark: the tracks are {tracks.names()}")
+                self.assertTrue(set(parts.values()) <= PARTS, f"benchmark: a part is one of {sorted(PARTS)}")
+                self.assertEqual(b["kind"] == "entry", bool(parts) and set(parts.values()) == {"entry"},
                                  "a benchmark entry is kind entry, and the other way round")
 
     def test_files_exist(self):
@@ -165,13 +170,27 @@ class BotIndex(unittest.TestCase):
 
     def test_benchmark(self):
         index = bots()
-        references = json.loads(text("bench/arena.json"))["references"]
-        self.assertEqual(references, {bid: b["files"][0] for bid, b in index.items()
-                                      if b["benchmark"] in ("kit", "held back")},
-                         "bench/arena.json's references should be the bots whose benchmark is kit or held back")
-        kit = {line.strip() for line in text("bench/starter.txt").splitlines() if line.startswith("bots/")}
-        self.assertEqual(kit, {b["files"][0] for b in index.values() if b["benchmark"] == "kit"},
-                         "bench/starter.txt should hold the bots whose benchmark is kit, and no others")
+        for name in tracks.names():
+            with self.subTest(track=name):
+                track = tracks.load(name)
+                part = {bid: b["benchmark"].get(name) for bid, b in index.items()}
+                references = {bid: tracks.reference(spec) for bid, spec in track["references"].items()}
+                self.assertEqual(set(references), {bid for bid in index if part[bid] in ("kit", "held back")},
+                                 "track.json's references should be the bots whose part is kit or held back")
+                for bid, (files, run, build) in references.items():
+                    b = index[bid]
+                    self.assertEqual(files[0], b["files"][0], f"{bid}: its own file comes first")
+                    self.assertEqual(sorted(files), sorted(set(b["files"] + b["depends"]) - {track["python_kit"]}),
+                                     f"{bid}: track.json should pack its files and everything they import")
+                    self.assertEqual(build is None, b["build"] is None, f"{bid}: built, or not")
+                    if b["language"] == "python":
+                        self.assertEqual(run, "python " + Path(files[0]).name)
+                in_kit = {line.strip() for line in text(track["allowlist"]).splitlines() if line.startswith("bots/")}
+                self.assertEqual(in_kit, {f for bid, (files, _, _) in references.items() if part[bid] == "kit"
+                                          for f in files},
+                                 "kit.txt should hold the bots whose part is kit with what they import, and no others")
+                self.assertEqual(set(track["practice"]["bots"]), {bid for bid in index if part[bid] == "kit"},
+                                 "the practice games should be against the bots whose part is kit")
 
     def test_ratings(self):
         # Whether a rating is current isn't checked: a bot may change before

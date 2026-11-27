@@ -10,10 +10,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bench import kit
+from bench import kit, tracks
+from bench.arena import reference_files
 from bench.harnesses import Harness, activity, error_message, failure_kind, usage_records
-from bench.run import FIRST, FIX, TASK, bot_name, contents_hash, duration, history, idle, sitting_note, sitting_seconds, status, summary
+from bench.run import (FIRST, FIX, STANDING, bot_name, check_command, contents_hash, duration, history, idle,
+                       practice_command, sitting_note, sitting_seconds, status, summary, task)
 from bench.sandbox import BenchmarkError, archive_of, check_archive, extract_archive
+
+# Each track's practice bots, which are in its kit, and the reference bots it holds back.
+TRACKS = {
+    "micro": (["greedy", "raider", "random", "rush", "turtle", "volley"], ["bastion", "smart", "solid", "vanguard"]),
+    "islets": (["forager", "naval", "supply"], ["armada", "breakwater", "brigantine", "trident"]),
+}
 
 
 def tar_with(member, content=b""):
@@ -32,15 +40,49 @@ class Kit(unittest.TestCase):
         with self.assertRaises(SystemExit):
             kit.read_allowlist("engine\nsub/b.py = bots/strong_bot.py\n")
 
-    def test_the_kit_holds_the_sample_bots_only(self):
-        include, _ = kit.read_allowlist((kit.ROOT / kit.ALLOWLIST).read_text())
-        bots = sorted(Path(path).name for path in include if path.startswith("bots"))
-        samples = ["greedy", "raider", "random", "rush", "turtle", "volley"]
-        self.assertEqual(bots, [f"{name}_bot.py" for name in samples])
-        # Every held-back bot is still a tournament opponent.
-        references = json.loads((kit.ROOT / "bench" / "arena.json").read_text())["references"]
-        held_back = sorted(set(references) - set(samples))
-        self.assertEqual(held_back, ["bastion", "smart", "solid", "vanguard"])
+    def test_a_kit_holds_its_practice_bots_and_no_held_back_bot(self):
+        self.assertEqual(tracks.names(), sorted(TRACKS))
+        for name, (practice, held_back) in TRACKS.items():
+            with self.subTest(track=name):
+                track = tracks.load(name)
+                include, copies = kit.read_allowlist((kit.ROOT / track["allowlist"]).read_text())
+                in_kit = {path for path in include if path.startswith("bots/")}
+                files = {bot: tracks.reference(spec)[0] for bot, spec in track["references"].items()}
+                self.assertEqual(sorted(track["practice"]["bots"]), practice)
+                # The kit's bots are the practice bots, with the files they import.
+                self.assertEqual(in_kit, {path for bot in practice for path in files[bot]})
+                # Every other reference bot is a tournament opponent whose own file stays out.
+                self.assertEqual(sorted(set(files) - set(practice)), held_back)
+                for bot in held_back:
+                    self.assertNotIn(files[bot][0], in_kit, bot)
+                # The bots that set the ratings' scale play.
+                self.assertIn(track["anchor"].split("=")[0], track["references"])
+                self.assertIn(track["practice"]["anchor"].split("=")[0], track["practice"]["bots"])
+                # Every game is played with a preset the kit has.
+                for config in {track["check_config"], track["practice"]["config"]} | {m["config"] for m in track["maps"]}:
+                    self.assertIn(config, include)
+                self.assertTrue((kit.ROOT / track["overlay"] / "README.md").is_file())
+                self.assertTrue((kit.ROOT / track["overlay"] / "submission" / "bot.toml").is_file())
+                self.assertEqual(copies, {"submission/bitbath.py": track["python_kit"]})
+
+    def test_reference_bots_are_packed_with_what_they_import(self):
+        read = lambda path: path.encode()
+        islets = tracks.load("islets")["references"]
+        naval = reference_files(islets["naval"], read, "kits/python/bitbath.py")
+        self.assertEqual(sorted(naval), ["bitbath.py", "bot.toml", "naval_bot.py", "supply_bot.py", "vanguard_bot.py"])
+        self.assertEqual(naval["bot.toml"], b'run = "python naval_bot.py"\n')
+        self.assertEqual(naval["supply_bot.py"], b"bots/supply_bot.py")
+        # A bot in another language is built in its directory, and gets no Python kit.
+        forager = reference_files(islets["forager"], read, "kits/python/bitbath.py")
+        self.assertEqual(sorted(forager), ["bot.toml", "forager_bot.rs"])
+        self.assertEqual(forager["bot.toml"],
+                         b'run = "forager_bot"\nbuild = "rustc -O forager_bot.rs -o forager_bot"\n')
+        # A Python bot in one file is named by its path alone.
+        self.assertEqual(reference_files("bots/greedy_bot.py", read, "kits/python/bitbath.py"),
+                         {"greedy_bot.py": b"bots/greedy_bot.py", "bitbath.py": b"kits/python/bitbath.py",
+                          "bot.toml": b'run = "python greedy_bot.py"\n'})
+        with self.assertRaises(BenchmarkError):
+            reference_files({"files": ["bots/a.py", "old/a.py"], "run": "python a.py"}, read, "kit.py")
 
 
 class Archives(unittest.TestCase):
@@ -157,32 +199,55 @@ class Run(unittest.TestCase):
         self.assertEqual(duration(20), "0 minutes")
 
     def test_prompts_fill_in(self):
-        fields = dict(hours="4 hours", remaining="1 hour", deadline="12:00", session=2, check="bitbath check", cpus=16,
-                      history=FIRST)
-        task = TASK.format(sitting="", **fields)
-        fix = FIX.format(deadline="12:00", check="bitbath check", output="error: x")
-        self.assertNotIn("{", task + fix)
-        self.assertNotIn("sitting", task)
+        fields = dict(hours="4 hours", remaining="1 hour", deadline="12:00", session=2, cpus=16, history=FIRST)
+        for name in TRACKS:
+            with self.subTest(track=name):
+                track = tracks.load(name)
+                prompt = task(track, sitting="", **fields)
+                fix = FIX.format(deadline="12:00", check=" ".join(check_command(track)), output="error: x")
+                table = STANDING.format(table="  #  bot", practice=track["prompt"]["practice"],
+                                        caveat=track["prompt"]["caveat"])
+                self.assertNotIn("{", prompt + fix + table)
+                self.assertNotIn("sitting", prompt)
+                # The opposition is one list with the line before it, and the check is the track's.
+                self.assertIn("only result of this work.\n- The kit's bots/ directory holds", prompt)
+                self.assertIn(f"`target/release/bitbath check submission --config {track['check_config']}`", prompt)
+                self.assertIn(f"on a map like those of {track['check_config']}, on a seed", prompt)
+        micro, islets = (task(tracks.load(name), sitting="", **fields) for name in ("micro", "islets"))
+        self.assertIn("greedy is the best of them", micro)
+        self.assertIn("Each of them won all 40 of its games against naval", islets)
+        for word in ("greedy", "micro"):
+            self.assertNotIn(word, islets)
         # Work that is spread over sittings is told so, as one more line of the list.
-        split = TASK.format(sitting=sitting_note(3, 7200), **fields)
+        split = task(tracks.load("micro"), sitting=sitting_note(3, 7200), **fields)
         self.assertIn("they exist.\n- The working time is spread over sittings", split)
         self.assertIn("This is sitting 3, and 2 hours of it is left.", split)
         self.assertIn("lost between sittings, and so is anything still running.\n- This container has", split)
         self.assertIn("lasts until the working time is used up", sitting_note(2, None))
 
+    def test_practice_games_are_the_tracks(self):
+        command = practice_command(tracks.load("islets"), 16)
+        self.assertEqual(command[:4], ["target/release/bitbath", "tournament", "--bot", "mine=submission"])
+        for part in ("naval=python bots/naval_bot.py", "forager=target/release/forager_bot", "configs/islets.toml",
+                     "supply=1000"):
+            self.assertIn(part, command)
+        self.assertIn("greedy=python bots/greedy_bot.py", practice_command(tracks.load("micro"), 4))
+
     def test_entries_are_listed_with_their_status(self):
         self.assertEqual(status({"sealed": True}), "sealed")
         self.assertEqual(status({"sealed": False, "check": {"passed": False}}), "check failed")
         self.assertEqual(status({"sealed": False, "error": "x"}), "failed")
-        paused = {"id": "e1", "harness": "codex", "state": "paused", "sealed": False,
+        paused = {"id": "e1", "track": "islets", "harness": "codex", "state": "paused", "sealed": False,
                   "conditions": {"hours": 20}, "started": "2026-11-22T03:09:08+00:00",
                   "rounds": [{"seconds": 7000}, {"seconds": 200}, {"seconds": 900, "fix": True}],
                   "sittings": [{"ended": "2026-11-22T05:10:00+00:00"}, {"ended": "2026-11-23T09:30:00+00:00"}]}
-        self.assertEqual(summary(paused), ["e1", "codex", "paused", "2:00", "20:00", "18:00", "3", "2",
+        self.assertEqual(summary(paused), ["e1", "islets", "codex", "paused", "2:00", "20:00", "18:00", "3", "2",
                                            "2026-11-23 09:30"])
+        # An entry from before there were tracks is the first track's.
         old = {"id": "e0", "harness": "claude", "sealed": True, "conditions": {"hours": 1},
                "rounds": [{"seconds": 3600}], "finished": "2026-11-21T02:45:00+00:00"}
-        self.assertEqual(summary(old), ["e0", "claude", "sealed", "1:00", "1:00", "-", "1", "1", "2026-11-21 02:45"])
+        self.assertEqual(summary(old), ["e0", "micro", "claude", "sealed", "1:00", "1:00", "-", "1", "1",
+                                        "2026-11-21 02:45"])
 
     def test_a_sitting_is_long_enough_for_a_session(self):
         self.assertIsNone(sitting_seconds(None))

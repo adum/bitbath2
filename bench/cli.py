@@ -8,28 +8,29 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import kit
+from . import kit, tracks
 from .harnesses import HARNESSES
-from .sandbox import DEFAULT_IMAGE, ROOT, BenchmarkError
+from .sandbox import ROOT, BenchmarkError
 
 
 def cmd_export(args):
-    manifest = kit.export(args.directory, args.rev)
+    manifest = kit.export(args.directory, args.rev, args.track)
     if args.manifest:
         Path(args.manifest).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-    print(f"Starter kit: {args.directory}")
+    print(f"Starter kit of the {args.track} track: {args.directory}")
     print(f"  commit {manifest['commit']}")
     print(f"  sha256 {manifest['sha256']}")
     print(f"  {len(manifest['files'])} files")
 
 
 def cmd_build(args):
-    """Builds the benchmark image around a freshly exported kit."""
+    """Builds a track's benchmark image around its freshly exported kit."""
     if not shutil.which("docker"):
         raise BenchmarkError("Docker is required: install and start Docker Desktop or Docker Engine")
+    image = args.image or tracks.image(args.track)
     with tempfile.TemporaryDirectory(prefix="bb-image-") as temporary:
         context = Path(temporary)
-        manifest = kit.export(context / "kit", args.rev)
+        manifest = kit.export(context / "kit", args.rev, args.track)
         (context / "kit.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
         (context / "bench").mkdir()
         for name in ("proxy.py", "bwrap.py", "agy_policy.py"):
@@ -37,13 +38,15 @@ def cmd_build(args):
             text = (ROOT / "bench" / name).read_text(encoding="utf-8")
             (context / "bench" / name).write_text(text, encoding="utf-8", newline="\n")
         command = ["docker", "build", "--file", str(ROOT / "containers" / "benchmark.Dockerfile"),
-                   "--tag", args.image, "--label", f"bitbath.kit.commit={manifest['commit']}",
+                   "--tag", image, "--label", f"bitbath.track={args.track}",
+                   "--label", f"bitbath.kit.commit={manifest['commit']}",
                    "--label", f"bitbath.kit.sha256={manifest['sha256']}"]
         for pin in args.build_arg:
             command += ["--build-arg", pin]
         if subprocess.run([*command, str(context)]).returncode:
             raise BenchmarkError("docker build failed")
-    print(f"Image {args.image}: kit commit {manifest['commit'][:12]}, sha256 {manifest['sha256'][:12]}")
+    print(f"Image {image}: the {args.track} track's kit, commit {manifest['commit'][:12]}, "
+          f"sha256 {manifest['sha256'][:12]}")
 
 
 def cmd_run(args):
@@ -69,21 +72,32 @@ def cmd_arena(args):
 def main():
     parser = argparse.ArgumentParser(description="The Bitbath bot-building benchmark.")
     commands = parser.add_subparsers(dest="command", required=True)
+    names = tracks.names()
 
-    p = commands.add_parser("export", help="write the starter kit to a directory")
+    def track(p):
+        p.add_argument("--track", required=True, choices=names,
+                       help="the game the bots are built for: its kit, its practice bots, and its tournament")
+
+    def image(p, about="the benchmark image"):
+        p.add_argument("--image", help=f"{about} (default: {tracks.image('<track>')})")
+
+    p = commands.add_parser("export", help="write a track's starter kit to a directory")
+    track(p)
     p.add_argument("directory", help="where to write the kit; it must be empty or not exist yet")
     p.add_argument("--rev", default="HEAD", help="the commit to take the kit from (default: HEAD)")
     p.add_argument("--manifest", help="also write the kit's manifest, with every file's hash, to this file")
     p.set_defaults(run=cmd_export)
 
-    p = commands.add_parser("build", help="build the benchmark image, with the starter kit inside")
+    p = commands.add_parser("build", help="build a track's benchmark image, with its starter kit inside")
+    track(p)
     p.add_argument("--rev", default="HEAD", help="the commit to take the kit from (default: HEAD)")
-    p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the image's name (default: {DEFAULT_IMAGE})")
+    image(p, "the image's name")
     p.add_argument("--build-arg", action="append", default=[], metavar="NAME=VERSION",
                    help="pin a version in the Dockerfile, such as CLAUDE_VERSION=2.1.325; repeatable")
     p.set_defaults(run=cmd_build)
 
     p = commands.add_parser("run", help="have a model build a bot, and seal it as an entry")
+    track(p)
     p.add_argument("--harness", required=True, choices=HARNESSES, help="the coding agent the model works through")
     p.add_argument("--model", required=True, help="the model's exact id; for opencode, provider/model; for agy, a slug such as gemini-4-carbon-high")
     p.add_argument("--effort", help="the model's reasoning effort, if the harness takes one")
@@ -98,7 +112,7 @@ def main():
                    help="length of the one extra session a failed check gets, or 0 for none (default: 15)")
     p.add_argument("--cpus", type=float, default=16, help="CPUs for the container (default: 16)")
     p.add_argument("--memory", default="8g", help="memory for the container (default: 8g)")
-    p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the benchmark image (default: {DEFAULT_IMAGE})")
+    image(p)
     p.add_argument("--auth-file", help="a Codex auth.json, when there is no OPENAI_API_KEY")
     p.set_defaults(run=cmd_run)
 
@@ -108,7 +122,7 @@ def main():
                    help="pause again after this much of the working time (default: use all that is left)")
     p.add_argument("--seal", action="store_true",
                    help="give up the time that is left: check the bot as it stands and seal it")
-    p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the benchmark image (default: {DEFAULT_IMAGE})")
+    p.add_argument("--image", help="the benchmark image (default: the image of the entry's track)")
     p.add_argument("--auth-file", help="a Codex auth.json, when there is no OPENAI_API_KEY")
     p.set_defaults(run=cmd_resume)
 
@@ -116,11 +130,12 @@ def main():
     p.add_argument("--all", action="store_true", help="also list the entries that failed")
     p.set_defaults(run=cmd_list)
 
-    p = commands.add_parser("arena", help="play the sealed entries and the reference bots against each other")
-    p.add_argument("--season", default="default",
-                   help="the results directory under arena/; running again continues it (default: default)")
+    p = commands.add_parser("arena", help="play a track's sealed entries and reference bots against each other")
+    track(p)
+    p.add_argument("--season",
+                   help="the results directory under arena/; running again continues it (default: the track's name)")
     p.add_argument("--entry", action="append", default=[], metavar="ID",
-                   help="play only this entry; repeatable (default: every sealed entry)")
+                   help="play only this entry; repeatable (default: every sealed entry of the track)")
     p.add_argument("--no-references", action="store_true", help="leave the reference bots out")
     p.add_argument("--allow-other-kits", action="store_true",
                    help="also play entries that were built from another kit than the image's")
@@ -128,7 +143,7 @@ def main():
     p.add_argument("--hours", type=float, default=12, help="longest one map size may take (default: 12)")
     p.add_argument("--cpus", type=float, default=16, help="CPUs for the container (default: 16)")
     p.add_argument("--memory", default="8g", help="memory for the container (default: 8g)")
-    p.add_argument("--image", default=DEFAULT_IMAGE, help=f"the benchmark image (default: {DEFAULT_IMAGE})")
+    image(p)
     p.set_defaults(run=cmd_arena)
 
     args = parser.parse_args()

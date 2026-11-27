@@ -1,0 +1,35 @@
+# The Islets track's starter kit: what a model gets to build its bot from.
+#
+# This is an allowlist. Nothing in the repository reaches the kit unless a
+# line here names it, so the reference bots that are held back, old game
+# records, and anything added later stay out by default. `python benchmark.py
+# export --track islets` copies these paths as they are in the commit it
+# exports, then adds the files in kit/.
+
+SPEC.md
+STRATEGIC.md
+Cargo.lock
+rustfmt.toml
+engine
+runner
+kits/python
+tests/vectors
+
+# The bots to practise against. Naval is built on supply, and supply on
+# vanguard, so those two files come with it. Vanguard doesn't know the
+# strategic rules and plays no part in this track's games.
+bots/naval_bot.py
+bots/supply_bot.py
+bots/vanguard_bot.py
+bots/forager_bot.rs
+
+# Every game is played with islets.toml. The others are the presets that
+# STRATEGIC.md and SPEC.md describe it by.
+configs/islets.toml
+configs/islands.toml
+configs/strategic.toml
+configs/default.toml
+
+# A line with "=" puts a second copy of a listed file elsewhere in the kit:
+# destination = source.
+submission/bitbath.py = kits/python/bitbath.py
