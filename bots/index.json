@@ -329,7 +329,7 @@
         "by": ["adum", "Claude Fable 5.2"],
         "how": "Written with Claude Code on top of naval, to adum's plan for the opening: a galley in half its games and a transport in the rest, which sails for the middle island two times in three and for the enemy's port otherwise.",
         "created": "2026-11-27",
-        "commit": null
+        "commit": "c3e5fbf"
       },
       "language": "python",
       "files": ["bots/brigantine_bot.py"],
