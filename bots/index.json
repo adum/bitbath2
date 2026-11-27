@@ -321,6 +321,26 @@
       "play_page": "pyodide",
       "benchmark": null
     },
+    "brigantine": {
+      "name": "Brigantine",
+      "about": "Naval with a fast opening: takes its port, builds a ship in round 3, then hunts with a galley, lands on the middle island, or raids the enemy's port.",
+      "kind": "reference",
+      "made": {
+        "by": ["adum", "Claude Fable 5.2"],
+        "how": "Written with Claude Code on top of naval, to adum's plan for the opening: a galley in half its games and a transport in the rest, which sails for the middle island two times in three and for the enemy's port otherwise.",
+        "created": "2026-11-27",
+        "commit": null
+      },
+      "language": "python",
+      "files": ["bots/brigantine_bot.py"],
+      "depends": ["bots/naval_bot.py", "bots/supply_bot.py", "bots/vanguard_bot.py", "kits/python/bitbath.py"],
+      "run": "python bots/brigantine_bot.py",
+      "build": null,
+      "rules": ["strategic"],
+      "maps": ["islets"],
+      "play_page": "pyodide",
+      "benchmark": null
+    },
     "forager": {
       "name": "Forager",
       "about": "Spreads out to take cities, raids supply with cavalry and scouts, and ferries wheat, in a few milliseconds a turn.",
