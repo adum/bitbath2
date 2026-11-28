@@ -564,7 +564,7 @@ bitbath play --p1 "python bots/greedy_bot.py" --p2 "./mybot.exe" --map seed:42 -
 
 The runner sets `PYTHONUNBUFFERED=1` for every bot, as a backstop for Python bots that forget to flush.
 
-**`bitbath serve`** serves the viewer's page and runs the bots a human plays against in it (§5). Those bots get the same protections, with `runs/serve/<name>` as the working directory.
+**`bitbath serve`** serves the viewer's page and runs the bots a human plays against in it (§5). Those bots get the same protections, with `runs/serve/<name>` as the working directory. For the page's Redo button it also plays a replay's match again between two of the bots it offers, as `bitbath play` does, into a new directory in `runs/`.
 
 **I/O threads.** Each bot has its own reader and writer threads with queues. A bot that never reads its replies can't deadlock the engine.
 

@@ -57,6 +57,8 @@ Usage:
       port 8000), from the current directory, with bots to play against by
       hand in the page: the Python files in bots/, the programs in
       target/release/, and each --bot. --no-discover offers only the --bot ones.
+      A replay of a game between bots on offer gets a Redo button in the page,
+      which plays the same match again into a new directory in runs/.
 
 Example:
   bitbath play --p1 \"python bots/greedy_bot.py\" --p2 \"python bots/random_bot.py\" --map seed:42

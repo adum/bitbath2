@@ -10,10 +10,22 @@
 //! sends, and it listens on this machine only. Requests must come from its
 //! own pages, so no other site open in the browser can start a bot.
 //!
+//! It also plays a replay's match again, bot against bot, for the page's
+//! Redo button: see `Server::redo`. There too it runs only bots on offer.
+//! A replay names the commands its bots were run with, and a replay can
+//! come from anywhere, so those commands only pick the offers to run.
+//!
 //! The API, all JSON:
 //!
 //! - `GET /api/bots` lists the bots on offer: each one's `name`, `command`,
 //!   and `index`, its record in the bot index (`bots/index.json`) or null.
+//!   `redo` is true, to say that this server plays matches again.
+//! - `POST /api/redo`, with a replay's header as the body, starts the same
+//!   match again: the header's `setup`, between the offers that its
+//!   players' commands name. It returns the `job`, and `replay`, the path of
+//!   the replay being written.
+//! - `GET /api/redo?job=<j>` says how far that game is: `round` of `rounds`,
+//!   and `done`, with `result` once it ends or `error` if it couldn't be played.
 //! - `POST /api/start?bot=<name>` starts one and returns its `session`.
 //! - `POST /api/io?session=<s>&wait=<ms>` writes the body's lines to the
 //!   bot, then waits up to `wait` ms for its next line. Without `wait` it
@@ -24,6 +36,8 @@
 //!   moment to exit, and kills it.
 
 use crate::bot::{Bot, Event};
+use crate::play;
+use bitbath_engine::Game;
 use serde_json::{json, Value};
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
@@ -66,6 +80,10 @@ const IDLE: Duration = Duration::from_secs(12 * 3600);
 const MAX_LINE: usize = 1024;
 const MAX_STDERR: usize = 64 * 1024;
 const MAX_BODY: usize = 1024 * 1024;
+/// Matches being played again at once. Each runs two bots.
+const MAX_REDOS: usize = 2;
+/// How long a match played again is remembered after it ends.
+const REDO_KEPT: Duration = Duration::from_secs(3600);
 
 struct Session {
     bot: Mutex<Bot>,
@@ -74,9 +92,23 @@ struct Session {
     used: Mutex<Instant>,
 }
 
+/// A match being played again, or one that has been: see `Server::redo`.
+struct Redo {
+    /// The replay being written, as the path the page opens it by.
+    replay: String,
+    /// The same file on disk.
+    file: PathBuf,
+    /// The game's round limit.
+    rounds: u32,
+    started: Instant,
+    /// Once the game is over: how it ended, or why it couldn't be played.
+    end: Mutex<Option<Result<String, String>>>,
+}
+
 struct Server {
     opts: Options,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    redos: Mutex<HashMap<String, Arc<Redo>>>,
 }
 
 struct Request {
@@ -118,6 +150,7 @@ pub fn serve(opts: Options) -> Result<(), String> {
     let server = Arc::new(Server {
         opts,
         sessions: Mutex::new(HashMap::new()),
+        redos: Mutex::new(HashMap::new()),
     });
     let offers = server.offers();
     if offers.is_empty() {
@@ -383,7 +416,10 @@ impl Server {
                 "bots": self.offers().iter().map(|b| json!({
                     "name": b.name, "command": b.command, "index": b.index,
                 })).collect::<Vec<_>>(),
+                "redo": true,
             })),
+            ("POST", "redo") => self.redo(&r.body),
+            ("GET", "redo") => self.redo_status(r.query.get("job").map(String::as_str).unwrap_or("")),
             ("POST", "start") => self.start(r.query.get("bot").map(String::as_str).unwrap_or("")),
             ("POST", "io") => self.io(session, &r.body, r.query.get("wait").and_then(|w| w.parse().ok())),
             ("POST", "stop") => self.stop(session, &r.body),
@@ -510,6 +546,165 @@ impl Server {
         bot.shut_down(Duration::from_millis(if lines.is_empty() { 0 } else { 1000 }));
         Response::json(json!({ "stderr": bot.take_stderr() }))
     }
+
+    /// Starts the match of a replay again from scratch, bot against bot,
+    /// and answers at once with where its replay is being written.
+    ///
+    /// `body` is the replay's header. Its `setup` is the game: the map and
+    /// the rules. Its players' commands are not run. Each only picks the
+    /// bot on offer that runs the same thing (see `command_key`), and that
+    /// offer's own command is what runs. A match with a bot that isn't on
+    /// offer is refused.
+    fn redo(&self, body: &str) -> Response {
+        let bad = |message: &str| Response::error("400 Bad Request", message);
+        let Ok(header) = serde_json::from_str::<Value>(body) else {
+            return bad("the body isn't a replay's header");
+        };
+        let setup: Vec<&str> = header["setup"]
+            .as_array()
+            .map(|lines| lines.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let game = match Game::from_setup(setup.iter().copied()) {
+            Ok(game) => game,
+            Err(e) => return bad(&format!("the replay's setup doesn't load: {e}")),
+        };
+        let offers = self.offers();
+        let mut players = Vec::new();
+        for i in 0..2 {
+            let player = &header["players"][i];
+            let command = player["command"].as_str().unwrap_or("");
+            let key = command_key(command);
+            let offer = offers.iter().find(|o| key.is_some() && command_key(&o.command) == key);
+            let Some(offer) = offer else {
+                return Response::error(
+                    "409 Conflict",
+                    &format!(
+                        "Player {} ran '{}', which isn't a bot this server offers. \
+                         Start bitbath serve with --bot <name>=<command> to offer it.",
+                        i + 1,
+                        plain_text(command, 120)
+                    ),
+                );
+            };
+            let name = plain_text(player["name"].as_str().unwrap_or(""), 64);
+            players.push(play::Player {
+                name: if name.is_empty() { offer.name.clone() } else { name },
+                command: offer.command.clone(),
+            });
+        }
+        let Ok(players) = <[play::Player; 2]>::try_from(players) else {
+            return bad("a game has two players");
+        };
+
+        let mut redos = self.redos.lock().expect("redos lock");
+        let over = |r: &Redo| r.end.lock().expect("end lock").is_some();
+        redos.retain(|_, r| !over(r) || r.started.elapsed() < REDO_KEPT);
+        if redos.values().filter(|r| !over(r)).count() >= MAX_REDOS {
+            return Response::error("503 Service Unavailable", "Other matches are still being played again. Try when one ends.");
+        }
+        let map_source = match plain_text(header["map"].as_str().unwrap_or(""), 64) {
+            source if source.is_empty() => "replay".to_string(),
+            source => source,
+        };
+        let run_dir = match crate::new_run_dir(&map_source) {
+            Ok(dir) => dir,
+            Err(e) => return Response::error("500 Internal Server Error", &e),
+        };
+        let file = run_dir.join("replay.bbr");
+        let names = [players[0].name.clone(), players[1].name.clone()];
+        let opts = play::Options {
+            players,
+            map_source,
+            seed: header["seed"].as_u64(),
+            replay: file.clone(),
+            run_dir,
+            memory_mb: self.opts.memory_mb,
+            quiet: true,
+        };
+        let job = Arc::new(Redo {
+            replay: format!("/{}", file.to_string_lossy().replace('\\', "/")),
+            file,
+            rounds: game.rules.c.round_limit,
+            started: Instant::now(),
+            end: Mutex::new(None),
+        });
+        println!("redo: {} vs {} on {}, to {}", names[0], names[1], opts.map_source, job.replay);
+        let token = new_token();
+        redos.insert(token.clone(), Arc::clone(&job));
+        let answer = json!({ "job": token, "replay": job.replay });
+        thread::spawn(move || {
+            // Caught, so a game that panics still ends for the page waiting on it.
+            let played = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| play::play(game, &opts)));
+            let end = match played {
+                Ok(Ok(done)) if done.outcome.winner == 0 => Ok(format!("Draw ({}).", done.outcome.reason)),
+                Ok(Ok(done)) => Ok(format!(
+                    "{} wins by {}.",
+                    names[done.outcome.winner as usize - 1],
+                    done.outcome.reason
+                )),
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err("the game stopped with an error; see the server's output".to_string()),
+            };
+            match &end {
+                Ok(result) => println!("redo: {} {result}", job.replay),
+                Err(e) => println!("redo: {} failed: {e}", job.replay),
+            }
+            *job.end.lock().expect("end lock") = Some(end);
+        });
+        Response::json(answer)
+    }
+
+    /// How far a match being played again is. Each turn is a line of its
+    /// replay, after the header's and the one for the bots' starts.
+    fn redo_status(&self, token: &str) -> Response {
+        let Some(job) = self.redos.lock().expect("redos lock").get(token).cloned() else {
+            return Response::error("404 Not Found", "no such job");
+        };
+        let lines = std::fs::read(&job.file).map_or(0, |text| text.iter().filter(|&&b| b == b'\n').count());
+        let round = (lines.saturating_sub(2) / 2 + 1).min(job.rounds as usize);
+        let mut answer = json!({ "replay": job.replay, "round": round, "rounds": job.rounds, "done": false });
+        match &*job.end.lock().expect("end lock") {
+            Some(Ok(result)) => {
+                answer["done"] = json!(true);
+                answer["result"] = json!(result);
+            }
+            Some(Err(e)) => {
+                answer["done"] = json!(true);
+                answer["error"] = json!(e);
+            }
+            None => {}
+        }
+        Response::json(answer)
+    }
+}
+
+/// A bot command's words in a form that compares, so the command a replay
+/// names finds the offer that runs the same thing however either was typed:
+/// quoted or not, with either slash, with or without `./` and `.exe`, and
+/// with Python under either of its names. None if the command is empty or
+/// can't be split.
+fn command_key(command: &str) -> Option<Vec<String>> {
+    let words = crate::bot::split_command(command).ok()?;
+    let key: Vec<String> = words
+        .iter()
+        .enumerate()
+        .map(|(i, word)| {
+            let word = word.replace('\\', "/");
+            let word = word.strip_prefix("./").unwrap_or(&word);
+            let word = word.strip_suffix(".exe").unwrap_or(word);
+            match (i, word) {
+                (0, "python3") => "python".to_string(),
+                _ => word.to_string(),
+            }
+        })
+        .collect();
+    (!key.is_empty()).then_some(key)
+}
+
+/// Text from a page for a name or a message: one line, trimmed, of no more
+/// than `max` characters, without control characters.
+fn plain_text(text: &str, max: usize) -> String {
+    text.trim().chars().filter(|c| !c.is_control()).take(max).collect()
 }
 
 /// A session's name: unguessable, so it also keeps one page's bot from another's.
@@ -570,6 +765,60 @@ mod tests {
         assert!(runs(&program, "target/release/forager_bot.exe"));
         assert!(runs(&program, "target/release/forager_bot"));
         assert!(!runs(&json!({"run": null}), "bots/naval_bot.py"));
+    }
+
+    #[test]
+    fn commands_compare_however_they_were_typed() {
+        let key = command_key("python bots/naval_bot.py");
+        assert!(key.is_some());
+        assert_eq!(command_key("python \"bots/naval_bot.py\""), key);
+        assert_eq!(command_key("python3 bots\\naval_bot.py"), key);
+        assert_eq!(command_key("python ./bots/naval_bot.py"), key);
+        assert_ne!(command_key("python bots/naval_bot.py --fast"), key);
+        assert_ne!(command_key("python bots/supply_bot.py"), key);
+        assert_eq!(command_key("\"target/release/forager_bot.exe\""), command_key("target/release/forager_bot"));
+        assert_eq!(command_key(""), None);
+        assert_eq!(command_key("python 'bots"), None);
+    }
+
+    /// A replay's commands are never run: one that names no bot on offer is refused.
+    #[test]
+    fn redo_runs_only_bots_on_offer() {
+        let server = Server {
+            opts: Options {
+                port: 0,
+                bots: vec![Offer {
+                    name: "mine".into(),
+                    command: "python bots/mine.py".into(),
+                    index: None,
+                }],
+                discover: false,
+                memory_mb: 0,
+                root: PathBuf::from("."),
+            },
+            sessions: Mutex::new(HashMap::new()),
+            redos: Mutex::new(HashMap::new()),
+        };
+        let rules = bitbath_engine::Rules::default();
+        let map = bitbath_engine::mapgen::generate(&rules, 1).unwrap();
+        let setup = Game::new(rules, map).setup_lines(true);
+        let header = |p2: &str| {
+            json!({
+                "setup": setup,
+                "map": "seed:1",
+                "seed": 1,
+                "players": [{"name": "a", "command": "python \"bots/mine.py\""}, {"name": "b", "command": p2}],
+            })
+            .to_string()
+        };
+        let refused = server.redo(&header("cmd /c calc.exe"));
+        assert_eq!(refused.status, "409 Conflict");
+        assert!(String::from_utf8_lossy(&refused.body).contains("Player 2 ran 'cmd /c calc.exe'"));
+        assert_eq!(server.redo(&header("")).status, "409 Conflict");
+        assert_eq!(server.redo("{\"setup\": [\"MAP 2\"]}").status, "400 Bad Request");
+        assert_eq!(server.redo("not json").status, "400 Bad Request");
+        assert!(server.redos.lock().unwrap().is_empty());
+        assert_eq!(server.redo_status("none").status, "404 Not Found");
     }
 
     #[test]

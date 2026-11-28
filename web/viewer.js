@@ -47,6 +47,7 @@
     pan: [0, 0],
     listTurn: -1,
     dark: window.matchMedia("(prefers-color-scheme: dark)").matches,
+    /** Whether `bitbath serve` serves the page and can play a replay's match again: play.js finds out. */ canRedo: false,
   };
 
   /** @param {string} name */
@@ -2130,6 +2131,14 @@
     // The army chart needs the timeline that a current bitbath_wasm.js adds,
     // and would give away the opponent's strength during a game.
     $("chart-box").hidden = $("army-legend").hidden = !!fog || !v.info || !v.info.army;
+    // Redo is for a replay of a game between two bots, where the server can run them again.
+    const redo = $("redo-button");
+    if (redo) {
+      const players = v.replay ? v.replay.header.players : [];
+      const bots = players.length === 2 && players.every((/** @type {any} */ p) => p.command && p.command !== "a person in the browser");
+      redo.hidden = !(v.canRedo && bots && !v.play);
+      if (redo.hidden) $("redo-status").textContent = "";
+    }
   }
 
   /**
@@ -2403,7 +2412,7 @@
   // For play.js, tests and embedding: window.bitbathViewer.open(text).
   /** @type {any} */ (window).bitbathViewer = {
     refreshHover: updateHover,
-    open: openText, state: v, setPos, $, el, engine, openLive, append, finishLive, animateTo, draw, drawPreview, updateSide, STEP_MS,
+    open: openText, syncMode, state: v, setPos, $, el, engine, openLive, append, finishLive, animateTo, draw, drawPreview, updateSide, STEP_MS,
     center, hexPath, polyline, arrow, centers, playerColor, cssVar, visibleTo, shown, capitalize,
   };
 })();

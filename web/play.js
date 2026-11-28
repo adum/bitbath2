@@ -1644,7 +1644,10 @@
   if (location.protocol.startsWith("http")) {
     fetch("/api/bots")
       .then((res) => (res.ok ? res.json() : { bots: [] }))
-      .then((/** @type {{bots: {name: string, command: string, index: any}[]}} */ data) => {
+      .then((/** @type {{bots: {name: string, command: string, index: any}[], redo?: boolean}} */ data) => {
+        // A server that can play a replay's match again gets the Redo button: see redo().
+        v.canRedo = data.redo === true;
+        V.syncMode();
         for (const b of data.bots || []) {
           // The server sends the bot's record in the bot index, if it has one.
           const known = b.index;
@@ -1675,6 +1678,51 @@
       })
       .catch(() => {});
   }
+
+  /**
+   * Redo: has `bitbath serve` play the match of the replay shown again from
+   * scratch, with the same bots on the same map under the same rules, and
+   * opens the new replay when the game ends. The button counts the rounds
+   * meanwhile. The server runs only the bots it offers: it refuses a match
+   * with any other, and the reason shows beside the button.
+   */
+  async function redo() {
+    const button = /** @type {HTMLButtonElement} */ ($("redo-button"));
+    const shown = v.replay;
+    if (button.disabled || !shown) return;
+    const h = shown.header;
+    button.disabled = true;
+    $("redo-status").textContent = "";
+    try {
+      const asked = await fetch("/api/redo", { method: "POST", body: JSON.stringify({ setup: h.setup, players: h.players, map: h.map, seed: h.seed }) });
+      const job = await asked.json();
+      if (!asked.ok) throw new Error(job.error || "HTTP " + asked.status);
+      button.textContent = "Starting…";
+      for (;;) {
+        await sleep(400);
+        const told = await fetch("/api/redo?job=" + job.job);
+        const status = await told.json();
+        if (status.error) throw new Error(status.error);
+        if (status.done) break;
+        button.textContent = "Round " + status.round + " of " + status.rounds;
+      }
+      // The new game takes the place of the one it was asked for, unless something else has been opened since.
+      if (v.replay !== shown) return;
+      const got = await fetch(job.replay);
+      if (!got.ok) throw new Error(job.replay + ": HTTP " + got.status);
+      await V.open(await got.text());
+      const url = new URL(location.href);
+      url.searchParams.set("replay", job.replay);
+      url.searchParams.delete("position");
+      history.replaceState(null, "", url);
+    } catch (e) {
+      $("redo-status").textContent = "Redo failed. " + String(e instanceof Error ? e.message : e);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Redo";
+    }
+  }
+  $("redo-button").addEventListener("click", redo);
 
   // Starting a game drops the one being played, so the dialog says so.
   const abandonNote = el("div", "Starting a new game ends the one you are playing. It can't be resumed.", "wide");
