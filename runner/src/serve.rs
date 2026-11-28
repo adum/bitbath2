@@ -13,7 +13,8 @@
 //! It also plays a replay's match again, bot against bot, for the page's
 //! Redo button: see `Server::redo`. There too it runs only bots on offer.
 //! A replay names the commands its bots were run with, and a replay can
-//! come from anywhere, so those commands only pick the offers to run.
+//! come from anywhere, so those commands only pick the offers to run, and
+//! the arguments the bots are given.
 //!
 //! The API, all JSON:
 //!
@@ -551,10 +552,11 @@ impl Server {
     /// and answers at once with where its replay is being written.
     ///
     /// `body` is the replay's header. Its `setup` is the game: the map and
-    /// the rules. Its players' commands are not run. Each only picks the
-    /// bot on offer that runs the same thing (see `command_key`), and that
-    /// offer's own command is what runs. A match with a bot that isn't on
-    /// offer is refused.
+    /// the rules. Its players' commands are not run as they stand. Each
+    /// only picks the bot on offer that it starts with, and that offer's
+    /// own command is what runs, with any further words of the replay's
+    /// command as the bot's arguments (see `offered`). A match with a bot
+    /// that isn't on offer is refused.
     fn redo(&self, body: &str) -> Response {
         let bad = |message: &str| Response::error("400 Bad Request", message);
         let Ok(header) = serde_json::from_str::<Value>(body) else {
@@ -573,9 +575,7 @@ impl Server {
         for i in 0..2 {
             let player = &header["players"][i];
             let command = player["command"].as_str().unwrap_or("");
-            let key = command_key(command);
-            let offer = offers.iter().find(|o| key.is_some() && command_key(&o.command) == key);
-            let Some(offer) = offer else {
+            let Some((offer, command_run)) = offered(command, &offers) else {
                 return Response::error(
                     "409 Conflict",
                     &format!(
@@ -589,7 +589,7 @@ impl Server {
             let name = plain_text(player["name"].as_str().unwrap_or(""), 64);
             players.push(play::Player {
                 name: if name.is_empty() { offer.name.clone() } else { name },
-                command: offer.command.clone(),
+                command: command_run,
             });
         }
         let Ok(players) = <[play::Player; 2]>::try_from(players) else {
@@ -701,6 +701,47 @@ fn command_key(command: &str) -> Option<Vec<String>> {
     (!key.is_empty()).then_some(key)
 }
 
+/// The bot on offer that a replay's `command` ran, and the command to run
+/// it with now: none if no offer's command is what `command` starts with.
+///
+/// The offer's command is run as the server has it. Words of `command`
+/// after it are arguments that the bot was given, such as
+/// `--opening port`, and are passed on to it. So a replay chooses among
+/// the programs on offer and what they are told, and never the program.
+/// Of several offers that fit, the one with the most words is taken, and
+/// of those the first.
+fn offered<'a>(command: &str, offers: &'a [Offer]) -> Option<(&'a Offer, String)> {
+    let words = crate::bot::split_command(command).ok()?;
+    let key = command_key(command)?;
+    let mut best: Option<(&Offer, usize)> = None;
+    for offer in offers {
+        let Some(theirs) = command_key(&offer.command) else {
+            continue;
+        };
+        if key.starts_with(&theirs) && best.is_none_or(|(_, n)| theirs.len() > n) {
+            best = Some((offer, theirs.len()));
+        }
+    }
+    let (offer, used) = best?;
+    let mut run = offer.command.clone();
+    for word in &words[used..] {
+        // Quoted, so the command splits into the same words again.
+        let quote = match (word.contains('"'), word.contains('\'')) {
+            (false, _) => '"',
+            (true, false) => '\'',
+            (true, true) => return None,
+        };
+        if word.chars().any(char::is_control) {
+            return None;
+        }
+        run.push(' ');
+        run.push(quote);
+        run.push_str(word);
+        run.push(quote);
+    }
+    Some((offer, run))
+}
+
 /// Text from a page for a name or a message: one line, trimmed, of no more
 /// than `max` characters, without control characters.
 fn plain_text(text: &str, max: usize) -> String {
@@ -779,6 +820,44 @@ mod tests {
         assert_eq!(command_key("\"target/release/forager_bot.exe\""), command_key("target/release/forager_bot"));
         assert_eq!(command_key(""), None);
         assert_eq!(command_key("python 'bots"), None);
+    }
+
+    #[test]
+    fn a_replay_picks_among_the_offers_and_their_arguments() {
+        let offer = |name: &str, command: &str| Offer {
+            name: name.into(),
+            command: command.into(),
+            index: None,
+        };
+        let offers = [
+            offer("brig", "python \"bots/brigantine_bot.py\""),
+            offer("forager", "\"target/release/forager_bot.exe\""),
+            offer("brig-fast", "python bots/brigantine_bot.py --fast"),
+        ];
+        let run = |command: &str| offered(command, &offers).map(|(o, run)| (o.name.as_str(), run));
+        assert_eq!(
+            run("python bots/brigantine_bot.py"),
+            Some(("brig", "python \"bots/brigantine_bot.py\"".to_string()))
+        );
+        // The bot's own arguments go with it, and split into the same words again.
+        let (name, command) = run("python bots/brigantine_bot.py --opening port 'two words'").unwrap();
+        assert_eq!(name, "brig");
+        assert_eq!(
+            crate::bot::split_command(&command).unwrap(),
+            ["python", "bots/brigantine_bot.py", "--opening", "port", "two words"]
+        );
+        // The offer that says the most of the command is the one.
+        assert_eq!(run("python bots/brigantine_bot.py --fast -v").unwrap().0, "brig-fast");
+        assert_eq!(
+            run("target/release/forager_bot -q"),
+            Some(("forager", "\"target/release/forager_bot.exe\" \"-q\"".to_string()))
+        );
+        // Nothing may come before the bot: not another program, and not a word for Python.
+        assert_eq!(run("python -c \"import os\" bots/brigantine_bot.py"), None);
+        assert_eq!(run("cmd /c python bots/brigantine_bot.py"), None);
+        assert_eq!(run("python bots/other_bot.py"), None);
+        assert_eq!(run("python"), None);
+        assert_eq!(run(""), None);
     }
 
     /// A replay's commands are never run: one that names no bot on offer is refused.

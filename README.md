@@ -89,7 +89,7 @@ Then open `http://localhost:8000/web/play.html`. The New game dialog's opponent 
 
 With `bitbath serve`, a replay of a game between two bots also gets a **Redo** button beside its title. It plays the same match again from scratch, with the same bots on the same map under the same rules, as `bitbath play` would. The button counts the rounds while the game runs, and the new replay opens when it ends. It is a shortcut for seeing what a change to a bot does to a game you are looking at.
 
-- **Only bots on offer.** A replay names the commands its bots were run with, but the server doesn't run them. Each only picks the bot on offer that runs the same file, and a match with any other bot is refused, with the reason beside the button. So a replay from somewhere else can't start a program of its choosing.
+- **Only bots on offer.** A replay names the commands its bots were run with, but the server doesn't run them. Each only picks the bot on offer that it starts with, and a match with any other bot is refused, with the reason beside the button. Words after the bot, such as `--opening port`, are passed to it as its arguments. So a replay from somewhere else can choose what a bot on offer is told, but can't start a program of its choosing.
 - **A new replay.** The game goes to a new directory in `runs/`, and the old replay stays as it is.
 
 ## Writing a bot
