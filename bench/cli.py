@@ -136,6 +136,9 @@ def main():
                    help="the results directory under arena/; running again continues it (default: the track's name)")
     p.add_argument("--entry", action="append", default=[], metavar="ID",
                    help="play only this entry; repeatable (default: every sealed entry of the track)")
+    p.add_argument("--name", action="append", default=[], metavar="ID=NAME",
+                   help="play this entry under another name than its own, as when two entries have one name; "
+                        "repeatable, and a season remembers it")
     p.add_argument("--no-references", action="store_true", help="leave the reference bots out")
     p.add_argument("--allow-other-kits", action="store_true",
                    help="also play entries that were built from another kit than the image's")

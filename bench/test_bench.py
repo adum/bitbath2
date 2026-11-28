@@ -3,15 +3,17 @@
     python -m unittest bench.test_bench
 """
 
+import hashlib
 import io
 import json
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from bench import kit, tracks
-from bench.arena import reference_files
+from bench import arena, kit, tracks
+from bench.arena import chosen_names, reference_files, sealed_entries
 from bench.harnesses import Harness, activity, error_message, failure_kind, usage_records
 from bench.run import (FIRST, FIX, STANDING, bot_name, check_command, contents_hash, duration, history, idle,
                        practice_command, sitting_note, sitting_seconds, status, summary, task)
@@ -101,6 +103,35 @@ class Archives(unittest.TestCase):
                 check_archive(tar_with(member))
         with self.assertRaises(BenchmarkError):
             check_archive(tar_with(tarfile.TarInfo("big"), b"x" * 2000), limit=1000)
+
+
+class Arena(unittest.TestCase):
+    def test_two_entries_of_one_name_play_under_two(self):
+        image = {"track": "islets", "kit_sha256": "k"}
+        season = {"bots": {"naval": {"kind": "reference", "source": "bots/naval_bot.py"}}}
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(arena, "ENTRIES", Path(directory)):
+            for entry in ("e1", "e2"):
+                archive = archive_of({"bot.toml": f'run = "{entry}"\n'.encode()})
+                record = {"id": entry, "name": "model", "track": "islets", "sealed": True, "image": image,
+                          "submission_sha256": hashlib.sha256(archive).hexdigest()}
+                (Path(directory) / entry).mkdir()
+                (Path(directory) / entry / "submission.tar").write_bytes(archive)
+                (Path(directory) / entry / "entry.json").write_text(json.dumps(record), encoding="utf-8")
+            with self.assertRaisesRegex(BenchmarkError, "--name ID=NAME"):
+                sealed_entries([], image, False)
+            bots = sealed_entries([], image, False, chosen_names(["e2=model-2"], season))
+            self.assertEqual({name: bot["source"] for name, bot in bots.items()}, {"model": "e1", "model-2": "e2"})
+            # The season knows its entries by their ids, so a name is given once.
+            season["bots"].update({name: {"kind": "entry", "source": bot["source"]} for name, bot in bots.items()})
+            self.assertEqual(chosen_names([], season), {"e1": "model", "e2": "model-2"})
+            self.assertEqual(sorted(sealed_entries([], image, False, chosen_names([], season))), ["model", "model-2"])
+        # A name can't change once a season has games under it, and it has to be one the runner takes.
+        self.assertEqual(chosen_names(["e2=model-2"], season)["e2"], "model-2")
+        with self.assertRaisesRegex(BenchmarkError, "as 'model-2'"):
+            chosen_names(["e2=other"], season)
+        for option in ("e3", "e3=", "=x", "e3=a b", "e3=" + "x" * 33):
+            with self.assertRaises(BenchmarkError, msg=option):
+                chosen_names([option], season)
 
 
 class Harnesses(unittest.TestCase):

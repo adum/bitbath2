@@ -11,7 +11,7 @@ from pathlib import Path
 from . import tracks
 from .leaderboard import refresh as refresh_leaderboard
 from .process import run_process
-from .run import ENTRIES, now, write_json
+from .run import ENTRIES, bot_name, now, write_json
 from .sandbox import ROOT, BenchmarkError, Docker, archive_of, extract_archive
 
 # What a season keeps of its track's settings: what was played.
@@ -59,8 +59,28 @@ def reference_bots(settings, commit):
     return bots
 
 
-def sealed_entries(only, image, allow_other_kits):
-    """The image's track's sealed entries, or those named in `only`, as bots by name."""
+def chosen_names(options, state):
+    """The names that entries play under where it isn't their own, as {entry
+    id: name}: the names a season already has their games under, and those
+    its --name options give."""
+    names = {bot["source"]: name for name, bot in state["bots"].items() if bot["kind"] == "entry"}
+    for option in options:
+        entry, _, name = option.partition("=")
+        if not entry or bot_name(name) != name:
+            raise BenchmarkError(f"--name {option}: write it as ID=NAME, with a name of up to 32 letters, digits, "
+                                 "'-' and '_'")
+        if names.get(entry, name) != name:
+            raise BenchmarkError(f"the season has games for entry {entry} as '{names[entry]}', "
+                                 f"so it can't play there as '{name}'")
+        names[entry] = name
+    return names
+
+
+def sealed_entries(only, image, allow_other_kits, names=None):
+    """The image's track's sealed entries, or those named in `only`, as bots
+    by name. `names` gives the entries that play under another name than
+    their own."""
+    names = names or {}
     bots = {}
     for path in sorted(ENTRIES.glob("*/entry.json")):
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -82,10 +102,10 @@ def sealed_entries(only, image, allow_other_kits):
         if record["image"]["kit_sha256"] != image["kit_sha256"] and not allow_other_kits:
             raise BenchmarkError(f"entry {record['id']} was built from another kit than this image's; "
                                  "pass --allow-other-kits to play it anyway")
-        name = record["name"]
+        name = names.get(record["id"], record["name"])
         if name in bots:
             raise BenchmarkError(f"entries {bots[name]['source']} and {record['id']} are both named '{name}': "
-                                 "choose which to play with --entry")
+                                 "choose which to play with --entry, or give one another name with --name ID=NAME")
         bots[name] = {"kind": "entry", "source": record["id"], "archive": archive}
     missing = set(only) - {bot["source"] for bot in bots.values()}
     if missing:
@@ -126,8 +146,16 @@ def arena(args):
     image = docker.preflight(track["name"])
     commit = image["kit_commit"]
 
+    season = SEASONS / (args.season or track["name"])
+    state_path = season / "arena.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {"bots": {}}
+
     bots = {} if args.no_references else reference_bots(settings, commit)
-    for name, bot in sealed_entries(args.entry, image, args.allow_other_kits).items():
+    entries = sealed_entries(args.entry, image, args.allow_other_kits, chosen_names(args.name, state))
+    absent = {option.partition("=")[0] for option in args.name} - {bot["source"] for bot in entries.values()}
+    if absent:
+        raise BenchmarkError(f"--name: {', '.join(sorted(absent))} isn't a sealed entry that plays here")
+    for name, bot in entries.items():
         if name in bots:
             raise BenchmarkError(f"entry {bot['source']} has the name of the reference bot '{name}'")
         bots[name] = bot
@@ -138,9 +166,6 @@ def arena(args):
 
     # A season's games are only comparable if each name always meant the
     # same bot, playing on the same engine.
-    season = SEASONS / (args.season or track["name"])
-    state_path = season / "arena.json"
-    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {"bots": {}}
     if state["bots"] and state.get("track", tracks.FIRST) != track["name"]:
         raise BenchmarkError(f"season '{season.name}' is of the {state.get('track', tracks.FIRST)} track: "
                              "start a new --season")
@@ -150,7 +175,7 @@ def arena(args):
         known = state["bots"].get(name)
         if known and known["sha256"] != bot["sha256"]:
             raise BenchmarkError(f"'{name}' isn't the bot that season '{season.name}' has games for: "
-                                 "start a new --season")
+                                 "start a new --season, or give the entry another name with --name ID=NAME")
     season.mkdir(parents=True, exist_ok=True)
 
     failed = {}
