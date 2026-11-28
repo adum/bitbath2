@@ -7,6 +7,11 @@ const GameRecording = (() => {
   const key = r => r.id + "/" + r.seq;
   let timer, sending = false, backoff = 1000, status = "";
   const hosted = location.protocol === "https:" || location.protocol === "http:";
+  // A server that only serves the page, such as `bitbath serve` or
+  // scripts/serve.py, has nowhere to save games, and says so when the first
+  // records are sent: see flush(). `off` is set then, and nothing more is sent.
+  let off = false;
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
 
   function report(message) {
     status = message;
@@ -62,14 +67,29 @@ const GameRecording = (() => {
   }
 
   function queue(record) {
-    if (!hosted) return;
+    if (!hosted || (off && local)) return;
     pending.set(key(record), record);
     writeLocal(record, false).catch(() => report("Local backup unavailable"));
     schedule();
   }
 
+  /**
+   * The server has no call that saves games. Stops sending, and says
+   * nothing: there is nothing for the player to wait for. On this machine
+   * the records kept are dropped too, since no later visit could send
+   * them. On any other host they stay on the device, in case it is the
+   * site that is broken and a later visit can.
+   */
+  function giveUp() {
+    off = true;
+    report("");
+    if (!local) return;
+    pending.clear();
+    database.then(db => { if (db) db.transaction("pending", "readwrite").objectStore("pending").clear(); }).catch(() => {});
+  }
+
   function schedule(delay = 200) {
-    if (!hosted || timer || sending || !pending.size) return;
+    if (!hosted || off || timer || sending || !pending.size) return;
     timer = setTimeout(() => { timer = null; flush(); }, delay);
   }
 
@@ -89,6 +109,8 @@ const GameRecording = (() => {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(records), signal: AbortSignal.timeout(20000),
       });
+      // No such call, or no calls but GET: this server doesn't save games.
+      if ([404, 405, 501].includes(res.status)) return giveUp();
       if (res.status !== 204) throw new Error("Save unconfirmed");
       // A turn may have changed while the request was in flight.
       for (const r of records) {
@@ -110,7 +132,7 @@ const GameRecording = (() => {
   }
 
   function onExit() {
-    if (!hosted || !pending.size || !navigator.sendBeacon) return;
+    if (!hosted || off || !pending.size || !navigator.sendBeacon) return;
     const records = batch();
     const blob = new Blob([JSON.stringify(records)], { type: "application/json" });
     if (blob.size <= 60000) navigator.sendBeacon("/api/games/" + records[0].id, blob);
